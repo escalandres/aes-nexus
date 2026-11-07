@@ -15,6 +15,26 @@ El repositorio estaba vacío al inicio de este trabajo. Esta primera entrega es 
 
 Esta entrega sólo usa React + TypeScript + Vite y CSS. No introduce dependencias UI adicionales. El frontend muestra esqueletos navegables para CRM, Ventas, Operaciones, Finanzas y Administración; no hay servicios ni datos persistidos.
 
+### Rutas del frontend
+
+La navegación usa rutas del navegador sin añadir una dependencia de router en esta etapa. El contrato inicial es:
+
+| Pantalla | Ruta |
+|---|---|
+| Inicio | `/` |
+| Configuración | `/settings` |
+| CRM | `/crm` |
+| Clientes del CRM | `/crm/clientes` |
+| Proveedores del CRM | `/crm/proveedores` |
+| Oportunidades del CRM | `/crm/oportunidades` |
+| Actividades del CRM | `/crm/actividades` |
+| Ventas | `/ventas` |
+| Operaciones | `/operaciones` |
+| Finanzas | `/finanzas` |
+| Administración | `/administracion` |
+
+Las rutas se sincronizan con el historial del navegador y deben conservar el fallback de `index.html` al desplegarse en un servidor estático.
+
 ## Composición visual
 
 Shell responsivo → navegación lateral → encabezado de página → tarjetas KPI y paneles CRM. El dashboard usa una capa de datos de demostración aislada de los componentes. En iteraciones posteriores esta fuente será reemplazada por servicios API y estados de carga/error/vacío.

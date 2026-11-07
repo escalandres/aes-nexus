@@ -19,6 +19,8 @@ npm run dev
 
 También se puede iniciar en Windows con `iniciar.bat`.
 
+Rutas principales durante el desarrollo: `/settings` para configuración, `/crm` para el módulo CRM, `/crm/clientes` para clientes, `/crm/proveedores` para proveedores, `/crm/oportunidades` para oportunidades y `/crm/actividades` para actividades. La navegación del resto de módulos usa `/ventas`, `/operaciones`, `/finanzas` y `/administracion`.
+
 ## Construir
 
 ```powershell
