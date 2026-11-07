@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useRef, type FormEvent } from 'react'
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
   CalendarDays, ChartNoAxesCombined, ChevronDown, CircleHelp, Clock3,
@@ -6,7 +6,7 @@ import {
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
   Target, Users, WalletCards, Warehouse, ShieldCheck, X, Building2,
   UserRoundPlus, LockKeyhole, Plug, CreditCard, Mail,
-  ClipboardList, Globe2, Palette, Check, Moon, Sun,
+  ClipboardList, Globe2, Palette, Check, Moon, Sun, Pencil, Trash2,
 } from 'lucide-react'
 import { activities, opportunities, revenueBars } from './data/dashboard'
 import { createClientApi, type CreateClientDTO } from './services/clientService'
@@ -330,6 +330,16 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [period, setPeriod] = useState('Este mes')
   const [notice, setNotice] = useState('')
+  const [rowMenuEmail, setRowMenuEmail] = useState<string | null>(null)
+
+  const deleteRecord = (email: string) => {
+    if (crmSection === 'Proveedores') {
+      setSupplierRecords((prev) => prev.filter((r) => r.email !== email))
+    } else {
+      setClientRecords((prev) => prev.filter((r) => r.email !== email))
+    }
+    setRowMenuEmail(null)
+  }
 
   const handleCreate = () => setNotice('El formulario de creación estará disponible al conectar el módulo comercial.')
   const directoryRecords = crmSection === 'Proveedores' ? supplierRecords : clientRecords
@@ -453,13 +463,10 @@ function App() {
               {countryObj && (
                 <>
                   {' · '}
-                  <img
-                    src={`/flags/${countryObj.flag}.svg`}
-                    alt=""
-                    width="14"
-                    height="10"
+                  <CountryFlag
+                    code={countryObj.code}
                     className="d2-flag-icon"
-                    style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 4 }}
+                    style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 4, width: 14, height: 10 }}
                   />
                   {countryObj.name}
                 </>
