@@ -9,6 +9,8 @@ import {
   ClipboardList, Globe2, Palette, Check, Moon, Sun,
 } from 'lucide-react'
 import { activities, opportunities, revenueBars } from './data/dashboard'
+import { createClientApi, type CreateClientDTO } from './services/clientService'
+import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
 
 const sections: { label: string; items: { name: string; icon: typeof LayoutDashboard; count?: string }[] }[] = [
   { label: 'ESPACIO DE TRABAJO', items: [{ name: 'Inicio', icon: LayoutDashboard }] },
@@ -29,21 +31,37 @@ const moduleDetails = {
   Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Configura la organización, el acceso de las personas y los controles de operación.', areas: ['Organización y entidad legal', 'Usuarios, membresías y roles', 'Auditoría y configuración'] },
 } as const
 
-type DirectoryRecord = { name: string; company: string; email: string; phone: string; status: string; lastActivity: string; initials: string; color: string }
+type DirectoryRecord = {
+  name: string
+  company: string
+  email: string
+  phone: string
+  status: string
+  lastActivity: string
+  initials: string
+  color: string
+  rfc?: string
+  entityType?: 'company' | 'individual'
+  currency?: 'MXN' | 'USD'
+  paymentTerms?: string
+  city?: string
+  state?: string
+  country?: string
+}
 
 const clients: DirectoryRecord[] = [
-  { name: 'Sofía Ramírez', company: 'Estudio Nómada', email: 'sofia@estudionomada.mx', phone: '55 2184 6301', status: 'Activo', lastActivity: 'Hoy', initials: 'SR', color: 'lilac' },
-  { name: 'Diego Fernández', company: 'Taller Norte', email: 'diego@tallernorte.mx', phone: '81 3045 1120', status: 'Activo', lastActivity: 'Ayer', initials: 'DF', color: 'peach' },
-  { name: 'Valentina Ruiz', company: 'Casa Oliva', email: 'valentina@casaoliva.mx', phone: '33 1470 9822', status: 'Prospecto', lastActivity: 'Ayer', initials: 'VR', color: 'sage' },
-  { name: 'Mateo Cruz', company: 'Lumen Studio', email: 'mateo@lumenstudio.mx', phone: '55 7740 2108', status: 'Activo', lastActivity: '12 nov', initials: 'MC', color: 'blue' },
-  { name: 'Camila Torres', company: 'Punto Cero', email: 'camila@puntocero.mx', phone: '55 4402 7718', status: 'Inactivo', lastActivity: '28 oct', initials: 'CT', color: 'amber' },
+  { name: 'Sofía Ramírez', company: 'Estudio Nómada', email: 'sofia@estudionomada.mx', phone: '55 2184 6301', status: 'Activo', lastActivity: 'Hoy', initials: 'SR', color: 'lilac', rfc: 'ENO190520AB1', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX' },
+  { name: 'Diego Fernández', company: 'Taller Norte', email: 'diego@tallernorte.mx', phone: '81 3045 1120', status: 'Activo', lastActivity: 'Ayer', initials: 'DF', color: 'peach', rfc: 'FED901102XX3', entityType: 'individual', currency: 'MXN', paymentTerms: 'Crédito 15 días', country: 'MX' },
+  { name: 'Valentina Ruiz', company: 'Casa Oliva', email: 'valentina@casaoliva.mx', phone: '33 1470 9822', status: 'Prospecto', lastActivity: 'Ayer', initials: 'VR', color: 'sage', rfc: 'COL210314TY7', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX' },
+  { name: 'Mateo Cruz', company: 'Lumen Studio', email: 'mateo@lumenstudio.mx', phone: '55 7740 2108', status: 'Activo', lastActivity: '12 nov', initials: 'MC', color: 'blue', rfc: 'LUM180905MK8', entityType: 'company', currency: 'MXN', paymentTerms: 'Crédito 30 días', country: 'MX' },
+  { name: 'Camila Torres', company: 'Punto Cero', email: 'camila@puntocero.mx', phone: '55 4402 7718', status: 'Inactivo', lastActivity: '28 oct', initials: 'CT', color: 'amber', rfc: 'PCE160719881', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX' },
 ]
 
 const suppliers: DirectoryRecord[] = [
-  { name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue' },
-  { name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage' },
-  { name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac' },
-  { name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach' },
+  { name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue', country: 'MX' },
+  { name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', country: 'MX' },
+  { name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', country: 'MX' },
+  { name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', country: 'MX' },
 ]
 
 const accentOptions = [
@@ -53,7 +71,7 @@ const accentOptions = [
   { id: 'terracotta', label: 'Terracota', color: '#b96e56', description: 'Cálido y cercano' },
 ] as const
 type AccentTheme = typeof accentOptions[number]['id']
-type CreateKind = 'supplier' | 'opportunity' | 'activity'
+type CreateKind = 'client' | 'supplier' | 'opportunity' | 'activity'
 
 const settingsGroups = [
   { label: 'ESPACIO DE TRABAJO', items: [{ name: 'General', icon: Settings2 }, { name: 'Organización', icon: Building2 }, { name: 'Idioma y región', icon: Globe2 }] },
@@ -113,26 +131,61 @@ const money = (value: number) => new Intl.NumberFormat('es-MX', { style: 'curren
 const pageRoutes: Record<string, string> = {
   Inicio: '/',
   CRM: '/crm',
-  Ventas: '/ventas',
-  Operaciones: '/operaciones',
-  Finanzas: '/finanzas',
-  Administración: '/administracion',
+  Ventas: '/sales',
+  Operaciones: '/operations',
+  Finanzas: '/finance',
+  Administración: '/admin',
   Configuración: '/settings',
 }
 
-const pageFromPath = (pathname: string) => pathname.startsWith('/crm') ? 'CRM' : Object.entries(pageRoutes).find(([, route]) => route === pathname.replace(/\/$/, '') || (pathname === '/' && route === '/'))?.[0] ?? 'Inicio'
-const crmSectionFromPath = (pathname: string) => pathname === '/crm/clientes' ? 'Clientes' : pathname === '/crm/proveedores' ? 'Proveedores' : pathname === '/crm/oportunidades' ? 'Oportunidades' : pathname === '/crm/actividades' ? 'Actividades' : 'Resumen'
+const pageFromPath = (pathname: string) => {
+  if (pathname.startsWith('/crm')) return 'CRM'
+  const normalized = pathname.replace(/\/$/, '') || '/'
+  if (normalized === '/ventas') return 'Ventas'
+  if (normalized === '/operaciones') return 'Operaciones'
+  if (normalized === '/finanzas') return 'Finanzas'
+  if (normalized === '/administracion') return 'Administración'
+  return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
+}
+
+const crmSectionFromPath = (pathname: string) =>
+  pathname === '/crm/customers' || pathname === '/crm/clients' || pathname === '/crm/clientes'
+    ? 'Clientes'
+    : pathname === '/crm/vendors' || pathname === '/crm/suppliers' || pathname === '/crm/proveedores'
+    ? 'Proveedores'
+    : pathname === '/crm/opportunities' || pathname === '/crm/oportunidades'
+    ? 'Oportunidades'
+    : pathname === '/crm/activities' || pathname === '/crm/actividades'
+    ? 'Actividades'
+    : 'Resumen'
 
 function App() {
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
   const [clientQuery, setClientQuery] = useState('')
   const [clientStatus, setClientStatus] = useState('Todos')
+  const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
   const [supplierRecords, setSupplierRecords] = useState(suppliers)
   const [opportunityRecords, setOpportunityRecords] = useState(opportunities)
   const [activityRecords, setActivityRecords] = useState(activities)
   const [createKind, setCreateKind] = useState<CreateKind | null>(null)
-  const [createForm, setCreateForm] = useState({ name: '', company: '', email: '', phone: '', title: '', time: '10:00', value: '' })
+  const [createForm, setCreateForm] = useState({ name: '', company: '', email: '', phone: '', title: '', time: '10:00', value: '', country: 'MX' })
+  const [clientForm, setClientForm] = useState<CreateClientDTO>({
+    name: '',
+    company: '',
+    email: '',
+    phone: '',
+    rfc: '',
+    entityType: 'company',
+    status: 'Activo',
+    currency: 'MXN',
+    paymentTerms: 'Contado',
+    city: '',
+    state: '',
+    country: 'MX',
+    notes: '',
+  })
+  const [isSubmittingClient, setIsSubmittingClient] = useState(false)
   const [activeSetting, setActiveSetting] = useState('General')
   const [accentTheme, setAccentTheme] = useState<AccentTheme>(() => {
     const savedTheme = window.localStorage.getItem('aes-nexus-accent')
@@ -149,23 +202,104 @@ function App() {
   const navigateToCrmSection = (section: string) => {
     setActivePage('CRM')
     setCrmSection(section)
-    const route = section === 'Clientes' ? '/crm/clientes' : section === 'Proveedores' ? '/crm/proveedores' : section === 'Oportunidades' ? '/crm/oportunidades' : section === 'Actividades' ? '/crm/actividades' : '/crm'
+    const route =
+      section === 'Clientes'
+        ? '/crm/customers'
+        : section === 'Proveedores'
+        ? '/crm/vendors'
+        : section === 'Oportunidades'
+        ? '/crm/opportunities'
+        : section === 'Actividades'
+        ? '/crm/activities'
+        : '/crm'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
   const openCreate = (kind: CreateKind) => {
     setCreateKind(kind)
-    setCreateForm({ name: '', company: '', email: '', phone: '', title: '', time: '10:00', value: '' })
+    setCreateForm({ name: '', company: '', email: '', phone: '', title: '', time: '10:00', value: '', country: 'MX' })
+    setClientForm({
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      rfc: '',
+      entityType: 'company',
+      status: 'Activo',
+      currency: 'MXN',
+      paymentTerms: 'Contado',
+      city: '',
+      state: '',
+      country: 'MX',
+      notes: '',
+    })
   }
 
-  const closeCreate = () => setCreateKind(null)
+  const closeCreate = () => {
+    if (isSubmittingClient) return
+    setCreateKind(null)
+  }
 
-  const submitCreate = (event: FormEvent<HTMLFormElement>) => {
+  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (createKind === 'client') {
+      setIsSubmittingClient(true)
+      try {
+        const response = await createClientApi(clientForm)
+        const clientData = response.data
+        const newRecord: DirectoryRecord = {
+          name: clientData.name,
+          company: clientData.company,
+          email: clientData.email,
+          phone: clientData.phone,
+          status: clientData.status,
+          lastActivity: clientData.lastActivity,
+          initials: clientData.initials,
+          color: clientData.color,
+          rfc: clientData.rfc,
+          entityType: clientData.entityType,
+          currency: clientData.currency,
+          paymentTerms: clientData.paymentTerms,
+          city: clientData.address?.city,
+          state: clientData.address?.state,
+          country: clientData.address?.country || clientForm.country || 'MX',
+        }
+        setClientRecords((records) => [newRecord, ...records])
+        setNotice(
+          response.isMock
+            ? `Cliente “${newRecord.company}” registrado. (Petición HTTP enviada a /api/v1/crm/customers; guardado en sesión demo)`
+            : `Cliente “${newRecord.company}” registrado y sincronizado con el backend.`
+        )
+        setCrmSection('Clientes')
+        setCreateKind(null)
+      } catch (error) {
+        console.error('Error al registrar cliente:', error)
+        setNotice('No fue posible procesar el alta del cliente.')
+      } finally {
+        setIsSubmittingClient(false)
+      }
+      return
+    }
+
     if (createKind === 'supplier') {
       const name = createForm.name.trim()
       const company = createForm.company.trim() || name
-      setSupplierRecords((records) => [...records, { name, company, email: createForm.email.trim(), phone: createForm.phone.trim(), status: 'Activo', lastActivity: 'Ahora', initials: name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase(), color: 'blue' }])
+      const country = createForm.country.trim() || 'MX'
+      setSupplierRecords((records) => [
+        {
+          name,
+          company,
+          email: createForm.email.trim(),
+          phone: createForm.phone.trim(),
+          status: 'Activo',
+          lastActivity: 'Ahora',
+          initials: name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
+          color: 'blue',
+          country,
+        },
+        ...records,
+      ])
       setNotice(`Proveedor “${name}” creado en esta sesión.`)
       setCrmSection('Proveedores')
     }
@@ -198,10 +332,11 @@ function App() {
   const [notice, setNotice] = useState('')
 
   const handleCreate = () => setNotice('El formulario de creación estará disponible al conectar el módulo comercial.')
-  const directoryRecords = crmSection === 'Proveedores' ? supplierRecords : clients
+  const directoryRecords = crmSection === 'Proveedores' ? supplierRecords : clientRecords
   const filteredDirectory = directoryRecords.filter((client) => {
     const query = clientQuery.trim().toLowerCase()
-    const matchesQuery = !query || `${client.name} ${client.company} ${client.email}`.toLowerCase().includes(query)
+    const countryName = findCountry(client.country)?.name || ''
+    const matchesQuery = !query || `${client.name} ${client.company} ${client.email} ${client.rfc || ''} ${client.country || ''} ${countryName}`.toLowerCase().includes(query)
     const matchesStatus = clientStatus === 'Todos' || client.status === clientStatus
     return matchesQuery && matchesStatus
   })
@@ -288,10 +423,10 @@ function App() {
               {notice && <div className="notice" role="status">{notice}<button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}
               <nav className="crm-tabs" aria-label="Secciones de CRM">
                 <button className={crmSection === 'Resumen' ? 'active' : ''} onClick={() => navigateToCrmSection('Resumen')}>Resumen</button>
-                <button className={crmSection === 'Clientes' ? 'active' : ''} onClick={() => navigateToCrmSection('Clientes')}>Clientes <span>24</span></button>
-                <button className={crmSection === 'Proveedores' ? 'active' : ''} onClick={() => navigateToCrmSection('Proveedores')}>Proveedores <span>8</span></button>
-                <button className={crmSection === 'Oportunidades' ? 'active' : ''} onClick={() => navigateToCrmSection('Oportunidades')}>Oportunidades <span>12</span></button>
-                <button className={crmSection === 'Actividades' ? 'active' : ''} onClick={() => navigateToCrmSection('Actividades')}>Actividades <span>8</span></button>
+                <button className={crmSection === 'Clientes' ? 'active' : ''} onClick={() => navigateToCrmSection('Clientes')}>Clientes <span>{clientRecords.length}</span></button>
+                <button className={crmSection === 'Proveedores' ? 'active' : ''} onClick={() => navigateToCrmSection('Proveedores')}>Proveedores <span>{supplierRecords.length}</span></button>
+                <button className={crmSection === 'Oportunidades' ? 'active' : ''} onClick={() => navigateToCrmSection('Oportunidades')}>Oportunidades <span>{opportunityRecords.length}</span></button>
+                <button className={crmSection === 'Actividades' ? 'active' : ''} onClick={() => navigateToCrmSection('Actividades')}>Actividades <span>{activityRecords.length}</span></button>
               </nav>
               {crmSection === 'Oportunidades' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
@@ -301,11 +436,46 @@ function App() {
                 <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div><button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button></div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`)}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => setNotice('La agenda completa estará disponible en la siguiente iteración.')}>Ver calendario <ArrowRight size={13} /></button></aside></div>
               </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => setNotice('La creación de clientes estará disponible al conectar el CRM.')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por nombre, empresa o correo" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
-                <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? 24 : 8} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
-                <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th><span className="sr-only">Opciones</span></th></tr></thead><tbody>{filteredDirectory.map((client) => <tr key={client.email}><td><div className="company-cell"><div className={`company-avatar ${client.color}`}>{client.initials}</div><div><strong>{client.name}</strong><span>{client.company}</span></div></div></td><td><div className="client-contact"><span>{client.email}</span><small>{client.phone}</small></div></td><td><span className={`client-status status-${client.status.toLowerCase()}`}><i />{client.status}</span></td><td className="date-cell">{client.lastActivity}</td><td><button className="row-more" aria-label={`Opciones para ${client.name}`} onClick={() => setNotice(`Las acciones para ${client.name} estarán disponibles al conectar el CRM.`)}><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table>{filteredDirectory.length === 0 && <div className="clients-empty"><Users size={20} /><strong>No encontramos {crmSection.toLowerCase()}</strong><span>Prueba con otro nombre, empresa o estado.</span></div>}</div>
-              </> : <div className="crm-overview-grid"><article className="crm-overview-card crm-overview-highlight"><span className="kpi-icon"><Users size={17} /></span><div><strong>24</strong><span>Clientes y prospectos</span></div><button className="text-link" onClick={() => navigateToCrmSection('Clientes')}>Ver clientes <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-lilac"><Target size={17} /></span><div><strong>12</strong><span>Oportunidades abiertas</span></div><button className="text-link" onClick={() => setNotice('El pipeline estará disponible en la siguiente iteración.')}>Ver pipeline <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-sand"><Clock3 size={17} /></span><div><strong>8</strong><span>Actividades esta semana</span></div><button className="text-link" onClick={() => setNotice('La agenda estará disponible en la siguiente iteración.')}>Ver agenda <ArrowRight size={13} /></button></article></div>}
+                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
+                <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
+                <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th><span className="sr-only">Opciones</span></th></tr></thead><tbody>{filteredDirectory.map((client) => {
+  const countryObj = findCountry(client.country)
+  return (
+    <tr key={client.email}>
+      <td>
+        <div className="company-cell">
+          <div className={`company-avatar ${client.color}`}>{client.initials}</div>
+          <div>
+            <strong>{client.company}</strong>
+            <span>
+              {client.name} {client.rfc ? `· ${client.rfc}` : ''}
+              {countryObj && (
+                <>
+                  {' · '}
+                  <img
+                    src={`/flags/${countryObj.flag}.svg`}
+                    alt=""
+                    width="14"
+                    height="10"
+                    className="d2-flag-icon"
+                    style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: 4 }}
+                  />
+                  {countryObj.name}
+                </>
+              )}
+            </span>
+          </div>
+        </div>
+      </td>
+      <td><div className="client-contact"><span>{client.email}</span><small>{client.phone}</small></div></td>
+      <td><span className={`client-status status-${client.status.toLowerCase()}`}><i />{client.status}</span></td>
+      <td className="date-cell">{client.lastActivity}</td>
+      <td><button className="row-more" aria-label={`Opciones para ${client.name}`} onClick={() => setNotice(`Las acciones para ${client.name} estarán disponibles al conectar el CRM.`)}><MoreHorizontal size={17} /></button></td>
+    </tr>
+  )
+})}</tbody></table>{filteredDirectory.length === 0 && <div className="clients-empty"><Users size={20} /><strong>No encontramos {crmSection.toLowerCase()}</strong><span>Prueba con otro nombre, empresa o estado.</span></div>}</div>
+              </> : <div className="crm-overview-grid"><article className="crm-overview-card crm-overview-highlight"><span className="kpi-icon"><Users size={17} /></span><div><strong>{clientRecords.length}</strong><span>Clientes y prospectos</span></div><button className="text-link" onClick={() => navigateToCrmSection('Clientes')}>Ver clientes <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-lilac"><Target size={17} /></span><div><strong>12</strong><span>Oportunidades abiertas</span></div><button className="text-link" onClick={() => setNotice('El pipeline estará disponible en la siguiente iteración.')}>Ver pipeline <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-sand"><Clock3 size={17} /></span><div><strong>8</strong><span>Actividades esta semana</span></div><button className="text-link" onClick={() => setNotice('La agenda estará disponible en la siguiente iteración.')}>Ver agenda <ArrowRight size={13} /></button></article></div>}
             </section>
           ) : activePage === 'Inicio' ? (
             <>
@@ -365,12 +535,187 @@ function App() {
       </main>
       {createKind && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeCreate() }}>
         <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
-          <div className="create-modal-heading"><div><div className="panel-kicker">AES NEXUS · CRM</div><h2 id="create-modal-title">{createKind === 'supplier' ? 'Nuevo proveedor' : createKind === 'opportunity' ? 'Nueva oportunidad' : 'Nueva actividad'}</h2><p>Completa los datos básicos. Se guardarán sólo durante esta sesión demo.</p></div><button className="icon-button" aria-label="Cerrar formulario" onClick={closeCreate}><X size={18} /></button></div>
+          <div className="create-modal-heading">
+            <div>
+              <div className="panel-kicker">AES NEXUS · CRM</div>
+              <h2 id="create-modal-title">
+                {createKind === 'client' ? 'Nuevo cliente comercial' : createKind === 'supplier' ? 'Nuevo proveedor' : createKind === 'opportunity' ? 'Nueva oportunidad' : 'Nueva actividad'}
+              </h2>
+              <p>
+                {createKind === 'client'
+                  ? 'Registra la entidad comercial y contacto. Se reflejará de inmediato en tu directorio.'
+                  : 'Completa los datos básicos. Se guardarán sólo durante esta sesión demo.'}
+              </p>
+            </div>
+            <button className="icon-button" aria-label="Cerrar formulario" disabled={isSubmittingClient} onClick={closeCreate}><X size={18} /></button>
+          </div>
           <form onSubmit={submitCreate}>
-            {createKind === 'supplier' && <><label className="form-field"><span>Nombre del contacto</span><input required autoFocus value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Ej. Laura Méndez" /></label><label className="form-field"><span>Empresa</span><input value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Suministros del Centro" /></label><div className="form-grid"><label className="form-field"><span>Correo</span><input type="email" required value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} placeholder="correo@empresa.mx" /></label><label className="form-field"><span>Teléfono</span><input value={createForm.phone} onChange={(event) => setCreateForm({ ...createForm, phone: event.target.value })} placeholder="55 0000 0000" /></label></div></>}
+            {createKind === 'client' && (
+              <>
+                <div className="form-section-divider">Datos generales y fiscales</div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Razón Social / Empresa *</span>
+                    <input
+                      required
+                      autoFocus
+                      value={clientForm.company}
+                      onChange={(event) => setClientForm({ ...clientForm, company: event.target.value })}
+                      placeholder="Ej. Distribuidora del Norte S.A. de C.V."
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Tipo de entidad</span>
+                    <select
+                      value={clientForm.entityType}
+                      onChange={(event) => setClientForm({ ...clientForm, entityType: event.target.value as 'company' | 'individual' })}
+                    >
+                      <option value="company">Persona Moral (Empresa)</option>
+                      <option value="individual">Persona Física (Individual)</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Contacto principal *</span>
+                    <input
+                      required
+                      value={clientForm.name}
+                      onChange={(event) => setClientForm({ ...clientForm, name: event.target.value })}
+                      placeholder="Ej. Alejandro Valdés"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>RFC / ID Fiscal (México)</span>
+                    <input
+                      value={clientForm.rfc}
+                      onChange={(event) => setClientForm({ ...clientForm, rfc: event.target.value.toUpperCase() })}
+                      placeholder="Ej. DNO180420AB9"
+                      maxLength={13}
+                    />
+                  </label>
+                </div>
+
+                <div className="form-section-divider">Contacto y comunicación</div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Correo electrónico *</span>
+                    <input
+                      type="email"
+                      required
+                      value={clientForm.email}
+                      onChange={(event) => setClientForm({ ...clientForm, email: event.target.value })}
+                      placeholder="contacto@empresa.mx"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Teléfono</span>
+                    <input
+                      type="tel"
+                      value={clientForm.phone}
+                      onChange={(event) => setClientForm({ ...clientForm, phone: event.target.value })}
+                      placeholder="55 1234 5678"
+                    />
+                  </label>
+                </div>
+
+                <div className="form-section-divider">Condiciones comerciales (NetSuite)</div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Estado inicial</span>
+                    <select
+                      value={clientForm.status}
+                      onChange={(event) => setClientForm({ ...clientForm, status: event.target.value as any })}
+                    >
+                      <option value="Activo">Activo</option>
+                      <option value="Prospecto">Prospecto</option>
+                      <option value="Inactivo">Inactivo</option>
+                    </select>
+                  </label>
+                  <label className="form-field">
+                    <span>Moneda preferida</span>
+                    <select
+                      value={clientForm.currency}
+                      onChange={(event) => setClientForm({ ...clientForm, currency: event.target.value as any })}
+                    >
+                      <option value="MXN">MXN · Peso mexicano</option>
+                      <option value="USD">USD · Dólar estadounidense</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Condiciones de pago</span>
+                    <select
+                      value={clientForm.paymentTerms}
+                      onChange={(event) => setClientForm({ ...clientForm, paymentTerms: event.target.value })}
+                    >
+                      <option value="Contado">Contado</option>
+                      <option value="Crédito 15 días">Crédito 15 días</option>
+                      <option value="Crédito 30 días">Crédito 30 días</option>
+                      <option value="Crédito 60 días">Crédito 60 días</option>
+                    </select>
+                  </label>
+                  <CountryDropdown
+                    countries={countries}
+                    value={clientForm.country}
+                    onChange={(code) => setClientForm({ ...clientForm, country: code })}
+                    disabled={isSubmittingClient}
+                    placeholder="Seleccionar país"
+                    id="client-country"
+                    label="País *"
+                  />
+                </div>
+
+                <label className="form-field">
+                  <span>Ciudad / Estado</span>
+                  <input
+                    value={clientForm.city}
+                    onChange={(event) => setClientForm({ ...clientForm, city: event.target.value })}
+                    placeholder="Ej. Monterrey, Nuevo León"
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Notas y acuerdos comerciales</span>
+                  <textarea
+                    value={clientForm.notes}
+                    onChange={(event) => setClientForm({ ...clientForm, notes: event.target.value })}
+                    placeholder="Acuerdos especiales, línea de crédito estimada o referencias de la relación comercial..."
+                  />
+                </label>
+              </>
+            )}
+
+            {createKind === 'supplier' && (
+              <>
+                <label className="form-field"><span>Nombre del contacto *</span><input required autoFocus value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Ej. Laura Méndez" /></label>
+                <label className="form-field"><span>Empresa *</span><input required value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Suministros del Centro" /></label>
+                <div className="form-grid">
+                  <label className="form-field"><span>Correo *</span><input type="email" required value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} placeholder="correo@empresa.mx" /></label>
+                  <label className="form-field"><span>Teléfono</span><input value={createForm.phone} onChange={(event) => setCreateForm({ ...createForm, phone: event.target.value })} placeholder="55 0000 0000" /></label>
+                </div>
+                <CountryDropdown
+                  countries={countries}
+                  value={createForm.country}
+                  onChange={(code) => setCreateForm({ ...createForm, country: code })}
+                  disabled={isSubmittingClient}
+                  placeholder="Seleccionar país"
+                  id="supplier-country"
+                  label="País *"
+                />
+              </>
+            )}
             {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado (MXN)</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
             {createKind === 'activity' && <><label className="form-field"><span>Actividad</span><input required autoFocus value={createForm.title} onChange={(event) => setCreateForm({ ...createForm, title: event.target.value })} placeholder="Ej. Confirmar reunión" /></label><div className="form-grid"><label className="form-field"><span>Empresa</span><input value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Empresa relacionada" /></label><label className="form-field"><span>Hora</span><input type="time" required value={createForm.time} onChange={(event) => setCreateForm({ ...createForm, time: event.target.value })} /></label></div></>}
-            <div className="create-modal-actions"><button className="button button-secondary" type="button" onClick={closeCreate}>Cancelar</button><button className="button button-primary" type="submit"><Plus size={14} /> Crear {createKind === 'supplier' ? 'proveedor' : createKind === 'opportunity' ? 'oportunidad' : 'actividad'}</button></div>
+            <div className="create-modal-actions">
+              <button className="button button-secondary" type="button" disabled={isSubmittingClient} onClick={closeCreate}>Cancelar</button>
+              <button className="button button-primary" type="submit" disabled={isSubmittingClient}>
+                <Plus size={14} /> {isSubmittingClient ? 'Enviando petición...' : `Crear ${createKind === 'client' ? 'cliente' : createKind === 'supplier' ? 'proveedor' : createKind === 'opportunity' ? 'oportunidad' : 'actividad'}`}
+              </button>
+            </div>
           </form>
         </section>
       </div>}

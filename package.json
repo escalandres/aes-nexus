@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "country-flag-icons": "^1.6.20",
     "lucide-react": "^0.468.0",
     "react": "latest",
     "react-dom": "latest",
