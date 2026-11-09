@@ -7,11 +7,15 @@
  */
 
 export interface ClientAddress {
+  id?: string
   street?: string
+  colony?: string
   city?: string
   state?: string
   zipCode?: string
   country?: string
+  isShipping?: boolean
+  isBilling?: boolean
 }
 
 export interface ClientRecord {
@@ -29,6 +33,7 @@ export interface ClientRecord {
   currency?: 'MXN' | 'USD'
   paymentTerms?: string
   address?: ClientAddress
+  addresses?: ClientAddress[]
   notes?: string
   createdAt?: string
 }
@@ -47,6 +52,7 @@ export interface CreateClientDTO {
   state?: string
   country?: string
   notes?: string
+  addresses?: ClientAddress[]
 }
 
 export interface ClientApiResponse<T> {
@@ -105,11 +111,14 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
     entityType: dto.entityType || 'company',
     currency: dto.currency || 'MXN',
     paymentTerms: dto.paymentTerms || 'Contado',
-    address: {
-      city: dto.city?.trim(),
-      state: dto.state?.trim(),
-      country: dto.country?.trim() || 'México',
-    },
+    address: dto.addresses && dto.addresses.length > 0
+      ? dto.addresses[0]
+      : {
+          city: dto.city?.trim(),
+          state: dto.state?.trim(),
+          country: dto.country?.trim() || 'México',
+        },
+    addresses: dto.addresses || [],
     notes: dto.notes?.trim(),
     createdAt: new Date().toISOString(),
   }

@@ -1,0 +1,8 @@
+{
+  "name": "AES Nexus",
+  "description": "Gestión comercial y operativa para pequeñas empresas.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
