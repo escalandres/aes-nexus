@@ -378,3 +378,208 @@ export const initialTransactions: PaymentTransaction[] = [
     account: 'Banorte',
   },
 ]
+
+export type AccountType =
+  | 'Activo circulante'
+  | 'Activo no circulante'
+  | 'Pasivo a corto plazo'
+  | 'Pasivo a largo plazo'
+  | 'Capital contable'
+  | 'Ingresos'
+  | 'Costos'
+  | 'Gastos de operación'
+
+export interface ChartAccount {
+  id: string
+  code: string
+  name: string
+  type: AccountType
+  nature: 'Deudora' | 'Acreedora'
+  balance: number
+  description?: string
+  status: 'Activa' | 'Inactiva'
+}
+
+export const initialChartAccounts: ChartAccount[] = [
+  {
+    id: 'acc_1',
+    code: '1001-001',
+    name: 'Caja general y fondos fijos',
+    type: 'Activo circulante',
+    nature: 'Deudora',
+    balance: 19300,
+    description: 'Efectivo disponible en caja chica para gastos menores de almacén.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_2',
+    code: '1002-001',
+    name: 'BBVA México · Cuenta operativa',
+    type: 'Activo circulante',
+    nature: 'Deudora',
+    balance: 512400,
+    description: 'Cuenta de cheques principal para dispersión de pagos y nómina.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_3',
+    code: '1002-002',
+    name: 'Banorte · Cuenta concentradora',
+    type: 'Activo circulante',
+    nature: 'Deudora',
+    balance: 310800,
+    description: 'Recepción de pagos SPEI y liquidaciones con tarjeta de clientes.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_4',
+    code: '1005-001',
+    name: 'Clientes nacionales por cobrar',
+    type: 'Activo circulante',
+    nature: 'Deudora',
+    balance: 131565,
+    description: 'Cuentas por cobrar derivadas de facturas comerciales emitidas.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_5',
+    code: '1150-001',
+    name: 'Inventario de mercancías en almacén',
+    type: 'Activo circulante',
+    nature: 'Deudora',
+    balance: 325180,
+    description: 'Valuación al costo de productos almacenados en Vallejo y Monterrey.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_6',
+    code: '1201-001',
+    name: 'Mobiliario y equipo de oficina',
+    type: 'Activo no circulante',
+    nature: 'Deudora',
+    balance: 145000,
+    description: 'Activo fijo en estaciones de trabajo e infraestructura física.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_7',
+    code: '1204-001',
+    name: 'Equipo de cómputo y servidores rack',
+    type: 'Activo no circulante',
+    nature: 'Deudora',
+    balance: 280000,
+    description: 'Servidores e infraestructura informática de red.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_8',
+    code: '2001-001',
+    name: 'Proveedores nacionales por pagar',
+    type: 'Pasivo a corto plazo',
+    nature: 'Acreedora',
+    balance: 246956,
+    description: 'Obligaciones contraídas por adquisición de inventario e insumos.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_9',
+    code: '2005-001',
+    name: 'Impuestos y retenciones por pagar',
+    type: 'Pasivo a corto plazo',
+    nature: 'Acreedora',
+    balance: 38420,
+    description: 'IVA trasladado cobrado pendiente de acreditar y retenciones fiscales.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_10',
+    code: '3001-001',
+    name: 'Capital social aportado',
+    type: 'Capital contable',
+    nature: 'Acreedora',
+    balance: 500000,
+    description: 'Aportaciones de socios formalizadas en acta constitutiva.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_11',
+    code: '3002-001',
+    name: 'Resultados acumulados de ejercicios anteriores',
+    type: 'Capital contable',
+    nature: 'Acreedora',
+    balance: 314200,
+    description: 'Utilidades retenidas reinvertidas en la operación del negocio.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_12',
+    code: '4001-001',
+    name: 'Ingresos por venta de productos',
+    type: 'Ingresos',
+    nature: 'Acreedora',
+    balance: 784500,
+    description: 'Ventas brutas facturadas en catálogo de hardware y terminales.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_13',
+    code: '4002-001',
+    name: 'Ingresos por consultoría y servicios TI',
+    type: 'Ingresos',
+    nature: 'Acreedora',
+    balance: 297900,
+    description: 'Honorarios por pólizas de mantenimiento, configuración e instalación.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_14',
+    code: '5001-001',
+    name: 'Costo de ventas de mercancías',
+    type: 'Costos',
+    nature: 'Deudora',
+    balance: 412000,
+    description: 'Costo directo de adquisición de productos vendidos en el periodo.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_15',
+    code: '6001-001',
+    name: 'Gastos de arrendamiento y bodegas',
+    type: 'Gastos de operación',
+    nature: 'Deudora',
+    balance: 37120,
+    description: 'Renta mensual de almacén y oficinas corporativas.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_16',
+    code: '6002-001',
+    name: 'Sueldos, nómina y honorarios asimilados',
+    type: 'Gastos de operación',
+    nature: 'Deudora',
+    balance: 115000,
+    description: 'Retribución de equipo de operaciones, ventas y administración.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_17',
+    code: '6003-001',
+    name: 'Servicios públicos y energía eléctrica',
+    type: 'Gastos de operación',
+    nature: 'Deudora',
+    balance: 8642,
+    description: 'Consumos de energía CFE, agua y servicios en bodegas.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_18',
+    code: '6004-001',
+    name: 'Software, licencias y hosting en la nube',
+    type: 'Gastos de operación',
+    nature: 'Deudora',
+    balance: 7888,
+    description: 'Infraestructura SaaS, correo corporativo y servidores cloud.',
+    status: 'Activa',
+  },
+]
+

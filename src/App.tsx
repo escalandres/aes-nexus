@@ -39,17 +39,25 @@ import { FinanceReceivables } from './components/FinanceReceivables'
 import { FinancePayables } from './components/FinancePayables'
 import { FinanceExpenses } from './components/FinanceExpenses'
 import { FinanceOverview } from './components/FinanceOverview'
+import { FinanceAccounting } from './components/FinanceAccounting'
+import {
+  AdministrationSection,
+  type DepartmentRecord,
+  type PhysicalLocationRecord,
+} from './components/AdministrationSection'
 import {
   initialBankAccounts,
   initialReceivables,
   initialPayables,
   initialExpenses,
   initialTransactions,
+  initialChartAccounts,
   type BankAccount,
   type InvoiceReceivable,
   type BillPayable,
   type ExpenseRecord,
   type PaymentTransaction,
+  type ChartAccount,
 } from './data/finance'
 
 const sections: { label: string; items: { name: string; icon: typeof LayoutDashboard; count?: string }[] }[] = [
@@ -103,6 +111,21 @@ const suppliers: DirectoryRecord[] = [
   { name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', country: 'MX' },
   { name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', country: 'MX' },
   { name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', country: 'MX' },
+]
+
+const initialDepartments: DepartmentRecord[] = [
+  { id: 'dep_1', code: 'DIR-01', name: 'Dirección General', leader: 'Andrea Morales', costCenter: 'CC-100', description: 'Toma de decisiones estratégicas y gobierno corporativo.', active: true },
+  { id: 'dep_2', code: 'OPE-02', name: 'Operaciones y Logística', leader: 'Roberto Santos', costCenter: 'CC-200', description: 'Control de inventarios, compras, almacén y distribución.', active: true },
+  { id: 'dep_3', code: 'FIN-03', name: 'Finanzas y Tesorería', leader: 'Gabriela Morales', costCenter: 'CC-300', description: 'Flujo de caja, cuentas por cobrar, pagos e impuestos.', active: true },
+  { id: 'dep_4', code: 'VEN-04', name: 'Ventas y Comercial', leader: 'Carlos Méndez', costCenter: 'CC-400', description: 'Prospección, cotizaciones, pedidos y atención a cuentas.', active: true },
+  { id: 'dep_5', code: 'TEC-05', name: 'Tecnología y Sistemas', leader: 'Laura R.', costCenter: 'CC-500', description: 'Infraestructura TI, software ERP y soporte técnico.', active: true },
+]
+
+const initialLocations: PhysicalLocationRecord[] = [
+  { id: 'loc_1', code: 'CORP-CDMX', name: 'Sede Corporativa Reforma', type: 'Oficina corporativa', address: 'Paseo de la Reforma 222, Piso 14', city: 'Ciudad de México', state: 'CDMX', country: 'México', manager: 'Andrea Morales', active: true },
+  { id: 'loc_2', code: 'ALM-VALLEJO', name: 'Almacén Central Vallejo', type: 'Almacén / Bodega', address: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', country: 'México', manager: 'Roberto Santos', active: true },
+  { id: 'loc_3', code: 'SUC-MTY', name: 'Sucursal y Bodega Monterrey', type: 'Sucursal', address: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', country: 'México', manager: 'Diego Fernández', active: true },
+  { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', active: true },
 ]
 
 const accentOptions = [
@@ -219,7 +242,9 @@ const operationsSectionFromPath = (pathname: string) =>
     : 'Inventario'
 
 const financeSectionFromPath = (pathname: string) =>
-  pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
+  pathname === '/finance/accounting' || pathname === '/finance/cuentas-contables' || pathname === '/finanzas/cuentas-contables'
+    ? 'Cuentas contables'
+    : pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
     ? 'Pagos'
     : pathname === '/finance/expenses' || pathname === '/finance/gastos' || pathname === '/finanzas/gastos'
     ? 'Gastos'
@@ -227,13 +252,21 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Resumen'
     : 'Cobros'
 
+const adminSectionFromPath = (pathname: string) =>
+  pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
+    ? 'Ubicaciones'
+    : pathname === '/admin/summary' || pathname === '/admin/resumen' || pathname === '/administracion/resumen'
+    ? 'Resumen'
+    : 'Departamentos'
+
 function AppContent() {
   const toast = useToast()
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
   const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
-  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Gastos' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [adminSection, setAdminSection] = useState<'Departamentos' | 'Ubicaciones' | 'Resumen'>(() => adminSectionFromPath(window.location.pathname))
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
   const [warehouses] = useState<Warehouse[]>(initialWarehouses)
@@ -246,6 +279,9 @@ function AppContent() {
   const [payables, setPayables] = useState<BillPayable[]>(initialPayables)
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
+  const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
+  const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
+  const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
 
   const handleAddMovement = (mov: StockMovement) => {
     setMovements((prev) => [mov, ...prev])
@@ -257,6 +293,14 @@ function AppContent() {
 
   const handleAddExpense = (exp: ExpenseRecord) => {
     setExpenses((prev) => [exp, ...prev])
+  }
+
+  const handleAddDepartment = (dep: DepartmentRecord) => {
+    setDepartments((prev) => [dep, ...prev])
+  }
+
+  const handleAddLocation = (loc: PhysicalLocationRecord) => {
+    setLocations((prev) => [loc, ...prev])
   }
 
   const handleUpdateBankAccountBalance = (accountId: string, delta: number) => {
@@ -368,15 +412,30 @@ function AppContent() {
     if (page === 'CRM') setCrmSection('Resumen')
     if (page === 'Operaciones') setOperationsSection('Inventario')
     if (page === 'Finanzas') setFinanceSection('Cobros')
+    if (page === 'Administración') setAdminSection('Departamentos')
     const route = pageRoutes[page] ?? '/'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Gastos' | 'Resumen') => {
+  const navigateToAdminSection = (section: 'Departamentos' | 'Ubicaciones' | 'Resumen') => {
+    setActivePage('Administración')
+    setAdminSection(section)
+    const route =
+      section === 'Ubicaciones'
+        ? '/admin/locations'
+        : section === 'Resumen'
+        ? '/admin/summary'
+        : '/admin'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen') => {
     setActivePage('Finanzas')
     setFinanceSection(section)
     const route =
-      section === 'Pagos'
+      section === 'Cuentas contables'
+        ? '/finance/accounting'
+        : section === 'Pagos'
         ? '/finance/payables'
         : section === 'Gastos'
         ? '/finance/expenses'
@@ -692,7 +751,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? 'Productos y servicios' : salesSection}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? 'Inventario por almacén' : operationsSection === 'Compras' ? 'Compras y recepciones' : operationsSection === 'Entregas' ? 'Entregas y devoluciones' : 'Resumen operativo'}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? 'Cuentas por cobrar y cobros' : financeSection === 'Pagos' ? 'Cuentas por pagar a proveedores' : financeSection === 'Gastos' ? 'Gastos y egresos operativos' : 'Resumen financiero'}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? 'Productos y servicios' : salesSection}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? 'Inventario por almacén' : operationsSection === 'Compras' ? 'Compras y recepciones' : operationsSection === 'Entregas' ? 'Entregas y devoluciones' : 'Resumen operativo'}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? 'Cuentas por cobrar y cobros' : financeSection === 'Pagos' ? 'Cuentas por pagar a proveedores' : financeSection === 'Gastos' ? 'Gastos y egresos operativos' : financeSection === 'Cuentas contables' ? 'Cuentas contables' : 'Resumen financiero'}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? 'Departamentos de la organización' : adminSection === 'Ubicaciones' ? 'Ubicaciones y sedes físicas' : 'Resumen organizacional'}</span> </> : null}</div>
           <div className="topbar-actions"><span className="demo-pill"><i /> DEMO</span><button className="icon-button notification-button" aria-label="Notificaciones" onClick={() => toast.info('No tienes notificaciones pendientes. Todo está al día.', 'Centro de notificaciones')}><Bell size={18} /><i /></button><div className="top-avatar">AM</div></div>
         </header>
 
@@ -983,6 +1042,12 @@ function AppContent() {
                   Gastos y egresos <span>{expenses.length}</span>
                 </button>
                 <button
+                  className={financeSection === 'Cuentas contables' ? 'active' : ''}
+                  onClick={() => navigateToFinanceSection('Cuentas contables')}
+                >
+                  Cuentas contables <span>{chartAccounts.length}</span>
+                </button>
+                <button
                   className={financeSection === 'Resumen' ? 'active' : ''}
                   onClick={() => navigateToFinanceSection('Resumen')}
                 >
@@ -1025,6 +1090,11 @@ function AppContent() {
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                 />
+              ) : financeSection === 'Cuentas contables' ? (
+                <FinanceAccounting
+                  accounts={chartAccounts}
+                  onUpdateAccounts={setChartAccounts}
+                />
               ) : (
                 <FinanceOverview
                   bankAccounts={bankAccounts}
@@ -1036,6 +1106,17 @@ function AppContent() {
                 />
               )}
             </section>
+          ) : activePage === 'Administración' ? (
+            <AdministrationSection
+              departments={departments}
+              locations={locations}
+              onAddDepartment={handleAddDepartment}
+              onAddLocation={handleAddLocation}
+              onUpdateDepartments={setDepartments}
+              onUpdateLocations={setLocations}
+              adminSection={adminSection}
+              onNavigateSection={navigateToAdminSection}
+            />
           ) : activePage === 'Inicio' ? (
             <>
               <section className="welcome-row">
