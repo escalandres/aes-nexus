@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import type { ChartAccount, AccountType } from '../data/finance'
+import { Skeleton } from 'boneyard-js/react'
+import { financeAccountingBones } from '../bones/registry'
 import { useToast } from './Toast'
 import { FinanceAccountingChart } from './FinanceAccountingChart'
 
@@ -73,6 +75,14 @@ export function FinanceAccounting({
   const [natureFilter, setNatureFilter] = useState<string>('Todas')
   const [statusFilter, setStatusFilter] = useState<string>('Todos')
   const [searchQuery, setSearchQuery] = useState('')
+  const [isAccountsLoading, setIsAccountsLoading] = useState(false)
+
+  const handleMacroTypeChange = (macro: MacroAccountType) => {
+    setMacroTypeFilter(macro)
+    setSubTypeFilter('Todos')
+    setIsAccountsLoading(true)
+    setTimeout(() => setIsAccountsLoading(false), 320)
+  }
 
   // New Account Modal
   const [isNewAccountModalOpen, setIsNewAccountModalOpen] = useState(false)
@@ -364,10 +374,7 @@ export function FinanceAccounting({
           <div className="warehouse-tab-selector" role="tablist">
             <button
               className={`wh-tab ${macroTypeFilter === 'Todos' ? 'active' : ''}`}
-              onClick={() => {
-                setMacroTypeFilter('Todos')
-                setSubTypeFilter('Todos')
-              }}
+              onClick={() => handleMacroTypeChange('Todos')}
             >
               <Layers size={13} />
               Todas las cuentas
@@ -379,10 +386,7 @@ export function FinanceAccounting({
                 <button
                   key={group}
                   className={`wh-tab ${macroTypeFilter === group ? 'active' : ''}`}
-                  onClick={() => {
-                    setMacroTypeFilter(group)
-                    setSubTypeFilter('Todos')
-                  }}
+                  onClick={() => handleMacroTypeChange(group)}
                 >
                   {group}
                   <span className="wh-badge">{count}</span>
@@ -553,7 +557,13 @@ export function FinanceAccounting({
       </div>
 
       {/* Accounts Table */}
-      <div className="table-wrap ops-table-wrap">
+      <Skeleton
+        name="finance-accounting-table"
+        loading={isAccountsLoading}
+        initialBones={financeAccountingBones}
+        className="accounting-skeleton-container"
+      >
+        <div className="table-wrap ops-table-wrap">
         <table className="data-table ops-data-table">
           <thead>
             <tr>
@@ -647,6 +657,7 @@ export function FinanceAccounting({
           </tbody>
         </table>
       </div>
+      </Skeleton>
 
       {/* Modal: Agregar Cuenta Contable */}
       {isNewAccountModalOpen && (

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   CalendarDays,
   ChevronDown,
@@ -28,7 +28,22 @@ import {
   X,
   Check,
   Sliders,
+  RefreshCw,
+  Bell,
+  BellRing,
+  SlidersHorizontal,
+  Volume2,
+  Smartphone,
+  Search,
+  Minus,
+  Info,
 } from 'lucide-react'
+import { Skeleton } from 'boneyard-js/react'
+import {
+  executiveKpiBones,
+  executiveChartBones,
+  executiveAlertHubBones,
+} from '../bones/registry'
 import type { SalesOrder, Quote } from '../data/sales'
 import type { InventoryItemLocation } from '../data/operations'
 import type {
@@ -46,6 +61,10 @@ interface ExecutiveDashboardProps {
   orders: SalesOrder[]
   quotes: Quote[]
   inventory: InventoryItemLocation[]
+  onUpdateInventory?: (items: InventoryItemLocation[]) => void
+  isStockConfigOpen?: boolean
+  onCloseStockConfig?: () => void
+  initialStockConfigTab?: 'thresholds' | 'push' | 'email'
   receivables: InvoiceReceivable[]
   payables: BillPayable[]
   expenses: ExpenseRecord[]
@@ -79,6 +98,10 @@ export function ExecutiveDashboard({
   orders,
   quotes: _quotes,
   inventory,
+  onUpdateInventory,
+  isStockConfigOpen,
+  onCloseStockConfig,
+  initialStockConfigTab,
   receivables,
   payables,
   expenses,
@@ -95,9 +118,111 @@ export function ExecutiveDashboard({
   const toast = useToast()
   const [period, setPeriod] = useState<'Este mes' | 'Este trimestre' | 'Año 2026'>('Este mes')
   const [showAlertHub, setShowAlertHub] = useState(true)
+  const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
 
-  // Panel Rápido: Notificaciones de Correo para Umbrales de Stock
-  const [showEmailNotifyPanel, setShowEmailNotifyPanel] = useState(false)
+  const handlePeriodChange = (nextPeriod: 'Este mes' | 'Este trimestre' | 'Año 2026') => {
+    setIsLoadingDashboard(true)
+    setPeriod(nextPeriod)
+    setTimeout(() => {
+      setIsLoadingDashboard(false)
+    }, 450)
+    toast.info(`Período de análisis actualizado a: ${nextPeriod}`, 'Filtro temporal')
+  }
+
+  const handleRefreshDashboard = () => {
+    setIsLoadingDashboard(true)
+    setTimeout(() => {
+      setIsLoadingDashboard(false)
+      toast.success('Métricas ejecutivas sincronizadas con el ERP en tiempo real.', 'Datos actualizados')
+    }, 480)
+  }
+
+  // Audio chime player for notifications
+  const playNotificationChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      if (!AudioCtx) return
+      const ctx = new AudioCtx()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      gain.gain.setValueAtTime(0.12, ctx.currentTime)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35)
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime) // D5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1) // A5
+      osc.start()
+      osc.stop(ctx.currentTime + 0.35)
+    } catch {
+      // browser audio policy
+    }
+  }
+
+  // Panel de Control Ejecutivo: Umbrales de Stock y Notificaciones (Push & Correo)
+  const [internalShowModal, setInternalShowModal] = useState(false)
+  const showStockConfigModal = isStockConfigOpen !== undefined ? isStockConfigOpen : internalShowModal
+  const setShowStockConfigModal = (open: boolean) => {
+    setInternalShowModal(open)
+    if (!open && onCloseStockConfig) {
+      onCloseStockConfig()
+    }
+  }
+
+  const [stockConfigTab, setStockConfigTab] = useState<'thresholds' | 'push' | 'email'>(
+    initialStockConfigTab || 'thresholds'
+  )
+
+  useEffect(() => {
+    if (initialStockConfigTab) {
+      setStockConfigTab(initialStockConfigTab)
+    }
+  }, [initialStockConfigTab])
+
+  const [thresholdSearch, setThresholdSearch] = useState('')
+  const [thresholdFilter, setThresholdFilter] = useState<'all' | 'critical' | 'safe'>('all')
+  const [thresholdWarehouseFilter, setThresholdWarehouseFilter] = useState<string>('all')
+  const [batchThresholdVal, setBatchThresholdVal] = useState<number>(5)
+
+  // Configuración de Notificaciones Push
+  const [pushConfig, setPushConfig] = useState<{
+    enabled: boolean
+    permission: 'granted' | 'denied' | 'default'
+    notifyOnCritical: boolean
+    sound: boolean
+    vibrate: boolean
+    highPriority: boolean
+  }>(() => {
+    try {
+      const saved = localStorage.getItem('nexus_stock_push_alerts_config')
+      if (saved) return JSON.parse(saved)
+    } catch {
+      // fallback
+    }
+    const hasNotif = typeof window !== 'undefined' && 'Notification' in window
+    return {
+      enabled: true,
+      permission: hasNotif ? (Notification.permission as 'granted' | 'denied' | 'default') : 'default',
+      notifyOnCritical: true,
+      sound: true,
+      vibrate: true,
+      highPriority: true,
+    }
+  })
+
+  // Sincronizar estado de notificaciones push si se modifica desde el centro de notificaciones superior
+  useEffect(() => {
+    const handlePushEvent = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled: boolean }>
+      if (custom.detail && typeof custom.detail.enabled === 'boolean') {
+        setPushConfig((prev) => ({ ...prev, enabled: custom.detail.enabled }))
+      }
+    }
+    window.addEventListener('nexus_push_config_changed', handlePushEvent)
+    return () => window.removeEventListener('nexus_push_config_changed', handlePushEvent)
+  }, [])
+
+  // Configuración de Alertas por Correo
   const [emailConfig, setEmailConfig] = useState<{
     enabled: boolean
     recipients: string[]
@@ -130,7 +255,163 @@ export function ExecutiveDashboard({
   const [lastTestSentAt, setLastTestSentAt] = useState<string | null>(null)
   const [showPreviewTemplate, setShowPreviewTemplate] = useState(false)
 
-  const handleToggleEnabled = () => {
+  // Unique warehouses for filter in threshold table
+  const uniqueWarehouses = useMemo(() => {
+    const map = new Map<string, string>()
+    inventory.forEach((i) => {
+      if (!map.has(i.warehouseId)) map.set(i.warehouseId, i.warehouseName)
+    })
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [inventory])
+
+  // Filtered items in threshold configuration table
+  const filteredConfigItems = useMemo(() => {
+    return inventory.filter((item) => {
+      const q = thresholdSearch.toLowerCase().trim()
+      const matchSearch =
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.sku.toLowerCase().includes(q) ||
+        item.warehouseName.toLowerCase().includes(q)
+      const matchWarehouse =
+        thresholdWarehouseFilter === 'all' || item.warehouseId === thresholdWarehouseFilter
+      const isCritical = item.stock <= item.minStock
+      const matchStatus =
+        thresholdFilter === 'all'
+          ? true
+          : thresholdFilter === 'critical'
+          ? isCritical
+          : !isCritical
+      return matchSearch && matchWarehouse && matchStatus
+    })
+  }, [inventory, thresholdSearch, thresholdWarehouseFilter, thresholdFilter])
+
+  // Handlers for Stock Threshold updates
+  const handleUpdateItemThreshold = (itemId: string, newMinStock: number) => {
+    const safeMin = Math.max(0, newMinStock)
+    const updated = inventory.map((item) =>
+      item.id === itemId ? { ...item, minStock: safeMin } : item
+    )
+    if (onUpdateInventory) {
+      onUpdateInventory(updated)
+    }
+    const item = updated.find((i) => i.id === itemId)
+    if (item) {
+      if (item.stock <= safeMin) {
+        toast.warning(
+          `Umbral para ${item.sku} (${item.name}) establecido en ${safeMin} ${item.unitOfMeasure}. Stock actual (${item.stock}) bajo umbral mínimo.`,
+          'Umbral actualizado · Alerta activa'
+        )
+      } else {
+        toast.success(
+          `Umbral para ${item.sku} actualizado a ${safeMin} ${item.unitOfMeasure}. Existencias en nivel seguro.`,
+          'Umbral actualizado'
+        )
+      }
+    }
+  }
+
+  const handleStepItemThreshold = (itemId: string, delta: number) => {
+    const item = inventory.find((i) => i.id === itemId)
+    if (!item) return
+    handleUpdateItemThreshold(itemId, item.minStock + delta)
+  }
+
+  const handleBatchSetThreshold = () => {
+    const safeVal = Math.max(0, batchThresholdVal)
+    const updated = inventory.map((item) => ({ ...item, minStock: safeVal }))
+    if (onUpdateInventory) {
+      onUpdateInventory(updated)
+    }
+    toast.success(
+      `Se aplicó un umbral mínimo de ${safeVal} unidades a todos los productos del inventario.`,
+      'Umbral global aplicado'
+    )
+  }
+
+  // Push handlers
+  const handleRequestPushPermission = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const perm = await Notification.requestPermission()
+        const next = {
+          ...pushConfig,
+          permission: perm as 'granted' | 'denied' | 'default',
+          enabled: perm === 'granted',
+        }
+        setPushConfig(next)
+        localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+        if (perm === 'granted') {
+          toast.success(
+            'Permiso de notificaciones push concedido. Recibirás alertas instantáneas cuando un producto caiga bajo el umbral mínimo.',
+            'Notificaciones Push activadas'
+          )
+          if (pushConfig.sound) playNotificationChime()
+        } else if (perm === 'denied') {
+          toast.warning(
+            'Permiso denegado por el navegador. Puedes habilitarlo en la configuración de permisos del sitio.',
+            'Permiso bloqueado'
+          )
+        }
+      } catch (err) {
+        console.error(err)
+        toast.info('Modo de notificaciones push de escritorio activo.', 'Notificaciones')
+      }
+    } else {
+      toast.info('Este navegador admite notificaciones push en pantalla.', 'Notificaciones Push')
+    }
+  }
+
+  const handleTogglePushEnabled = () => {
+    const nextEnabled = !pushConfig.enabled
+    const next = { ...pushConfig, enabled: nextEnabled }
+    setPushConfig(next)
+    localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+    if (nextEnabled) {
+      toast.success(
+        'Notificaciones push de stock activadas. Recibirás alertas automáticas cuando un SKU caiga bajo su umbral.',
+        'Push activado'
+      )
+      if (pushConfig.sound) playNotificationChime()
+    } else {
+      toast.info('Notificaciones push de stock pausadas.', 'Push desactivado')
+    }
+  }
+
+  const handleSendTestPush = () => {
+    if (pushConfig.sound) playNotificationChime()
+    const criticalCount = lowStockItems.length > 0 ? lowStockItems.length : 2
+    const sampleItem = lowStockItems[0] || inventory[0] || {
+      sku: 'HW-SRV-RACK',
+      name: 'Servidor Rack 1U Xeon',
+      stock: 1,
+      minStock: 3,
+      unitOfMeasure: 'Pza',
+    }
+
+    if (
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'granted'
+    ) {
+      try {
+        new Notification('AES Nexus ERP · Alerta de Stock Crítico', {
+          body: `⚠️ ${criticalCount} producto(s) bajo umbral mínimo. Reorden necesario para ${sampleItem.sku} (${sampleItem.stock} disp. / umbral mín. ${sampleItem.minStock}).`,
+          icon: '/favicon.ico',
+        })
+      } catch {
+        // iframe fallback
+      }
+    }
+
+    toast.warning(
+      `[PUSH] ⚠️ ${criticalCount} producto(s) bajo umbral de seguridad: ${sampleItem.sku} disponible ${sampleItem.stock} (umbral mín. ${sampleItem.minStock}).`,
+      'Notificación Push recibida'
+    )
+  }
+
+  // Email handlers
+  const handleToggleEmailEnabled = () => {
     const nextEnabled = !emailConfig.enabled
     const next = { ...emailConfig, enabled: nextEnabled }
     setEmailConfig(next)
@@ -182,19 +463,6 @@ export function ExecutiveDashboard({
     toast.info(`Se eliminó ${emailToRemove} de la lista de alertas.`, 'Destinatario eliminado')
   }
 
-  const handleSaveConfig = () => {
-    localStorage.setItem('nexus_stock_email_alerts_config', JSON.stringify(emailConfig))
-    toast.success(
-      `Configuración de notificaciones guardada. ${
-        emailConfig.enabled
-          ? `Alertas activas para ${emailConfig.recipients.length} destinatario(s).`
-          : 'Alertas por correo desactivadas.'
-      }`,
-      'Preferencias actualizadas'
-    )
-    setShowEmailNotifyPanel(false)
-  }
-
   const handleSendTestEmail = () => {
     if (emailConfig.recipients.length === 0) {
       toast.warning('Agrega al menos un destinatario para realizar la prueba.', 'Sin destinatarios')
@@ -212,6 +480,20 @@ export function ExecutiveDashboard({
         'Prueba de correo enviada'
       )
     }, 450)
+  }
+
+  const handleSaveAllStockConfig = () => {
+    localStorage.setItem('nexus_stock_email_alerts_config', JSON.stringify(emailConfig))
+    localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(pushConfig))
+    toast.success(
+      `Configuración de umbrales y notificaciones guardada. Push: ${
+        pushConfig.enabled ? 'Activo' : 'Pausado'
+      } · Correo: ${
+        emailConfig.enabled ? `${emailConfig.recipients.length} suscritos` : 'Pausado'
+      }.`,
+      'Preferencias actualizadas'
+    )
+    setShowStockConfigModal(false)
   }
 
   // Dynamic Greeting & Localized Date in Spanish
@@ -312,6 +594,38 @@ export function ExecutiveDashboard({
           <button
             type="button"
             className="button button-secondary"
+            onClick={handleRefreshDashboard}
+            title="Sincronizar métricas con el ERP (simula carga skeleton boneyard-js)"
+            disabled={isLoadingDashboard}
+          >
+            <RefreshCw size={14} className={isLoadingDashboard ? 'animate-spin' : ''} />
+            {isLoadingDashboard ? 'Cargando...' : 'Actualizar'}
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              setStockConfigTab('thresholds')
+              setShowStockConfigModal(true)
+            }}
+            title="Panel de configuración: definir umbrales mínimos de stock por producto y notificaciones push / correo"
+          >
+            <SlidersHorizontal size={14} />
+            Umbrales y Alertas
+            {lowStockItems.length > 0 ? (
+              <span className="mini-alert-dot" title={`${lowStockItems.length} SKUs bajo umbral mínimo`}>
+                {lowStockItems.length}
+              </span>
+            ) : (
+              (pushConfig.enabled || emailConfig.enabled) && (
+                <span className="mini-active-dot" title="Notificaciones activas" />
+              )
+            )}
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            disabled={isLoadingDashboard}
             onClick={() => {
               const next =
                 period === 'Este mes'
@@ -319,8 +633,7 @@ export function ExecutiveDashboard({
                   : period === 'Este trimestre'
                   ? 'Año 2026'
                   : 'Este mes'
-              setPeriod(next)
-              toast.info(`Período de análisis actualizado a: ${next}`, 'Filtro temporal')
+              handlePeriodChange(next)
             }}
           >
             <CalendarDays size={15} />
@@ -376,10 +689,13 @@ export function ExecutiveDashboard({
             <button
               type="button"
               className="button button-secondary stock-banner-notify-btn"
-              onClick={() => setShowEmailNotifyPanel(true)}
-              title="Configurar notificaciones de correo para este umbral de stock"
+              onClick={() => {
+                setStockConfigTab('thresholds')
+                setShowStockConfigModal(true)
+              }}
+              title="Configurar umbrales mínimos por producto y alertas push o por correo"
             >
-              <Mail size={13} /> {emailConfig.enabled ? `Avisos de correo activos (${emailConfig.recipients.length})` : 'Configurar avisos de correo'}
+              <SlidersHorizontal size={13} /> Configurar umbrales y alertas
             </button>
             <button
               type="button"
@@ -440,16 +756,32 @@ export function ExecutiveDashboard({
         <button
           type="button"
           className="quick-action-item"
-          onClick={() => setShowEmailNotifyPanel(true)}
-          title="Panel rápido: configurar alertas automáticas de stock por correo"
+          onClick={() => {
+            setStockConfigTab('thresholds')
+            setShowStockConfigModal(true)
+          }}
+          title="Panel de configuración: definir umbrales mínimos de stock por producto y habilitar alertas push o correo"
         >
-          <Mail size={13} /> Alertas de stock por correo {emailConfig.enabled && <span className="mini-active-dot" title="Alertas de correo activadas" />}
+          <SlidersHorizontal size={13} /> Umbrales y alertas de stock{' '}
+          {lowStockItems.length > 0 ? (
+            <span className="mini-alert-pill-count">{lowStockItems.length} críticos</span>
+          ) : (
+            (pushConfig.enabled || emailConfig.enabled) && (
+              <span className="mini-active-dot" title="Notificaciones activas" />
+            )
+          )}
         </button>
       </section>
 
       {/* Operational Alert Hub ("Semáforo Ejecutivo") */}
       {showAlertHub && (
-        <section className="executive-alert-hub" aria-label="Semáforo operativo">
+        <Skeleton
+          name="executive-alerts"
+          loading={isLoadingDashboard}
+          initialBones={executiveAlertHubBones}
+          className="alerts-skeleton-container"
+        >
+          <section className="executive-alert-hub" aria-label="Semáforo operativo">
           <div className="alert-hub-header">
             <span className="alert-hub-title">
               <ShieldAlert size={14} style={{ color: totalAlertsCount > 0 ? '#ba4836' : '#3c7d5c' }} />
@@ -459,10 +791,17 @@ export function ExecutiveDashboard({
               <button
                 type="button"
                 className="email-hub-tag-btn"
-                onClick={() => setShowEmailNotifyPanel(true)}
-                title="Configurar notificaciones de correo para umbrales de stock"
+                onClick={() => {
+                  setStockConfigTab('thresholds')
+                  setShowStockConfigModal(true)
+                }}
+                title="Configurar umbrales mínimos de stock y notificaciones push o correo"
               >
-                <Mail size={11} /> Correo: <strong className={emailConfig.enabled ? 'text-positive' : 'text-muted'}>{emailConfig.enabled ? `${emailConfig.recipients.length} suscritos` : 'Pausado'}</strong>
+                <SlidersHorizontal size={11} /> Umbrales: <strong className={lowStockItems.length > 0 ? 'text-alert' : 'text-positive'}>{lowStockItems.length > 0 ? `${lowStockItems.length} críticos` : 'Óptimos'}</strong>
+                <span className="hub-sep">·</span>
+                <Bell size={11} /> <strong className={pushConfig.enabled ? 'text-positive' : 'text-muted'}>{pushConfig.enabled ? 'Push On' : 'Push Off'}</strong>
+                <span className="hub-sep">·</span>
+                <Mail size={11} /> <strong className={emailConfig.enabled ? 'text-positive' : 'text-muted'}>{emailConfig.enabled ? `${emailConfig.recipients.length} suscritos` : 'Correo Off'}</strong>
               </button>
               <button
                 type="button"
@@ -568,10 +907,13 @@ export function ExecutiveDashboard({
                 <button
                   type="button"
                   className="alert-sub-btn"
-                  onClick={() => setShowEmailNotifyPanel(true)}
-                  title="Configurar avisos de correo para stock mínimo"
+                  onClick={() => {
+                    setStockConfigTab('thresholds')
+                    setShowStockConfigModal(true)
+                  }}
+                  title="Configurar umbrales de stock mínimo y alertas"
                 >
-                  <Mail size={10} /> Avisos por correo
+                  <SlidersHorizontal size={10} /> Umbrales y alertas
                 </button>
               </div>
             </article>
@@ -640,10 +982,17 @@ export function ExecutiveDashboard({
             </article>
           </div>
         </section>
+        </Skeleton>
       )}
 
       {/* Fila Superior de KPIs Clave para Ventas */}
-      <section className="kpi-grid sales-kpi-grid" aria-label="KPIs clave para ventas">
+      <Skeleton
+        name="executive-kpis"
+        loading={isLoadingDashboard}
+        initialBones={executiveKpiBones}
+        className="kpi-skeleton-container"
+      >
+        <section className="kpi-grid sales-kpi-grid" aria-label="KPIs clave para ventas">
         {/* KPI 1: Ventas Totales del Mes */}
         <article
           className="kpi-card kpi-featured kpi-card-clickable"
@@ -768,6 +1117,7 @@ export function ExecutiveDashboard({
           </div>
         </article>
       </section>
+      </Skeleton>
 
       {/* Tira Secundaria de Resumen Operativo y Financiero */}
       <section className="ops-summary-strip" aria-label="Balance operativo y financiero">
@@ -840,11 +1190,18 @@ export function ExecutiveDashboard({
       {/* Main Grid: Revenue & Target Recharts Chart + Activities + CRM Opportunities */}
       <section className="dashboard-grid">
         {/* Enhanced Recharts Revenue Chart */}
-        <RevenueTargetChart
-          orders={orders}
-          receivables={receivables}
-          expenses={expenses}
-        />
+        <Skeleton
+          name="executive-chart"
+          loading={isLoadingDashboard}
+          initialBones={executiveChartBones}
+          className="chart-skeleton-container"
+        >
+          <RevenueTargetChart
+            orders={orders}
+            receivables={receivables}
+            expenses={expenses}
+          />
+        </Skeleton>
 
         {/* Agenda / Next Follow-ups */}
         <article className="panel activity-panel">
@@ -1011,65 +1368,486 @@ export function ExecutiveDashboard({
         </span>
       </footer>
 
-      {/* Panel Rápido: Notificaciones de Correo para Umbrales de Stock */}
-      {showEmailNotifyPanel && (
+      {/* Panel de Control Ejecutivo: Umbrales de Stock y Notificaciones (Push & Correo) */}
+      {showStockConfigModal && (
         <div
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setShowEmailNotifyPanel(false)
+            if (e.target === e.currentTarget) setShowStockConfigModal(false)
           }}
         >
-          <section className="create-modal modal-wide email-notify-modal" role="dialog" aria-modal="true">
+          <section className="create-modal stock-config-modal" role="dialog" aria-modal="true">
             <div className="create-modal-heading">
               <div className="notify-modal-header-icon-wrap">
                 <div className="notify-header-icon-box">
-                  <Mail size={22} />
+                  <SlidersHorizontal size={22} />
                 </div>
                 <div>
-                  <div className="panel-kicker">CONTROL DE INVENTARIO · AUTOMATIZACIÓN DE AVISOS</div>
-                  <h2>Notificaciones por correo para umbrales de stock</h2>
+                  <div className="panel-kicker">CONTROL EJECUTIVO DE INVENTARIO · REGLAS & AVISOS</div>
+                  <h2>Umbrales de Stock Mínimo y Notificaciones</h2>
                   <p>
-                    Recibe avisos automáticos en tu bandeja de entrada en cuanto las existencias alcancen o rompan su umbral de seguridad, evitando depender únicamente de la alerta en pantalla.
+                    Define los niveles mínimos de seguridad por producto para prevenir quiebres de existencias y activa notificaciones push instantáneas o por correo electrónico.
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setShowEmailNotifyPanel(false)}
-                aria-label="Cerrar panel de notificaciones"
+                onClick={() => setShowStockConfigModal(false)}
+                aria-label="Cerrar panel de control"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <div className="email-notify-body">
-              {/* Switch Principal: Estado de las notificaciones */}
-              <div className={`notify-status-banner ${emailConfig.enabled ? 'banner-active' : 'banner-inactive'}`}>
-                <div className="notify-status-text">
-                  <div className="notify-status-label-row">
-                    <span className={`status-indicator-dot ${emailConfig.enabled ? 'dot-active' : 'dot-inactive'}`} />
-                    <strong>{emailConfig.enabled ? 'Alertas por correo activadas' : 'Alertas por correo pausadas'}</strong>
-                    <span className="status-badge-pill">
-                      {emailConfig.enabled ? 'En tiempo real' : 'Inactivo'}
+            {/* Pestañas de Navegación del Panel */}
+            <div className="stock-config-tabs-nav">
+              <button
+                type="button"
+                className={`stock-config-tab-btn ${stockConfigTab === 'thresholds' ? 'active' : ''}`}
+                onClick={() => setStockConfigTab('thresholds')}
+              >
+                <SlidersHorizontal size={14} />
+                Umbrales por Producto
+                <span className={`tab-mini-badge ${lowStockItems.length > 0 ? 'badge-alert' : ''}`}>
+                  {lowStockItems.length > 0 ? `${lowStockItems.length} críticos` : `${inventory.length} SKUs`}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`stock-config-tab-btn ${stockConfigTab === 'push' ? 'active' : ''}`}
+                onClick={() => setStockConfigTab('push')}
+              >
+                <Bell size={14} />
+                Notificaciones Push en Navegador
+                <span className={`tab-mini-badge ${pushConfig.enabled ? 'badge-active' : ''}`}>
+                  {pushConfig.enabled ? 'Activo' : 'Pausado'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`stock-config-tab-btn ${stockConfigTab === 'email' ? 'active' : ''}`}
+                onClick={() => setStockConfigTab('email')}
+              >
+                <Mail size={14} />
+                Alertas por Correo Electrónico
+                <span className={`tab-mini-badge ${emailConfig.enabled ? 'badge-active' : ''}`}>
+                  {emailConfig.enabled ? `${emailConfig.recipients.length} suscritos` : 'Pausado'}
+                </span>
+              </button>
+            </div>
+
+            <div className="stock-config-modal-scroll">
+              {/* TAB 1: UMBRALES POR PRODUCTO */}
+              {stockConfigTab === 'thresholds' && (
+                <div className="stock-thresholds-body">
+                  {/* Summary Bar */}
+                  <div className="stock-config-summary-bar">
+                    <div className="summary-stat-chip">
+                      <span className="summary-stat-val">{inventory.length}</span>
+                      <span className="summary-stat-label">SKUs en Catálogo</span>
+                    </div>
+                    <div className={`summary-stat-chip ${lowStockItems.length > 0 ? 'critical' : ''}`}>
+                      <span className="summary-stat-val text-alert">{lowStockItems.length}</span>
+                      <span className="summary-stat-label">En Umbral Crítico / Reorden</span>
+                    </div>
+                    <div className="summary-stat-chip safe">
+                      <span className="summary-stat-val text-safe">{inventory.length - lowStockItems.length}</span>
+                      <span className="summary-stat-label">En Nivel Seguro</span>
+                    </div>
+                  </div>
+
+                  {/* Toolbar */}
+                  <div className="stock-config-toolbar">
+                    <div className="search-wrap">
+                      <Search size={14} className="search-icon" />
+                      <input
+                        type="text"
+                        placeholder="Buscar por SKU, producto o almacén..."
+                        value={thresholdSearch}
+                        onChange={(e) => setThresholdSearch(e.target.value)}
+                        className="search-input"
+                      />
+                    </div>
+
+                    <div className="filter-chips-row">
+                      <button
+                        type="button"
+                        className={`filter-pill-btn ${thresholdFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => setThresholdFilter('all')}
+                      >
+                        Todos ({inventory.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`filter-pill-btn ${thresholdFilter === 'critical' ? 'active' : ''}`}
+                        onClick={() => setThresholdFilter('critical')}
+                      >
+                        Bajo Umbral ({lowStockItems.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`filter-pill-btn ${thresholdFilter === 'safe' ? 'active' : ''}`}
+                        onClick={() => setThresholdFilter('safe')}
+                      >
+                        Nivel Seguro ({inventory.length - lowStockItems.length})
+                      </button>
+                    </div>
+
+                    <div className="warehouse-select-wrap">
+                      <select
+                        value={thresholdWarehouseFilter}
+                        onChange={(e) => setThresholdWarehouseFilter(e.target.value)}
+                        className="config-select"
+                      >
+                        <option value="all">Todos los almacenes</option>
+                        {uniqueWarehouses.map((wh) => (
+                          <option key={wh.id} value={wh.id}>
+                            {wh.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="batch-threshold-tool">
+                      <span className="batch-label">Fijar mín. masivo:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        value={batchThresholdVal}
+                        onChange={(e) => setBatchThresholdVal(Math.max(0, parseInt(e.target.value) || 0))}
+                        className="batch-input"
+                      />
+                      <button
+                        type="button"
+                        className="button button-secondary batch-btn"
+                        onClick={handleBatchSetThreshold}
+                        title="Aplicar este umbral a todos los productos"
+                      >
+                        Aplicar a todos
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tabla de Productos y Umbrales */}
+                  <div className="table-responsive stock-config-table-wrap">
+                    <table className="stock-config-table">
+                      <thead>
+                        <tr>
+                          <th>Producto / SKU</th>
+                          <th>Almacén</th>
+                          <th style={{ textAlign: 'right' }}>Stock Disponible</th>
+                          <th style={{ textAlign: 'center' }}>Umbral Mínimo</th>
+                          <th>Estado de Stock</th>
+                          <th style={{ textAlign: 'right' }}>Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredConfigItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} style={{ textAlign: 'center', padding: '28px', color: '#747875' }}>
+                              No se encontraron productos con los filtros aplicados.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredConfigItems.map((item) => {
+                            const isCritical = item.stock <= item.minStock
+                            return (
+                              <tr key={item.id} className={isCritical ? 'row-critical' : ''}>
+                                <td>
+                                  <div className="table-product-cell">
+                                    <span className="sku-badge"><code>{item.sku}</code></span>
+                                    <strong className="product-name">{item.name}</strong>
+                                  </div>
+                                </td>
+                                <td>
+                                  <span className="warehouse-label">{item.warehouseName}</span>
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <span className={`stock-qty ${isCritical ? 'stock-qty-critical' : ''}`}>
+                                    {item.stock} {item.unitOfMeasure}
+                                  </span>
+                                </td>
+                                <td style={{ textAlign: 'center' }}>
+                                  <div className="stepper-control">
+                                    <button
+                                      type="button"
+                                      className="stepper-btn"
+                                      onClick={() => handleStepItemThreshold(item.id, -1)}
+                                      disabled={item.minStock <= 0}
+                                      aria-label={`Disminuir umbral para ${item.sku}`}
+                                    >
+                                      <Minus size={12} />
+                                    </button>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={item.minStock}
+                                      onChange={(e) =>
+                                        handleUpdateItemThreshold(item.id, parseInt(e.target.value) || 0)
+                                      }
+                                      className="stepper-input"
+                                    />
+                                    <button
+                                      type="button"
+                                      className="stepper-btn"
+                                      onClick={() => handleStepItemThreshold(item.id, 1)}
+                                      aria-label={`Aumentar umbral para ${item.sku}`}
+                                    >
+                                      <Plus size={12} />
+                                    </button>
+                                  </div>
+                                </td>
+                                <td>
+                                  {isCritical ? (
+                                    <span className="stock-badge-critical">
+                                      <AlertTriangle size={11} /> Bajo umbral mín.
+                                    </span>
+                                  ) : (
+                                    <span className="stock-badge-safe">
+                                      <CheckCircle2 size={11} /> Nivel seguro
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <button
+                                    type="button"
+                                    className="button button-ghost button-sm"
+                                    onClick={() => {
+                                      setShowStockConfigModal(false)
+                                      onNavigateOperations('Inventario')
+                                      toast.info(`Accediendo a inventario para gestionar ${item.sku}.`, 'Gestión de almacén')
+                                    }}
+                                  >
+                                    Ver en Inventario <ArrowRight size={12} />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Informative footer tip */}
+                  <div className="threshold-info-tip">
+                    <Info size={14} className="tip-icon" />
+                    <span>
+                      Los umbrales se sincronizan en tiempo real con el control de inventario de AES Nexus ERP. Si las existencias caen en o por debajo de este valor, se detonarán automáticamente las alertas push y los resúmenes por correo electrónico según las reglas configuradas.
                     </span>
                   </div>
-                  <p>
-                    {emailConfig.enabled
-                      ? `El sistema enviará un correo con el detalle de existencias a los destinatarios configurados cada vez que un producto alcance su umbral mínimo.`
-                      : 'No se enviarán correos electrónicos cuando el inventario caiga por debajo del stock mínimo. Solo se mostrará la alerta en el dashboard.'}
-                  </p>
                 </div>
-                <label className="toggle-switch-wrap" title={emailConfig.enabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}>
-                  <input
-                    type="checkbox"
-                    checked={emailConfig.enabled}
-                    onChange={handleToggleEnabled}
-                  />
-                  <span className="toggle-slider" />
-                </label>
-              </div>
+              )}
+
+              {/* TAB 2: NOTIFICACIONES PUSH */}
+              {stockConfigTab === 'push' && (
+                <div className="push-notify-body">
+                  {/* Status Banner */}
+                  <div className={`notify-status-banner ${pushConfig.enabled ? 'banner-active' : 'banner-inactive'}`}>
+                    <div className="notify-status-text">
+                      <div className="notify-status-label-row">
+                        <span className={`status-indicator-dot ${pushConfig.enabled ? 'dot-active' : 'dot-inactive'}`} />
+                        <strong>
+                          {pushConfig.enabled
+                            ? 'Notificaciones Push en navegador activadas'
+                            : 'Notificaciones Push en navegador pausadas'}
+                        </strong>
+                        <span className={`push-permission-pill perm-${pushConfig.permission}`}>
+                          {pushConfig.permission === 'granted'
+                            ? '✓ Permiso concedido'
+                            : pushConfig.permission === 'denied'
+                            ? '✕ Permiso denegado'
+                            : '! Permiso pendiente'}
+                        </span>
+                      </div>
+                      <p>
+                        {pushConfig.enabled
+                          ? 'Recibirás avisos emergentes inmediatos en el escritorio y navegador cuando cualquier SKU caiga por debajo de su umbral de seguridad, incluso mientras estés en otra pestaña del ERP.'
+                          : 'Las notificaciones push están pausadas. Activa este switch para recibir alertas sonoras y de escritorio en tiempo real.'}
+                      </p>
+                    </div>
+                    <label
+                      className="toggle-switch-wrap"
+                      title={pushConfig.enabled ? 'Pausar notificaciones push' : 'Activar notificaciones push'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={pushConfig.enabled}
+                        onChange={handleTogglePushEnabled}
+                      />
+                      <span className="toggle-slider" />
+                    </label>
+                  </div>
+
+                  {/* Permission Request Prompt if not granted */}
+                  {pushConfig.permission !== 'granted' && (
+                    <div className="push-permission-box">
+                      <div className="permission-box-content">
+                        <BellRing size={20} className="permission-icon" />
+                        <div>
+                          <strong>Permiso de notificaciones del navegador requerido</strong>
+                          <p>
+                            Para que el navegador pueda emitir alertas cuando minimices el dashboard o trabajes en otros módulos, autoriza las notificaciones push.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        onClick={handleRequestPushPermission}
+                      >
+                        <Bell size={13} /> Solicitar permiso al navegador
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Push Preferences Cards Grid */}
+                  <div className="push-cards-grid">
+                    <div className="push-config-card">
+                      <div className="push-card-header">
+                        <div className="push-card-icon-title">
+                          <Volume2 size={16} className="card-icon" />
+                          <div>
+                            <strong>Alerta sonora (Chime Web Audio)</strong>
+                            <p>Emite un tono audible discreto sintetizado en el navegador al disparar una alerta de stock crítico.</p>
+                          </div>
+                        </div>
+                        <label className="toggle-switch-wrap">
+                          <input
+                            type="checkbox"
+                            checked={pushConfig.sound}
+                            onChange={(e) => {
+                              const next = { ...pushConfig, sound: e.target.checked }
+                              setPushConfig(next)
+                              localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+                              if (e.target.checked) playNotificationChime()
+                            }}
+                          />
+                          <span className="toggle-slider" />
+                        </label>
+                      </div>
+                      <div className="push-card-footer">
+                        <button
+                          type="button"
+                          className="button button-ghost button-sm"
+                          onClick={playNotificationChime}
+                        >
+                          <Volume2 size={12} /> Probar sonido de alerta
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="push-config-card">
+                      <div className="push-card-header">
+                        <div className="push-card-icon-title">
+                          <Smartphone size={16} className="card-icon" />
+                          <div>
+                            <strong>Vibración háptica</strong>
+                            <p>Emite un patrón háptico de vibración en dispositivos móviles y tabletas compatibles al detectar un quiebre de stock.</p>
+                          </div>
+                        </div>
+                        <label className="toggle-switch-wrap">
+                          <input
+                            type="checkbox"
+                            checked={pushConfig.vibrate}
+                            onChange={(e) => {
+                              const next = { ...pushConfig, vibrate: e.target.checked }
+                              setPushConfig(next)
+                              localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+                            }}
+                          />
+                          <span className="toggle-slider" />
+                        </label>
+                      </div>
+                      <div className="push-card-footer">
+                        <span className="subtle-note">Patrón: [200ms, 100ms, 200ms] para máxima notoriedad operativa.</span>
+                      </div>
+                    </div>
+
+                    <div className="push-config-card">
+                      <div className="push-card-header">
+                        <div className="push-card-icon-title">
+                          <AlertTriangle size={16} className="card-icon" />
+                          <div>
+                            <strong>Prioridad alta e interrupción inmediata</strong>
+                            <p>Fuerza la visualización emergente de la notificación push en primer plano sin agruparla en segundo plano.</p>
+                          </div>
+                        </div>
+                        <label className="toggle-switch-wrap">
+                          <input
+                            type="checkbox"
+                            checked={pushConfig.highPriority}
+                            onChange={(e) => {
+                              const next = { ...pushConfig, highPriority: e.target.checked }
+                              setPushConfig(next)
+                              localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+                            }}
+                          />
+                          <span className="toggle-slider" />
+                        </label>
+                      </div>
+                      <div className="push-card-footer">
+                        <span className="subtle-note">Recomendado para almacenes con alto volumen de rotación diaria.</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Test Push Section */}
+                  <div className="notify-test-preview-box">
+                    <div className="test-preview-header">
+                      <div className="test-preview-header-left">
+                        <BellRing size={16} style={{ color: '#456a61' }} />
+                        <div>
+                          <strong>Simular Notificación Push de Emergencia</strong>
+                          <p>Comprueba la llegada del aviso push en pantalla, el timbre sonoro y la alerta Toast integrada.</p>
+                        </div>
+                      </div>
+                      <div className="test-preview-actions">
+                        <button
+                          type="button"
+                          className="button button-primary btn-send-test"
+                          onClick={handleSendTestPush}
+                        >
+                          <BellRing size={13} /> Probar Notificación Push Ahora
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: ALERTAS POR CORREO */}
+              {stockConfigTab === 'email' && (
+                <div className="email-notify-body">
+                  {/* Switch Principal: Estado de las notificaciones */}
+                  <div className={`notify-status-banner ${emailConfig.enabled ? 'banner-active' : 'banner-inactive'}`}>
+                    <div className="notify-status-text">
+                      <div className="notify-status-label-row">
+                        <span className={`status-indicator-dot ${emailConfig.enabled ? 'dot-active' : 'dot-inactive'}`} />
+                        <strong>{emailConfig.enabled ? 'Alertas por correo activadas' : 'Alertas por correo pausadas'}</strong>
+                        <span className="status-badge-pill">
+                          {emailConfig.enabled ? 'En tiempo real' : 'Inactivo'}
+                        </span>
+                      </div>
+                      <p>
+                        {emailConfig.enabled
+                          ? `El sistema enviará un correo con el detalle de existencias a los destinatarios configurados cada vez que un producto alcance su umbral mínimo.`
+                          : 'No se enviarán correos electrónicos cuando el inventario caiga por debajo del stock mínimo. Solo se mostrará la alerta en el dashboard.'}
+                      </p>
+                    </div>
+                    <label className="toggle-switch-wrap" title={emailConfig.enabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}>
+                      <input
+                        type="checkbox"
+                        checked={emailConfig.enabled}
+                        onChange={handleToggleEmailEnabled}
+                      />
+                      <span className="toggle-slider" />
+                    </label>
+                  </div>
 
               {/* Formulario de Configuración */}
               <div className="notify-config-grid">
@@ -1407,21 +2185,23 @@ export function ExecutiveDashboard({
                 )}
               </div>
             </div>
+          )}
+        </div>
 
             <div className="create-modal-actions">
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => setShowEmailNotifyPanel(false)}
+                onClick={() => setShowStockConfigModal(false)}
               >
                 Cerrar
               </button>
               <button
                 type="button"
                 className="button button-primary"
-                onClick={handleSaveConfig}
+                onClick={handleSaveAllStockConfig}
               >
-                <Check size={14} /> Guardar configuración de notificaciones
+                <Check size={14} /> Guardar cambios y sincronizar
               </button>
             </div>
           </section>

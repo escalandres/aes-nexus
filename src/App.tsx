@@ -407,6 +407,11 @@ function AppContent() {
   })
   const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('aes-nexus-dark-mode') === 'true')
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    document.body.classList.toggle('dark', darkMode)
+  }, [darkMode])
+
   const navigateTo = (page: string) => {
     setActivePage(page)
     if (page === 'Ventas') setSalesSection('Catálogo')
@@ -1121,6 +1126,7 @@ function AppContent() {
               orders={orders}
               quotes={quotes}
               inventory={inventory}
+              onUpdateInventory={setInventory}
               receivables={receivables}
               payables={payables}
               expenses={expenses}

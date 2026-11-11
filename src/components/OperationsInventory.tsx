@@ -12,6 +12,7 @@ import {
   History,
   Layers,
   MapPin,
+  Download,
 } from 'lucide-react'
 import type {
   Warehouse,
@@ -19,6 +20,8 @@ import type {
   StockMovement,
   MovementType,
 } from '../data/operations'
+import { Skeleton } from 'boneyard-js/react'
+import { inventoryTableBones } from '../bones/registry'
 import { useToast } from './Toast'
 
 interface OperationsInventoryProps {
@@ -48,6 +51,19 @@ export function OperationsInventory({
   const [activeTab, setActiveTab] = useState<'stock' | 'movements'>('stock')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false)
+  const [isInventoryLoading, setIsInventoryLoading] = useState(false)
+
+  const handleWarehouseChange = (whId: string) => {
+    setSelectedWarehouseId(whId)
+    setIsInventoryLoading(true)
+    setTimeout(() => setIsInventoryLoading(false), 320)
+  }
+
+  const handleTabChange = (tab: 'stock' | 'movements') => {
+    setActiveTab(tab)
+    setIsInventoryLoading(true)
+    setTimeout(() => setIsInventoryLoading(false), 320)
+  }
 
   // Modals
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false)
@@ -177,6 +193,141 @@ export function OperationsInventory({
   const lowStockCount = useMemo(() => {
     return inventory.filter((i) => i.stock <= i.minStock).length
   }, [inventory])
+
+  // Helper to escape values safely for CSV format
+  const escapeCSV = (value: string | number | null | undefined): string => {
+    if (value === null || value === undefined) return '""'
+    const stringVal = String(value)
+    return `"${stringVal.replace(/"/g, '""')}"`
+  }
+
+  // Handle Export CSV of current view (existencias, almacén, estado de stock)
+  const handleExportCSV = () => {
+    if (activeTab === 'stock') {
+      if (filteredInventory.length === 0) {
+        toast.warning(
+          'No hay existencias para exportar con los filtros seleccionados.',
+          'Sin registros'
+        )
+        return
+      }
+
+      const headers = [
+        'SKU',
+        'PRODUCTO',
+        'ALMACÉN',
+        'UBICACIÓN',
+        'EXISTENCIAS DISPONIBLES',
+        'STOCK RESERVADO',
+        'STOCK EN TRÁNSITO',
+        'UMBRAL MÍNIMO',
+        'UNIDAD DE MEDIDA',
+        'COSTO UNITARIO (MXN)',
+        'VALOR TOTAL (MXN)',
+        'ESTADO DE STOCK',
+      ]
+
+      const rows = filteredInventory.map((item) => {
+        const isLow = item.stock <= item.minStock
+        const status = isLow ? 'Bajo umbral (Alerta crítica)' : 'Nivel seguro (Óptimo)'
+        const lineTotal = (item.stock * item.cost).toFixed(2)
+
+        return [
+          escapeCSV(item.sku),
+          escapeCSV(item.name),
+          escapeCSV(item.warehouseName),
+          escapeCSV(item.locationBin),
+          escapeCSV(item.stock),
+          escapeCSV(item.reserved),
+          escapeCSV(item.inTransit),
+          escapeCSV(item.minStock),
+          escapeCSV(item.unitOfMeasure),
+          escapeCSV(item.cost.toFixed(2)),
+          escapeCSV(lineTotal),
+          escapeCSV(status),
+        ].join(',')
+      })
+
+      // UTF-8 BOM (\uFEFF) ensures Excel and spreadsheet readers render special characters correctly
+      const csvContent = '\uFEFF' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const dateStr = new Date().toISOString().split('T')[0]
+      const whName =
+        selectedWarehouseId === 'all'
+          ? 'todos_los_almacenes'
+          : (warehouses.find((w) => w.id === selectedWarehouseId)?.name || 'almacen')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '_')
+
+      link.href = url
+      link.download = `inventario_${whName}_${dateStr}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast.success(
+        `Se descargó el archivo CSV con ${filteredInventory.length} artículos del inventario.`,
+        'Descarga completada'
+      )
+    } else {
+      if (filteredMovements.length === 0) {
+        toast.warning(
+          'No hay movimientos en el kardex para exportar.',
+          'Sin registros'
+        )
+        return
+      }
+
+      const headers = [
+        'FOLIO',
+        'FECHA',
+        'TIPO',
+        'SKU',
+        'PRODUCTO',
+        'CANTIDAD',
+        'ALMACÉN ORIGEN',
+        'ALMACÉN DESTINO',
+        'DOC REFERENCIA',
+        'MOTIVO',
+        'USUARIO',
+      ]
+
+      const rows = filteredMovements.map((mov) => [
+        escapeCSV(mov.folio),
+        escapeCSV(mov.date),
+        escapeCSV(mov.type),
+        escapeCSV(mov.sku),
+        escapeCSV(mov.productName),
+        escapeCSV(mov.quantity),
+        escapeCSV(mov.sourceWarehouse || '—'),
+        escapeCSV(mov.targetWarehouse || '—'),
+        escapeCSV(mov.referenceDoc || '—'),
+        escapeCSV(mov.reason),
+        escapeCSV(mov.user),
+      ].join(','))
+
+      const csvContent = '\uFEFF' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const dateStr = new Date().toISOString().split('T')[0]
+
+      link.href = url
+      link.download = `kardex_movimientos_${dateStr}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast.success(
+        `Se descargó el archivo CSV con ${filteredMovements.length} movimientos de inventario.`,
+        'Descarga completada'
+      )
+    }
+  }
 
   // Handle Adjustment Submit
   const handleConfirmAdjustment = (e: React.FormEvent) => {
@@ -387,7 +538,7 @@ export function OperationsInventory({
           <div className="warehouse-tab-selector" role="tablist">
             <button
               className={`wh-tab ${selectedWarehouseId === 'all' ? 'active' : ''}`}
-              onClick={() => setSelectedWarehouseId('all')}
+              onClick={() => handleWarehouseChange('all')}
             >
               <Layers size={13} />
               Todos los almacenes
@@ -399,7 +550,7 @@ export function OperationsInventory({
                 <button
                   key={w.id}
                   className={`wh-tab ${selectedWarehouseId === w.id ? 'active' : ''}`}
-                  onClick={() => setSelectedWarehouseId(w.id)}
+                  onClick={() => handleWarehouseChange(w.id)}
                 >
                   <MapPin size={13} />
                   {w.name}
@@ -411,6 +562,18 @@ export function OperationsInventory({
         </div>
 
         <div className="ops-actions-group">
+          <button
+            type="button"
+            className="button button-secondary ops-export-main-btn"
+            onClick={handleExportCSV}
+            title={
+              activeTab === 'stock'
+                ? `Exportar ${filteredInventory.length} artículos de la vista actual a archivo CSV`
+                : `Exportar ${filteredMovements.length} movimientos de la vista actual a archivo CSV`
+            }
+          >
+            <Download size={14} /> Exportar CSV
+          </button>
           <button
             type="button"
             className="button button-secondary"
@@ -454,13 +617,13 @@ export function OperationsInventory({
         <div className="ops-view-tabs">
           <button
             className={`ops-view-btn ${activeTab === 'stock' ? 'active' : ''}`}
-            onClick={() => setActiveTab('stock')}
+            onClick={() => handleTabChange('stock')}
           >
             <Boxes size={14} /> Existencias por almacén ({filteredInventory.length})
           </button>
           <button
             className={`ops-view-btn ${activeTab === 'movements' ? 'active' : ''}`}
-            onClick={() => setActiveTab('movements')}
+            onClick={() => handleTabChange('movements')}
           >
             <History size={14} /> Kardex / Registro de movimientos ({movements.length})
           </button>
@@ -500,12 +663,31 @@ export function OperationsInventory({
               </button>
             )}
           </div>
+
+          <button
+            type="button"
+            className="button button-secondary ops-export-csv-btn"
+            onClick={handleExportCSV}
+            title={
+              activeTab === 'stock'
+                ? `Exportar existencias de la vista actual (${filteredInventory.length} artículos) a CSV`
+                : `Exportar movimientos actuales (${filteredMovements.length} registros) a CSV`
+            }
+          >
+            <Download size={13} /> Exportar CSV
+          </button>
         </div>
       </div>
 
       {/* Table Content */}
-      {activeTab === 'stock' ? (
-        <div className="table-wrap ops-table-wrap">
+      <Skeleton
+        name="inventory-table"
+        loading={isInventoryLoading}
+        initialBones={inventoryTableBones}
+        className="inventory-skeleton-container"
+      >
+        {activeTab === 'stock' ? (
+          <div className="table-wrap ops-table-wrap">
           <table className="data-table ops-data-table">
             <thead>
               <tr>
@@ -692,6 +874,7 @@ export function OperationsInventory({
           </table>
         </div>
       )}
+      </Skeleton>
 
       {/* Modal: Ajuste de Inventario */}
       {isAdjustModalOpen && (
