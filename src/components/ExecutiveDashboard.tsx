@@ -367,10 +367,13 @@ export function ExecutiveDashboard({
     const next = { ...pushConfig, enabled: nextEnabled }
     setPushConfig(next)
     localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+    window.dispatchEvent(
+      new CustomEvent('nexus_push_config_changed', { detail: { enabled: nextEnabled } })
+    )
     if (nextEnabled) {
       toast.success(
-        'Notificaciones push de stock activadas. Recibirás alertas automáticas cuando un SKU caiga bajo su umbral.',
-        'Push activado'
+        'Notificaciones push activadas. Se mostrará una alerta persistente en el centro de notificaciones superior si un producto cae bajo su umbral.',
+        'Push activado · Alerta persistente'
       )
       if (pushConfig.sound) playNotificationChime()
     } else {
@@ -1444,6 +1447,53 @@ export function ExecutiveDashboard({
               {/* TAB 1: UMBRALES POR PRODUCTO */}
               {stockConfigTab === 'thresholds' && (
                 <div className="stock-thresholds-body">
+                  {/* Interruptor destacado para habilitar Notificaciones Push y Alerta Persistente */}
+                  <div className={`stock-push-quick-switch-card ${pushConfig.enabled ? 'switch-active' : 'switch-inactive'}`}>
+                    <div className="switch-card-left">
+                      <div className="switch-card-icon-wrap">
+                        <BellRing size={18} />
+                        <span className={`switch-status-dot ${pushConfig.enabled ? 'dot-on' : 'dot-off'}`} />
+                      </div>
+                      <div className="switch-card-info">
+                        <div className="switch-card-title-row">
+                          <strong>Notificaciones Push y Alerta Persistente de Stock</strong>
+                          <span className={`push-permission-pill perm-${pushConfig.permission}`}>
+                            {pushConfig.enabled ? '✓ Habilitadas' : '✕ Desactivadas'}
+                          </span>
+                          {lowStockItems.length > 0 && (
+                            <span className="persistent-alert-pill">
+                              ⚠️ Alerta persistente en barra superior ({lowStockItems.length})
+                            </span>
+                          )}
+                        </div>
+                        <p>
+                          Al activar este interruptor, cuando cualquier producto caiga por debajo de su umbral mínimo se emitirá una notificación push y el sistema mostrará una <strong>alerta persistente en el centro de notificaciones superior</strong> hasta su reorden o ajuste.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="switch-card-right">
+                      <label
+                        className="toggle-switch-wrap"
+                        title={pushConfig.enabled ? 'Deshabilitar notificaciones push' : 'Habilitar notificaciones push'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={pushConfig.enabled}
+                          onChange={handleTogglePushEnabled}
+                        />
+                        <span className="toggle-slider" />
+                      </label>
+                      <button
+                        type="button"
+                        className="link-btn-push-opts"
+                        onClick={() => setStockConfigTab('push')}
+                        title="Ver ajustes avanzados de audio, vibración y permisos"
+                      >
+                        Ajustes push &rarr;
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Summary Bar */}
                   <div className="stock-config-summary-bar">
                     <div className="summary-stat-chip">

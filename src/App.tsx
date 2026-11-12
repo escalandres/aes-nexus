@@ -1,12 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, useMemo, useRef, type FormEvent } from 'react'
 import {
-  ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
+  ArrowRight, ArrowUpRight, Bell, BellRing, BriefcaseBusiness,
   CalendarDays, ChevronDown, CircleHelp, Clock3,
   FolderKanban, LayoutDashboard, Menu,
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
-  Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X, Building2,
-  UserRoundPlus, LockKeyhole, Plug, CreditCard, Mail,
-  ClipboardList, Globe2, Palette, Check, Moon, Sun, MapPin,
+  Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
+  Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
 } from 'lucide-react'
 import { activities, opportunities } from './data/dashboard'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
@@ -14,6 +13,7 @@ import { createClientApi, type ClientAddress } from './services/clientService'
 import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
 import { CountryFlag } from './components/CountryFlag'
 import { ToastProvider, useToast } from './components/Toast'
+import { SettingsSection } from './components/SettingsSection'
 import { ProductsAndServices } from './components/ProductsAndServices'
 import { QuotesSection } from './components/QuotesSection'
 import { OrdersSection } from './components/OrdersSection'
@@ -138,59 +138,6 @@ const accentOptions = [
 type AccentTheme = typeof accentOptions[number]['id']
 type CreateKind = 'client' | 'supplier' | 'opportunity' | 'activity'
 
-const settingsGroups = [
-  { label: 'ESPACIO DE TRABAJO', items: [{ name: 'General', icon: Settings2 }, { name: 'Organización', icon: Building2 }, { name: 'Idioma y región', icon: Globe2 }] },
-  { label: 'PERSONAS Y ACCESO', items: [{ name: 'Usuarios', icon: UserRoundPlus }, { name: 'Roles y permisos', icon: ShieldCheck }, { name: 'Seguridad', icon: LockKeyhole }] },
-  { label: 'PREFERENCIAS', items: [{ name: 'Apariencia', icon: Palette }, { name: 'Notificaciones', icon: Mail }, { name: 'Auditoría', icon: ClipboardList }] },
-  { label: 'SERVICIOS', items: [{ name: 'Integraciones', icon: Plug }, { name: 'Plan y facturación', icon: CreditCard }] },
-]
-
-const settingsDetails: Record<string, { description: string; rows: { label: string; description: string; value: string }[] }> = {
-  General: { description: 'Administra los datos principales y las preferencias de tu espacio de trabajo.', rows: [
-    { label: 'Nombre del espacio', description: 'Así lo identifican las personas de tu organización.', value: 'Brújula Estudio' },
-    { label: 'País principal', description: 'Define el contexto inicial de operación.', value: 'México' },
-    { label: 'Moneda de reporte', description: 'Moneda usada para presentar los reportes de la organización.', value: 'MXN · Peso mexicano' },
-  ] },
-  Organización: { description: 'Consulta la estructura legal y operativa de tu organización.', rows: [
-    { label: 'Entidad legal', description: 'El MVP contempla una entidad por organización.', value: '1 entidad · Modelo ampliable' },
-    { label: 'Identificador fiscal', description: 'Se configurará cuando se habilite el módulo fiscal.', value: 'Sin configurar' },
-  ] },
-  'Idioma y región': { description: 'Configura el idioma y las preferencias regionales de la interfaz.', rows: [
-    { label: 'Idioma de la interfaz', description: 'Idioma predeterminado para este espacio.', value: 'Español (México)' },
-    { label: 'Zona horaria', description: 'Usada para mostrar fechas y actividades.', value: 'Ciudad de México · UTC−06:00' },
-    { label: 'Formato de fecha', description: 'Preferencia de visualización regional.', value: 'DD/MM/AAAA' },
-  ] },
-  Apariencia: { description: 'Personaliza el color de acento de AES Nexus. El fondo blanco se mantiene para conservar la claridad de lectura.', rows: [] },
-  Usuarios: { description: 'Administra quién puede acceder al espacio de trabajo.', rows: [
-    { label: 'Personas activas', description: 'Miembros con acceso al espacio.', value: '1 usuario · Andrea Morales' },
-    { label: 'Invitaciones pendientes', description: 'Invitaciones que aún no se aceptan.', value: 'Ninguna' },
-  ] },
-  'Roles y permisos': { description: 'Controla el acceso a módulos y acciones según las responsabilidades.', rows: [
-    { label: 'Administradora', description: 'Acceso completo a la configuración del espacio.', value: '1 persona' },
-    { label: 'Roles personalizados', description: 'Disponibles al completar la base de identidad y permisos.', value: 'Próxima fase' },
-  ] },
-  Seguridad: { description: 'Revisa los controles de acceso y protección de la cuenta.', rows: [
-    { label: 'Autenticación multifactor', description: 'La política MFA se definirá antes del inicio de H1.', value: 'Pendiente de configuración' },
-    { label: 'Sesiones activas', description: 'Consulta y revoca sesiones de la organización.', value: 'Disponible al habilitar identidad' },
-  ] },
-  Notificaciones: { description: 'Elige qué novedades del sistema quieres recibir.', rows: [
-    { label: 'Actividad comercial', description: 'Avisos sobre seguimientos y cambios de oportunidades.', value: 'Preferencias disponibles próximamente' },
-    { label: 'Actualizaciones del sistema', description: 'Avisos de mantenimiento y nuevas funciones.', value: 'Preferencias disponibles próximamente' },
-  ] },
-  Auditoría: { description: 'Consulta el historial de cambios relevantes de tu organización.', rows: [
-    { label: 'Registro de actividad', description: 'El registro auditable forma parte del núcleo H1.', value: 'En preparación' },
-    { label: 'Retención de eventos', description: 'La política se definirá antes de almacenar actividad real.', value: 'Pendiente' },
-  ] },
-  Integraciones: { description: 'Conecta AES Nexus con las herramientas que ya usa tu equipo.', rows: [
-    { label: 'Proveedores fiscales', description: 'La evaluación de PAC para México continúa en Fase 0.', value: 'Sin conexión' },
-    { label: 'API y webhooks', description: 'Se definirán después de establecer los contratos de API.', value: 'Próxima fase' },
-  ] },
-  'Plan y facturación': { description: 'Consulta el plan de tu espacio y las opciones de suscripción.', rows: [
-    { label: 'Plan actual', description: 'Este espacio es una demostración del producto.', value: 'Demo · Sin costo' },
-    { label: 'Suscripción', description: 'La gestión comercial de planes pertenece a H4.', value: 'No configurada' },
-  ] },
-}
-
 const money = (value: number) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 }).format(value)
 
 const pageRoutes: Record<string, string> = {
@@ -272,6 +219,100 @@ function AppContent() {
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
   const [warehouses] = useState<Warehouse[]>(initialWarehouses)
   const [inventory, setInventory] = useState<InventoryItemLocation[]>(initialInventory)
+
+  // Notificaciones Push y Alerta Persistente de Stock en Barra Superior
+  const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('nexus_stock_push_alerts_config')
+      if (saved) return JSON.parse(saved).enabled !== false
+    } catch {
+      // fallback
+    }
+    return true
+  })
+
+  // Sincronizar estado de notificaciones push si se modifica desde el dashboard ejecutivo
+  useEffect(() => {
+    const handlePushEvent = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled: boolean }>
+      if (custom.detail && typeof custom.detail.enabled === 'boolean') {
+        setPushEnabled(custom.detail.enabled)
+      }
+    }
+    window.addEventListener('nexus_push_config_changed', handlePushEvent)
+    return () => window.removeEventListener('nexus_push_config_changed', handlePushEvent)
+  }, [])
+
+  const handleTogglePush = (explicitVal?: boolean) => {
+    const nextVal = typeof explicitVal === 'boolean' ? explicitVal : !pushEnabled
+    setPushEnabled(nextVal)
+    try {
+      const saved = localStorage.getItem('nexus_stock_push_alerts_config')
+      const current = saved ? JSON.parse(saved) : {}
+      const updated = { ...current, enabled: nextVal }
+      localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(updated))
+    } catch {
+      // fallback
+    }
+    window.dispatchEvent(
+      new CustomEvent('nexus_push_config_changed', { detail: { enabled: nextVal } })
+    )
+    if (nextVal) {
+      toast.success(
+        'Notificaciones push y alerta persistente activadas. Se mostrará el aviso en la barra superior ante stock crítico.',
+        'Push de Stock activado'
+      )
+    } else {
+      toast.info('Notificaciones push de stock pausadas.', 'Push de Stock')
+    }
+  }
+
+  // Ítems de inventario bajo umbral mínimo
+  const lowStockItems = useMemo(() => {
+    return inventory.filter((item) => item.stock <= item.minStock)
+  }, [inventory])
+
+  // Estado del Centro de Notificaciones Superior
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false)
+  const notificationCenterRef = useRef<HTMLDivElement>(null)
+
+  // Control del modal de configuración de stock desde el centro de notificaciones
+  const [isStockConfigOpen, setIsStockConfigOpen] = useState(false)
+  const [stockConfigTab, setStockConfigTab] = useState<'thresholds' | 'push' | 'email'>('thresholds')
+
+  const handleOpenStockConfigFromNotif = (tab: 'thresholds' | 'push' | 'email' = 'thresholds') => {
+    setIsNotificationCenterOpen(false)
+    setStockConfigTab(tab)
+    setIsStockConfigOpen(true)
+    if (activePage !== 'Inicio') {
+      navigateTo('Inicio')
+    }
+  }
+
+  // Cerrar centro de notificaciones al hacer clic fuera o presionar Escape
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        notificationCenterRef.current &&
+        !notificationCenterRef.current.contains(e.target as Node)
+      ) {
+        setIsNotificationCenterOpen(false)
+      }
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsNotificationCenterOpen(false)
+      }
+    }
+    if (isNotificationCenterOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      document.addEventListener('keydown', handleKeyDown)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isNotificationCenterOpen])
   const [movements, setMovements] = useState<StockMovement[]>(initialMovements)
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(initialPurchaseOrders)
   const [shipments, setShipments] = useState<ShipmentDelivery[]>(initialShipments)
@@ -756,34 +797,228 @@ function AppContent() {
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
           <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? 'Productos y servicios' : salesSection}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? 'Inventario por almacén' : operationsSection === 'Compras' ? 'Compras y recepciones' : operationsSection === 'Entregas' ? 'Entregas y devoluciones' : 'Resumen operativo'}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? 'Cuentas por cobrar y cobros' : financeSection === 'Pagos' ? 'Cuentas por pagar a proveedores' : financeSection === 'Gastos' ? 'Gastos y egresos operativos' : financeSection === 'Cuentas contables' ? 'Cuentas contables' : 'Resumen financiero'}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? 'Departamentos de la organización' : adminSection === 'Ubicaciones' ? 'Ubicaciones y sedes físicas' : 'Resumen organizacional'}</span> </> : null}</div>
-          <div className="topbar-actions"><span className="demo-pill"><i /> DEMO</span><button className="icon-button notification-button" aria-label="Notificaciones" onClick={() => toast.info('No tienes notificaciones pendientes. Todo está al día.', 'Centro de notificaciones')}><Bell size={18} /><i /></button><div className="top-avatar">AM</div></div>
+          <div className="topbar-actions">
+            <span className="demo-pill"><i /> DEMO</span>
+
+            <div className="notification-center-anchor" ref={notificationCenterRef}>
+              <button
+                type="button"
+                className={`icon-button notification-button ${isNotificationCenterOpen ? 'active' : ''} ${lowStockItems.length > 0 && pushEnabled ? 'has-critical-alert' : ''}`}
+                aria-label={`Centro de notificaciones: ${lowStockItems.length} alertas críticas de stock`}
+                aria-expanded={isNotificationCenterOpen}
+                onClick={() => setIsNotificationCenterOpen((prev) => !prev)}
+                title="Centro de notificaciones del sistema"
+              >
+                <Bell size={18} />
+                {lowStockItems.length > 0 && pushEnabled ? (
+                  <span className="notification-count-badge" title={`${lowStockItems.length} alertas críticas de stock`}>
+                    {lowStockItems.length}
+                  </span>
+                ) : (
+                  <i />
+                )}
+              </button>
+
+              {/* Dropdown del Centro de Notificaciones Superior */}
+              {isNotificationCenterOpen && (
+                <div className="notification-center-dropdown" role="region" aria-label="Centro de notificaciones superior">
+                  <div className="notif-dropdown-header">
+                    <div className="notif-header-title-box">
+                      <BellRing size={15} style={{ color: '#456a61' }} />
+                      <strong>Centro de Notificaciones</strong>
+                    </div>
+                    <div className="notif-header-meta">
+                      <span className={`notif-push-status-tag ${pushEnabled ? 'active' : 'inactive'}`}>
+                        {pushEnabled ? 'Push: Activo' : 'Push: Pausado'}
+                      </span>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        style={{ width: '24px', height: '24px' }}
+                        aria-label="Cerrar centro de notificaciones"
+                        onClick={() => setIsNotificationCenterOpen(false)}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="notif-dropdown-scroll">
+                    {/* Alerta Persistente de Stock Crítico */}
+                    {lowStockItems.length > 0 ? (
+                      <div className="notif-persistent-alert-box">
+                        <div className="notif-persistent-badge-row">
+                          <span className="notif-persistent-badge">
+                            <span className="notif-persistent-dot" />
+                            Alerta Persistente
+                          </span>
+                          <span style={{ fontSize: '8px', color: '#9c2e1d', fontWeight: 700 }}>
+                            Stock Crítico · Reorden
+                          </span>
+                        </div>
+                        <h4>
+                          <AlertTriangle size={14} /> {lowStockItems.length} producto(s) por debajo del umbral mínimo
+                        </h4>
+                        <p className="notif-persistent-desc">
+                          Se detectaron existencias por debajo del límite de seguridad. Esta advertencia permanecerá activa en este centro de notificaciones hasta que se reabastezca el almacén o se modifique el umbral del SKU.
+                        </p>
+
+                        <div className="notif-persistent-items-list">
+                          {lowStockItems.slice(0, 3).map((item) => (
+                            <div key={item.id} className="notif-persistent-item-card">
+                              <div className="notif-item-left">
+                                <div className="notif-item-sku-row">
+                                  <code>{item.sku}</code>
+                                  <strong className="notif-item-name">{item.name}</strong>
+                                </div>
+                                <span className="notif-item-wh">{item.warehouseName}</span>
+                              </div>
+                              <div className="notif-item-right">
+                                <span className="notif-item-stock-val">
+                                  {item.stock} {item.unitOfMeasure}
+                                </span>
+                                <span className="notif-item-min-val">
+                                  Mín. {item.minStock} {item.unitOfMeasure}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                          {lowStockItems.length > 3 && (
+                            <div style={{ fontSize: '8.5px', color: '#8c7f7d', textAlign: 'center', padding: '2px 0' }}>
+                              +{lowStockItems.length - 3} producto(s) adicional(es) en umbral crítico...
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="notif-persistent-actions">
+                          <button
+                            type="button"
+                            className="button button-primary"
+                            onClick={() => handleOpenStockConfigFromNotif('thresholds')}
+                          >
+                            <SlidersHorizontal size={12} /> Ajustar umbrales
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-secondary"
+                            onClick={() => {
+                              setIsNotificationCenterOpen(false)
+                              navigateToOperationsSection('Inventario')
+                            }}
+                          >
+                            <ArrowRight size={12} /> Ver en Inventario
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-ghost"
+                            onClick={() => {
+                              setIsNotificationCenterOpen(false)
+                              navigateToOperationsSection('Compras')
+                            }}
+                          >
+                            <Package size={12} /> Compras
+                          </button>
+                        </div>
+                        <span className="notif-pin-footnote">
+                          📌 Alerta persistente fijada: Activa de forma continua mientras existan productos bajo su umbral mínimo.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="notif-safe-box">
+                        <CheckCircle2 size={16} />
+                        <div>
+                          <strong>Niveles de inventario seguros</strong>
+                          <p>Todos los SKUs cuentan con existencias por encima de su umbral mínimo de seguridad.</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Otras Notificaciones Operativas del ERP */}
+                    <div className="notif-section-label">Avisos del Sistema</div>
+
+                    <div className="notif-general-item">
+                      <div className="notif-general-icon blue">📦</div>
+                      <div className="notif-general-content">
+                        <div className="notif-general-title">4 pedidos listos para despacho</div>
+                        <div className="notif-general-desc">Pedidos de almacén Vallejo con empaque terminado pendientes de asignación de guía.</div>
+                        <span className="notif-general-time">Hace 25 min · Operaciones</span>
+                      </div>
+                    </div>
+
+                    <div className="notif-general-item">
+                      <div className="notif-general-icon amber">💳</div>
+                      <div className="notif-general-content">
+                        <div className="notif-general-title">2 facturas por vencer en 5 días</div>
+                        <div className="notif-general-desc">Documentos comerciales pendientes de cobro con clientes mayoristas.</div>
+                        <span className="notif-general-time">Hace 1 h · Finanzas</span>
+                      </div>
+                    </div>
+
+                    <div className="notif-general-item">
+                      <div className="notif-general-icon green">🤝</div>
+                      <div className="notif-general-content">
+                        <div className="notif-general-title">Cotización corporativa aprobada</div>
+                        <div className="notif-general-desc">Cliente Grupo Financiero del Centro confirmó cotización de equipo industrial.</div>
+                        <span className="notif-general-time">Hoy, 09:15 · CRM</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="notif-dropdown-footer">
+                    <div className="notif-quick-push-toggle">
+                      <label className="toggle-switch-wrap" title={pushEnabled ? 'Pausar notificaciones push' : 'Activar notificaciones push'}>
+                        <input
+                          type="checkbox"
+                          checked={pushEnabled}
+                          onChange={() => handleTogglePush()}
+                        />
+                        <span className="toggle-slider" />
+                      </label>
+                      <div className="notif-quick-push-toggle-label">
+                        <strong>Notificaciones Push</strong>
+                        <small>{pushEnabled ? 'Alertas persistentes activas' : 'Pausadas'}</small>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-open-config-from-notif"
+                      onClick={() => handleOpenStockConfigFromNotif('thresholds')}
+                    >
+                      Ajustes de stock &rarr;
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="top-avatar">AM</div>
+          </div>
         </header>
 
         <div className="page-content">
           {activePage === 'Configuración' ? (
-            <section className="settings-page" aria-labelledby="settings-title">
-              <div className="settings-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · ESPACIO DE TRABAJO</div><h1 id="settings-title">Configuración</h1><p>Administra las preferencias y el acceso de tu organización desde un solo lugar.</p></div><span className="settings-demo-label">Datos de demostración</span></div>
-              {notice && <div className="notice" role="status">{notice}<button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}
-              <div className="settings-layout">
-                <nav className="settings-nav" aria-label="Menú de configuración">
-                  {settingsGroups.map((group) => <div className="settings-nav-group" key={group.label}><p className="nav-label">{group.label}</p>{group.items.map(({ name, icon: Icon }) => <button key={name} className={`settings-nav-item ${activeSetting === name ? 'active' : ''}`} aria-current={activeSetting === name ? 'page' : undefined} onClick={() => { setActiveSetting(name); setNotice('') }}><Icon size={16} strokeWidth={1.8} /><span>{name}</span></button>)}</div>)}
-                </nav>
-                <div className="settings-panel">
-                  <div className="settings-panel-heading"><div><h2>{activeSetting}</h2><p>{settingsDetails[activeSetting].description}</p></div><button className="button button-secondary" onClick={() => { setNotice('La edición se habilitará cuando la configuración se conecte al backend.'); toast.info('La edición se habilitará cuando la configuración se conecte al backend.', 'Configuración') }}>Editar</button></div>
-                  {activeSetting === 'Apariencia' ? <div className="appearance-card">
-                    <div className="appearance-card-heading"><div><h3>Color de acento</h3><p>Elige el color que acompaña a la paleta blanca de AES Nexus.</p></div><span className="appearance-current"><i style={{ backgroundColor: accentOptions.find((option) => option.id === accentTheme)?.color }} />{accentOptions.find((option) => option.id === accentTheme)?.label}</span></div>
-                    <div className="appearance-options" role="group" aria-label="Opciones de color de acento">
-                      {accentOptions.map((option) => <button key={option.id} className={`appearance-option ${accentTheme === option.id ? 'selected' : ''}`} aria-pressed={accentTheme === option.id} onClick={() => { setAccentTheme(option.id); window.localStorage.setItem('aes-nexus-accent', option.id); toast.info(`Color de acento actualizado a ${option.label}.`, 'Apariencia') }}>
-                        <span className="appearance-swatch" style={{ backgroundColor: option.color }}>{accentTheme === option.id && <Check size={17} />}</span><span className="appearance-option-copy"><strong>{option.label}</strong><small>{option.description}</small></span>{accentTheme === option.id && <span className="appearance-selected">Seleccionado</span>}
-                      </button>)}
-                    </div>
-                    <div className="appearance-mode-row"><div className="appearance-mode-copy"><span className="appearance-mode-icon">{darkMode ? <Moon size={16} /> : <Sun size={16} />}</span><span><strong>Modo oscuro</strong><small>Reduce el brillo de la interfaz para trabajar con menos luz.</small></span></div><button className={`theme-toggle ${darkMode ? 'on' : ''}`} type="button" role="switch" aria-checked={darkMode} aria-label="Activar modo oscuro" onClick={() => { const nextMode = !darkMode; setDarkMode(nextMode); window.localStorage.setItem('aes-nexus-dark-mode', String(nextMode)); toast.info(nextMode ? 'Modo oscuro activado.' : 'Modo claro activado.', 'Tema visual') }}><span /></button></div>
-                    <div className="appearance-preview"><div className="appearance-preview-copy"><span className="panel-kicker">VISTA PREVIA</span><strong>{darkMode ? 'Una paleta oscura para tu espacio' : 'Una paleta clara para tu espacio'}</strong><small>El color de acento aparece en botones, selección y detalles de navegación.</small></div><button className="button button-primary" type="button">Acción principal</button></div>
-                  </div> : <div className="settings-card">{settingsDetails[activeSetting].rows.map((row) => <div className="settings-row" key={row.label}><div><h3>{row.label}</h3><p>{row.description}</p></div><span className="settings-value">{row.value}</span></div>)}</div>}
-                  <p className="settings-footnote">{activeSetting === 'Apariencia' ? 'La preferencia se guarda en este navegador.' : 'La configuración de esta pantalla es ilustrativa y todavía no se guarda.'}</p>
-                </div>
-              </div>
-            </section>
+            <SettingsSection
+              activeSetting={activeSetting}
+              onSelectSetting={(setting) => {
+                setActiveSetting(setting)
+                setNotice('')
+              }}
+              accentTheme={accentTheme}
+              onSelectAccentTheme={(themeId) => {
+                setAccentTheme(themeId as AccentTheme)
+                window.localStorage.setItem('aes-nexus-accent', themeId)
+              }}
+              darkMode={darkMode}
+              onToggleDarkMode={() => {
+                const nextMode = !darkMode
+                setDarkMode(nextMode)
+                window.localStorage.setItem('aes-nexus-dark-mode', String(nextMode))
+                toast.info(nextMode ? 'Modo oscuro activado.' : 'Modo claro activado.', 'Tema visual')
+              }}
+              accentOptions={accentOptions}
+              warehouses={warehouses}
+            />
           ) : activePage === 'CRM' ? (
             <section className="crm-page" aria-labelledby="crm-title">
               <div className="crm-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · H2 PILOTO COMERCIAL</div><h1 id="crm-title">CRM</h1><p>Organiza tus relaciones, conversaciones y oportunidades desde un solo lugar.</p></div></div>
@@ -1127,6 +1362,9 @@ function AppContent() {
               quotes={quotes}
               inventory={inventory}
               onUpdateInventory={setInventory}
+              isStockConfigOpen={isStockConfigOpen}
+              onCloseStockConfig={() => setIsStockConfigOpen(false)}
+              initialStockConfigTab={stockConfigTab}
               receivables={receivables}
               payables={payables}
               expenses={expenses}
