@@ -12,6 +12,7 @@ import {
   History,
   Layers,
   MapPin,
+  Download,
 } from 'lucide-react'
 import type {
   Warehouse,
@@ -19,6 +20,8 @@ import type {
   StockMovement,
   MovementType,
 } from '../data/operations'
+import { Skeleton } from 'boneyard-js/react'
+import { inventoryTableBones } from '../bones/registry'
 import { useToast } from './Toast'
 
 interface OperationsInventoryProps {
@@ -48,10 +51,28 @@ export function OperationsInventory({
   const [activeTab, setActiveTab] = useState<'stock' | 'movements'>('stock')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false)
+  const [isInventoryLoading, setIsInventoryLoading] = useState(false)
+
+  const handleWarehouseChange = (whId: string) => {
+    setSelectedWarehouseId(whId)
+    setIsInventoryLoading(true)
+    setTimeout(() => setIsInventoryLoading(false), 320)
+  }
+
+  const handleTabChange = (tab: 'stock' | 'movements') => {
+    setActiveTab(tab)
+    setIsInventoryLoading(true)
+    setTimeout(() => setIsInventoryLoading(false), 320)
+  }
 
   // Modals
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false)
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false)
+  const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false)
+
+  // Threshold configuration state
+  const [thresholdItemId, setThresholdItemId] = useState('')
+  const [thresholdValue, setThresholdValue] = useState<number>(0)
 
   // Adjustment form state
   const [adjustItemId, setAdjustItemId] = useState('')
@@ -65,6 +86,73 @@ export function OperationsInventory({
   const [targetWarehouseId, setTargetWarehouseId] = useState('')
   const [transferQty, setTransferQty] = useState(1)
   const [transferNotes, setTransferNotes] = useState('')
+
+  // Currently selected item for threshold configuration
+  const selectedThresholdItem = useMemo(() => {
+    if (thresholdItemId) {
+      const found = inventory.find((i) => i.id === thresholdItemId)
+      if (found) return found
+    }
+    return inventory.find((i) => i.stock <= i.minStock) || inventory[0] || null
+  }, [inventory, thresholdItemId])
+
+  // Open threshold configuration modal
+  const handleOpenThresholdModal = (itemId?: string) => {
+    const target = itemId
+      ? inventory.find((i) => i.id === itemId)
+      : inventory.find((i) => i.stock <= i.minStock) || inventory[0]
+    if (target) {
+      setThresholdItemId(target.id)
+      setThresholdValue(target.minStock)
+    }
+    setIsThresholdModalOpen(true)
+  }
+
+  // Save single threshold
+  const handleSaveThreshold = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedThresholdItem) return
+
+    const updatedVal = Math.max(0, thresholdValue)
+    const updatedList = inventory.map((i) =>
+      i.id === selectedThresholdItem.id ? { ...i, minStock: updatedVal } : i
+    )
+    onUpdateInventory(updatedList)
+
+    if (selectedThresholdItem.stock <= updatedVal) {
+      toast.warning(
+        `Alerta activada: El stock disponible (${selectedThresholdItem.stock} uds.) de "${selectedThresholdItem.name}" quedó en o por debajo del nuevo umbral mínimo (${updatedVal}). Se disparó una alerta visual en el Dashboard Ejecutivo.`,
+        'Alerta de stock activada'
+      )
+    } else {
+      toast.success(
+        `Umbral mínimo para ${selectedThresholdItem.sku} (${selectedThresholdItem.name}) actualizado a ${updatedVal} unidades. Nivel de existencias seguro.`,
+        'Umbral configurado'
+      )
+    }
+  }
+
+  // Quick batch adjust from table
+  const handleQuickSaveItemThreshold = (itemId: string, newMin: number) => {
+    const target = inventory.find((i) => i.id === itemId)
+    if (!target) return
+    const safeMin = Math.max(0, newMin)
+    const updatedList = inventory.map((i) =>
+      i.id === itemId ? { ...i, minStock: safeMin } : i
+    )
+    onUpdateInventory(updatedList)
+    if (target.stock <= safeMin) {
+      toast.warning(
+        `Alerta de stock: ${target.sku} (${target.stock} uds.) cayó en o por debajo del nuevo umbral (${safeMin}). Alerta visible en Dashboard.`,
+        'Umbral mínimo modificado'
+      )
+    } else {
+      toast.success(
+        `Umbral de ${target.sku} ajustado a ${safeMin} unidades.`,
+        'Umbral actualizado'
+      )
+    }
+  }
 
   // Filtered inventory
   const filteredInventory = useMemo(() => {
@@ -105,6 +193,141 @@ export function OperationsInventory({
   const lowStockCount = useMemo(() => {
     return inventory.filter((i) => i.stock <= i.minStock).length
   }, [inventory])
+
+  // Helper to escape values safely for CSV format
+  const escapeCSV = (value: string | number | null | undefined): string => {
+    if (value === null || value === undefined) return '""'
+    const stringVal = String(value)
+    return `"${stringVal.replace(/"/g, '""')}"`
+  }
+
+  // Handle Export CSV of current view (existencias, almacén, estado de stock)
+  const handleExportCSV = () => {
+    if (activeTab === 'stock') {
+      if (filteredInventory.length === 0) {
+        toast.warning(
+          'No hay existencias para exportar con los filtros seleccionados.',
+          'Sin registros'
+        )
+        return
+      }
+
+      const headers = [
+        'SKU',
+        'PRODUCTO',
+        'ALMACÉN',
+        'UBICACIÓN',
+        'EXISTENCIAS DISPONIBLES',
+        'STOCK RESERVADO',
+        'STOCK EN TRÁNSITO',
+        'UMBRAL MÍNIMO',
+        'UNIDAD DE MEDIDA',
+        'COSTO UNITARIO (MXN)',
+        'VALOR TOTAL (MXN)',
+        'ESTADO DE STOCK',
+      ]
+
+      const rows = filteredInventory.map((item) => {
+        const isLow = item.stock <= item.minStock
+        const status = isLow ? 'Bajo umbral (Alerta crítica)' : 'Nivel seguro (Óptimo)'
+        const lineTotal = (item.stock * item.cost).toFixed(2)
+
+        return [
+          escapeCSV(item.sku),
+          escapeCSV(item.name),
+          escapeCSV(item.warehouseName),
+          escapeCSV(item.locationBin),
+          escapeCSV(item.stock),
+          escapeCSV(item.reserved),
+          escapeCSV(item.inTransit),
+          escapeCSV(item.minStock),
+          escapeCSV(item.unitOfMeasure),
+          escapeCSV(item.cost.toFixed(2)),
+          escapeCSV(lineTotal),
+          escapeCSV(status),
+        ].join(',')
+      })
+
+      // UTF-8 BOM (\uFEFF) ensures Excel and spreadsheet readers render special characters correctly
+      const csvContent = '\uFEFF' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const dateStr = new Date().toISOString().split('T')[0]
+      const whName =
+        selectedWarehouseId === 'all'
+          ? 'todos_los_almacenes'
+          : (warehouses.find((w) => w.id === selectedWarehouseId)?.name || 'almacen')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '_')
+
+      link.href = url
+      link.download = `inventario_${whName}_${dateStr}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast.success(
+        `Se descargó el archivo CSV con ${filteredInventory.length} artículos del inventario.`,
+        'Descarga completada'
+      )
+    } else {
+      if (filteredMovements.length === 0) {
+        toast.warning(
+          'No hay movimientos en el kardex para exportar.',
+          'Sin registros'
+        )
+        return
+      }
+
+      const headers = [
+        'FOLIO',
+        'FECHA',
+        'TIPO',
+        'SKU',
+        'PRODUCTO',
+        'CANTIDAD',
+        'ALMACÉN ORIGEN',
+        'ALMACÉN DESTINO',
+        'DOC REFERENCIA',
+        'MOTIVO',
+        'USUARIO',
+      ]
+
+      const rows = filteredMovements.map((mov) => [
+        escapeCSV(mov.folio),
+        escapeCSV(mov.date),
+        escapeCSV(mov.type),
+        escapeCSV(mov.sku),
+        escapeCSV(mov.productName),
+        escapeCSV(mov.quantity),
+        escapeCSV(mov.sourceWarehouse || '—'),
+        escapeCSV(mov.targetWarehouse || '—'),
+        escapeCSV(mov.referenceDoc || '—'),
+        escapeCSV(mov.reason),
+        escapeCSV(mov.user),
+      ].join(','))
+
+      const csvContent = '\uFEFF' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n')
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const dateStr = new Date().toISOString().split('T')[0]
+
+      link.href = url
+      link.download = `kardex_movimientos_${dateStr}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+
+      toast.success(
+        `Se descargó el archivo CSV con ${filteredMovements.length} movimientos de inventario.`,
+        'Descarga completada'
+      )
+    }
+  }
 
   // Handle Adjustment Submit
   const handleConfirmAdjustment = (e: React.FormEvent) => {
@@ -315,7 +538,7 @@ export function OperationsInventory({
           <div className="warehouse-tab-selector" role="tablist">
             <button
               className={`wh-tab ${selectedWarehouseId === 'all' ? 'active' : ''}`}
-              onClick={() => setSelectedWarehouseId('all')}
+              onClick={() => handleWarehouseChange('all')}
             >
               <Layers size={13} />
               Todos los almacenes
@@ -327,7 +550,7 @@ export function OperationsInventory({
                 <button
                   key={w.id}
                   className={`wh-tab ${selectedWarehouseId === w.id ? 'active' : ''}`}
-                  onClick={() => setSelectedWarehouseId(w.id)}
+                  onClick={() => handleWarehouseChange(w.id)}
                 >
                   <MapPin size={13} />
                   {w.name}
@@ -340,6 +563,19 @@ export function OperationsInventory({
 
         <div className="ops-actions-group">
           <button
+            type="button"
+            className="button button-secondary ops-export-main-btn"
+            onClick={handleExportCSV}
+            title={
+              activeTab === 'stock'
+                ? `Exportar ${filteredInventory.length} artículos de la vista actual a archivo CSV`
+                : `Exportar ${filteredMovements.length} movimientos de la vista actual a archivo CSV`
+            }
+          >
+            <Download size={14} /> Exportar CSV
+          </button>
+          <button
+            type="button"
             className="button button-secondary"
             onClick={() => {
               if (inventory.length > 0) setAdjustItemId(inventory[0].id)
@@ -349,6 +585,21 @@ export function OperationsInventory({
             <SlidersHorizontal size={14} /> Ajuste de inventario
           </button>
           <button
+            type="button"
+            className="button button-secondary ops-threshold-btn"
+            onClick={() => handleOpenThresholdModal()}
+            title="Configurar umbrales mínimos de stock por producto para disparar alertas"
+          >
+            <AlertTriangle size={14} style={{ color: lowStockCount > 0 ? '#ba4836' : 'inherit' }} />
+            Umbrales de stock
+            {lowStockCount > 0 && (
+              <span className="threshold-alert-counter" title={`${lowStockCount} productos bajo umbral mínimo`}>
+                {lowStockCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             className="button button-primary"
             onClick={() => {
               if (inventory.length > 0) setTransferItemId(inventory[0].id)
@@ -366,13 +617,13 @@ export function OperationsInventory({
         <div className="ops-view-tabs">
           <button
             className={`ops-view-btn ${activeTab === 'stock' ? 'active' : ''}`}
-            onClick={() => setActiveTab('stock')}
+            onClick={() => handleTabChange('stock')}
           >
             <Boxes size={14} /> Existencias por almacén ({filteredInventory.length})
           </button>
           <button
             className={`ops-view-btn ${activeTab === 'movements' ? 'active' : ''}`}
-            onClick={() => setActiveTab('movements')}
+            onClick={() => handleTabChange('movements')}
           >
             <History size={14} /> Kardex / Registro de movimientos ({movements.length})
           </button>
@@ -412,12 +663,31 @@ export function OperationsInventory({
               </button>
             )}
           </div>
+
+          <button
+            type="button"
+            className="button button-secondary ops-export-csv-btn"
+            onClick={handleExportCSV}
+            title={
+              activeTab === 'stock'
+                ? `Exportar existencias de la vista actual (${filteredInventory.length} artículos) a CSV`
+                : `Exportar movimientos actuales (${filteredMovements.length} registros) a CSV`
+            }
+          >
+            <Download size={13} /> Exportar CSV
+          </button>
         </div>
       </div>
 
       {/* Table Content */}
-      {activeTab === 'stock' ? (
-        <div className="table-wrap ops-table-wrap">
+      <Skeleton
+        name="inventory-table"
+        loading={isInventoryLoading}
+        initialBones={inventoryTableBones}
+        className="inventory-skeleton-container"
+      >
+        {activeTab === 'stock' ? (
+          <div className="table-wrap ops-table-wrap">
           <table className="data-table ops-data-table">
             <thead>
               <tr>
@@ -481,15 +751,35 @@ export function OperationsInventory({
                         <strong>{money(lineTotal)}</strong>
                       </td>
                       <td>
-                        {isLow ? (
-                          <span className="stock-alert-badge">
-                            <AlertTriangle size={11} /> Stock bajo (mín. {item.minStock})
-                          </span>
-                        ) : (
-                          <span className="stock-ok-badge">
-                            <CheckCircle2 size={11} /> Abastecido
-                          </span>
-                        )}
+                        <div className="stock-status-cell-wrap">
+                          {isLow ? (
+                            <button
+                              type="button"
+                              className="stock-alert-badge hover-clickable"
+                              onClick={() => handleOpenThresholdModal(item.id)}
+                              title="Stock por debajo o igual al umbral mínimo. Clic para ajustar umbral."
+                            >
+                              <AlertTriangle size={11} /> Stock bajo (mín. {item.minStock})
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="stock-ok-badge hover-clickable"
+                              onClick={() => handleOpenThresholdModal(item.id)}
+                              title="Stock adecuado. Clic para ajustar umbral mínimo."
+                            >
+                              <CheckCircle2 size={11} /> Abastecido (mín. {item.minStock})
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="inline-config-btn"
+                            onClick={() => handleOpenThresholdModal(item.id)}
+                            title="Ajustar umbral mínimo de stock para este producto"
+                          >
+                            <SlidersHorizontal size={10} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -584,6 +874,7 @@ export function OperationsInventory({
           </table>
         </div>
       )}
+      </Skeleton>
 
       {/* Modal: Ajuste de Inventario */}
       {isAdjustModalOpen && (
@@ -607,6 +898,20 @@ export function OperationsInventory({
                 aria-label="Cerrar modal"
               >
                 <X size={18} />
+              </button>
+            </div>
+
+            <div className="adjust-modal-subnav">
+              <span className="subnav-text">¿Deseas definir los límites de alerta por producto?</span>
+              <button
+                type="button"
+                className="subnav-link-btn"
+                onClick={() => {
+                  setIsAdjustModalOpen(false)
+                  handleOpenThresholdModal(adjustItemId)
+                }}
+              >
+                Configurar umbrales mínimos de stock &rarr;
               </button>
             </div>
 
@@ -780,6 +1085,248 @@ export function OperationsInventory({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Configuración de Umbrales Mínimos de Stock */}
+      {isThresholdModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsThresholdModalOpen(false)
+          }}
+        >
+          <section className="create-modal modal-wide" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">OPERACIONES · POLÍTICAS DE STOCK & CONTROL DE QUIEBRES</div>
+                <h2>Configuración de umbrales mínimos de stock</h2>
+                <p>
+                  Establece el nivel mínimo de seguridad por producto. Cuando la cantidad física disponible caiga en o por debajo de este límite, el sistema disparará automáticamente una alerta visual en el Dashboard Principal.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setIsThresholdModalOpen(false)}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="threshold-modal-body">
+              {/* Formulario de producto seleccionado */}
+              <form onSubmit={handleSaveThreshold} className="threshold-focus-card">
+                <div className="threshold-card-header">
+                  <h4>Ajuste de umbral por producto</h4>
+                  <span className="threshold-hint-badge">Dispara alertas en tiempo real</span>
+                </div>
+
+                <div className="form-grid">
+                  <label className="form-field" style={{ gridColumn: 'span 2' }}>
+                    <span>Selecciona producto y almacén *</span>
+                    <select
+                      value={thresholdItemId || (selectedThresholdItem ? selectedThresholdItem.id : '')}
+                      onChange={(e) => {
+                        setThresholdItemId(e.target.value)
+                        const itm = inventory.find((i) => i.id === e.target.value)
+                        if (itm) setThresholdValue(itm.minStock)
+                      }}
+                    >
+                      {inventory.map((inv) => (
+                        <option key={inv.id} value={inv.id}>
+                          [{inv.sku}] {inv.name} — {inv.warehouseName} (Stock actual: {inv.stock} {inv.unitOfMeasure})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {selectedThresholdItem && (
+                  <div className="threshold-status-preview">
+                    <div className="preview-stat-box">
+                      <span className="stat-label">Stock físico disponible</span>
+                      <strong className={`stat-num ${selectedThresholdItem.stock <= thresholdValue ? 'text-alert' : ''}`}>
+                        {selectedThresholdItem.stock} {selectedThresholdItem.unitOfMeasure}
+                      </strong>
+                      <small>Reservado: {selectedThresholdItem.reserved} · En tránsito: {selectedThresholdItem.inTransit}</small>
+                    </div>
+
+                    <div className="preview-input-box">
+                      <label className="form-field" style={{ margin: 0 }}>
+                        <span>Umbral mínimo de stock (uds.) *</span>
+                        <div className="stepper-input-wrap">
+                          <button
+                            type="button"
+                            className="stepper-btn"
+                            onClick={() => setThresholdValue(Math.max(0, thresholdValue - 1))}
+                            title="Disminuir umbral"
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            min="0"
+                            required
+                            value={thresholdValue}
+                            onChange={(e) => setThresholdValue(Math.max(0, parseInt(e.target.value) || 0))}
+                          />
+                          <button
+                            type="button"
+                            className="stepper-btn"
+                            onClick={() => setThresholdValue(thresholdValue + 1)}
+                            title="Aumentar umbral"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="preview-action-box">
+                      <button type="submit" className="button button-primary" style={{ width: '100%' }}>
+                        <CheckCircle2 size={14} /> Guardar umbral
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Previsualización dinámica de alerta */}
+                {selectedThresholdItem && (
+                  <div
+                    className={`threshold-alert-callout ${
+                      selectedThresholdItem.stock <= thresholdValue ? 'callout-alert' : 'callout-ok'
+                    }`}
+                  >
+                    {selectedThresholdItem.stock <= thresholdValue ? (
+                      <>
+                        <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                        <div>
+                          <strong>¡Atención! Este umbral activará la alerta visual en el Dashboard Principal</strong>
+                          <p>
+                            El stock actual ({selectedThresholdItem.stock} {selectedThresholdItem.unitOfMeasure}) es menor o igual al umbral fijado ({thresholdValue}).
+                            En el Dashboard Ejecutivo se activará de inmediato el indicador prioritario de reorden y rotura de stock.
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                        <div>
+                          <strong>Nivel de inventario seguro</strong>
+                          <p>
+                            El stock disponible ({selectedThresholdItem.stock} {selectedThresholdItem.unitOfMeasure}) supera el umbral mínimo fijado ({thresholdValue}).
+                            El Dashboard Ejecutivo no registrará alertas de desabasto para este producto.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </form>
+
+              {/* Resumen global y ajuste rápido de todos los productos */}
+              <div className="threshold-summary-section">
+                <div className="threshold-table-header">
+                  <h4>Políticas de umbral de stock en almacenes ({inventory.length} referencias)</h4>
+                  <span className="threshold-legend">
+                    <span className="dot-alert" /> {inventory.filter((i) => i.stock <= i.minStock).length} artículos bajo umbral mínimo
+                  </span>
+                </div>
+
+                <div className="threshold-table-wrap">
+                  <table className="threshold-table">
+                    <thead>
+                      <tr>
+                        <th>SKU / PRODUCTO</th>
+                        <th>ALMACÉN</th>
+                        <th style={{ textAlign: 'right' }}>STOCK DISP.</th>
+                        <th style={{ textAlign: 'center' }}>UMBRAL MÍNIMO</th>
+                        <th>ESTADO DE ALERTA</th>
+                        <th style={{ textAlign: 'right' }}>ACCIÓN</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {inventory.map((inv) => {
+                        const isUnder = inv.stock <= inv.minStock
+                        return (
+                          <tr key={inv.id} className={isUnder ? 'tr-warning' : ''}>
+                            <td>
+                              <span className="sku-badge-small">{inv.sku}</span>
+                              <strong style={{ fontSize: '9.5px', color: '#27342c' }}>{inv.name}</strong>
+                            </td>
+                            <td style={{ fontSize: '9px', color: '#68776e' }}>{inv.warehouseName}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <strong className={`stock-number ${isUnder ? 'text-alert' : ''}`}>
+                                {inv.stock}
+                              </strong>
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div className="inline-threshold-input-group">
+                                <button
+                                  type="button"
+                                  className="mini-stepper-btn"
+                                  onClick={() => handleQuickSaveItemThreshold(inv.id, inv.minStock - 1)}
+                                  title="Reducir umbral en 1 unidad"
+                                >
+                                  -
+                                </button>
+                                <span className="current-min-badge">{inv.minStock}</span>
+                                <button
+                                  type="button"
+                                  className="mini-stepper-btn"
+                                  onClick={() => handleQuickSaveItemThreshold(inv.id, inv.minStock + 1)}
+                                  title="Aumentar umbral en 1 unidad"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
+                            <td>
+                              {isUnder ? (
+                                <span className="stock-alert-badge">
+                                  <AlertTriangle size={10} /> Alerta activa ({inv.stock} ≤ {inv.minStock})
+                                </span>
+                              ) : (
+                                <span className="stock-ok-badge">
+                                  <CheckCircle2 size={10} /> Seguro ({inv.stock} &gt; {inv.minStock})
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="button button-ghost"
+                                style={{ fontSize: '8.5px', padding: '3px 7px' }}
+                                onClick={() => {
+                                  setThresholdItemId(inv.id)
+                                  setThresholdValue(inv.minStock)
+                                }}
+                              >
+                                Seleccionar
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div className="create-modal-actions">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => setIsThresholdModalOpen(false)}
+              >
+                Cerrar configuración
+              </button>
+            </div>
           </section>
         </div>
       )}

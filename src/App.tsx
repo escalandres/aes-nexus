@@ -1,14 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
-  ArrowDownRight, ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
-  CalendarDays, ChartNoAxesCombined, ChevronDown, CircleHelp, Clock3,
-  Command, FolderKanban, LayoutDashboard, Menu,
+  ArrowRight, ArrowUpRight, Bell, BriefcaseBusiness,
+  CalendarDays, ChevronDown, CircleHelp, Clock3,
+  FolderKanban, LayoutDashboard, Menu,
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X, Building2,
   UserRoundPlus, LockKeyhole, Plug, CreditCard, Mail,
   ClipboardList, Globe2, Palette, Check, Moon, Sun, MapPin,
 } from 'lucide-react'
-import { activities, opportunities, revenueBars } from './data/dashboard'
+import { activities, opportunities } from './data/dashboard'
+import { ExecutiveDashboard } from './components/ExecutiveDashboard'
 import { createClientApi, type ClientAddress } from './services/clientService'
 import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
 import { CountryFlag } from './components/CountryFlag'
@@ -406,6 +407,11 @@ function AppContent() {
   })
   const [darkMode, setDarkMode] = useState(() => window.localStorage.getItem('aes-nexus-dark-mode') === 'true')
 
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode)
+    document.body.classList.toggle('dark', darkMode)
+  }, [darkMode])
+
   const navigateTo = (page: string) => {
     setActivePage(page)
     if (page === 'Ventas') setSalesSection('Catálogo')
@@ -688,12 +694,10 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
   const [menuOpen, setMenuOpen] = useState(false)
-  const [period, setPeriod] = useState('Este mes')
   const [notice, setNotice] = useState('')
 
   const handleCreate = () => {
-    setNotice('El formulario de creación estará disponible al conectar el módulo comercial.')
-    toast.info('El formulario de creación rápida estará disponible al conectar el módulo comercial.', 'Módulo comercial')
+    openCreate('opportunity')
   }
   const directoryRecords = crmSection === 'Proveedores' ? supplierRecords : clientRecords
   const filteredDirectory = directoryRecords.filter((client) => {
@@ -1118,47 +1122,27 @@ function AppContent() {
               onNavigateSection={navigateToAdminSection}
             />
           ) : activePage === 'Inicio' ? (
-            <>
-              <section className="welcome-row">
-                <div><div className="eyebrow"><span className="eyebrow-line" /> VIERNES, 6 DE NOVIEMBRE</div><h1>Buenos días, Andrea<span className="wave">✳</span></h1><p className="welcome-subtitle">Aquí tienes el pulso de tu negocio. <span>Todo en orden.</span></p></div>
-                <div className="header-actions"><button className="button button-secondary" onClick={() => setPeriod(period === 'Este mes' ? 'Este trimestre' : 'Este mes')}><CalendarDays size={15} />{period}<ChevronDown size={14} /></button><button className="button button-primary" onClick={handleCreate}><Plus size={17} /> Nueva oportunidad</button></div>
-              </section>
-
-              {notice && <div className="notice" role="status">{notice}<button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}
-              <div className="demo-banner"><Sparkles size={15} /><span>Estás viendo un espacio de demostración.</span><span className="banner-divider" /><span>Los datos son de ejemplo y no representan información real.</span><button onClick={() => { setNotice('La configuración inicial estará disponible al habilitar tu espacio de trabajo.'); toast.info('La configuración inicial estará disponible al habilitar tu espacio de trabajo.', 'Espacio de trabajo') }}>Configurar espacio <ArrowRight size={13} /></button></div>
-
-              <section className="kpi-grid" aria-label="Resumen del negocio">
-                <article className="kpi-card kpi-featured"><div className="kpi-top"><span>Ventas cerradas</span><span className="kpi-icon"><ChartNoAxesCombined size={16} /></span></div><div className="kpi-value">$284,500<span className="kpi-currency"> MXN</span></div><div className="kpi-foot"><span className="trend trend-up"><ArrowUpRight size={14} /> 12.8%</span><span>vs. mes anterior</span><div className="sparkline"><svg viewBox="0 0 98 32" aria-label="Tendencia ascendente"><path d="M2 25 C14 22 12 16 24 19 S40 22 48 13 S61 19 68 10 S80 14 96 3" /></svg></div></div></article>
-                <article className="kpi-card"><div className="kpi-top"><span>Oportunidades abiertas</span><span className="kpi-icon icon-lilac"><Target size={16} /></span></div><div className="kpi-value">12</div><div className="kpi-foot"><span className="trend trend-up"><ArrowUpRight size={14} /> 3 nuevas</span><span>esta semana</span></div><div className="mini-segments"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></article>
-                <article className="kpi-card"><div className="kpi-top"><span>Valor del pipeline</span><span className="kpi-icon icon-sand"><BriefcaseBusiness size={16} /></span></div><div className="kpi-value">$1.24<span className="kpi-currency"> M</span></div><div className="kpi-foot"><span className="subtle-label">Ticket promedio</span><strong>$38,750</strong><span className="trend trend-neutral">MXN</span></div></article>
-                <article className="kpi-card"><div className="kpi-top"><span>Tasa de conversión</span><span className="kpi-icon icon-green"><ArrowDownRight size={17} /></span></div><div className="kpi-value">32<span className="kpi-percent">%</span></div><div className="kpi-foot"><span className="trend trend-down"><ArrowDownRight size={14} /> 2.4 pts</span><span>vs. mes anterior</span></div><div className="conversion-track"><span /></div></article>
-              </section>
-
-              <section className="dashboard-grid">
-                <article className="panel revenue-panel"><div className="panel-heading"><div><div className="panel-kicker">PANORAMA</div><h2>Ventas y objetivos</h2><p className="panel-subtitle">Cómo avanza tu negocio en los últimos meses</p></div><button className="more-button" aria-label="Más opciones"><MoreHorizontal size={19} /></button></div>
-                  <div className="chart-summary"><strong>$1,082,400</strong><span className="trend trend-up"><ArrowUpRight size={13} /> 8.6%</span><small>ingresos totales</small></div>
-                  <div className="bar-chart" aria-label="Ventas mensuales frente al objetivo">
-                    <div className="y-axis"><span>$200k</span><span>$150k</span><span>$100k</span><span>$50k</span></div>
-                    <div className="chart-area"><div className="chart-gridlines"><i /><i /><i /><i /></div><div className="bars">{revenueBars.map(({ month, actual, target }) => <div className="bar-group" key={month}><div className="bar-pair"><i className="bar-target" style={{ height: `${target}%` }} /><i className={`bar-actual ${month === 'Nov' ? 'bar-current' : ''}`} style={{ height: `${actual}%` }} /></div><span>{month}</span></div>)}</div></div>
-                  </div>
-                  <div className="chart-legend"><span><i className="legend-dot legend-actual" />Ventas</span><span><i className="legend-dot legend-target" />Objetivo</span><small>Datos ilustrativos</small></div>
-                </article>
-
-                <article className="panel activity-panel"><div className="panel-heading"><div><div className="panel-kicker">EN TU AGENDA</div><h2>Lo que sigue</h2></div><button className="text-link" onClick={() => navigateTo('CRM')}>Ver agenda <ArrowRight size={14} /></button></div>
-                  <div className="today-label"><span>HOY</span><span>06 NOV</span></div>
-                  <div className="activity-list">{activities.map((activity) => <div className="activity-row" key={activity.title}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time></div>)}</div>
-                  <button className="add-activity" onClick={() => { setNotice('La creación de actividades estará disponible al conectar el CRM.'); toast.info('La creación de actividades estará disponible al conectar el CRM.', 'Actividades') }}><Plus size={15} /> Agregar actividad</button>
-                  <div className="activity-note"><span className="note-spark"><Sparkles size={14} /></span><p>Un seguimiento a tiempo puede cambiar el rumbo de una oportunidad.</p></div>
-                </article>
-
-                <article className="panel opportunities-panel"><div className="panel-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades recientes</h2><p className="panel-subtitle">Las conversaciones más activas de tu equipo</p></div><button className="text-link" onClick={() => navigateTo('CRM')}>Ver todas <ArrowRight size={14} /></button></div>
-                  <div className="table-wrap"><table className="data-table"><thead><tr><th>EMPRESA</th><th>ETAPA</th><th>VALOR ESTIMADO</th><th>ACTUALIZACIÓN</th><th><span className="sr-only">Opciones</span></th></tr></thead><tbody>{opportunities.map((opportunity) => <tr key={opportunity.company}><td><div className="company-cell"><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div></div></td><td><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span></td><td className="money-cell">{money(opportunity.value)}</td><td className="date-cell">{opportunity.date}</td><td><button className="row-more" aria-label={`Opciones para ${opportunity.company}`}><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table></div>
-                  <button className="table-footer" onClick={() => navigateTo('CRM')}>Ver pipeline completo <ArrowRight size={14} /></button>
-                </article>
-              </section>
-
-              <footer className="page-footer"><span>Última actualización hace unos momentos</span><span><Command size={12} /> AES Nexus · Gestión clara para tu negocio.</span></footer>
-            </>
+            <ExecutiveDashboard
+              orders={orders}
+              quotes={quotes}
+              inventory={inventory}
+              onUpdateInventory={setInventory}
+              receivables={receivables}
+              payables={payables}
+              expenses={expenses}
+              bankAccounts={bankAccounts}
+              chartAccounts={chartAccounts}
+              opportunities={opportunityRecords}
+              activities={activityRecords}
+              onNavigateSales={navigateToSalesSection}
+              onNavigateOperations={navigateToOperationsSection}
+              onNavigateFinance={navigateToFinanceSection}
+              onNavigateCrm={(sec) => {
+                navigateTo('CRM')
+                if (sec) setCrmSection(sec)
+              }}
+              onOpenCreateOpportunity={handleCreate}
+            />
           ) : (
             (() => {
               const detail = moduleDetails[activePage as keyof typeof moduleDetails]

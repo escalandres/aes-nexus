@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import type { ChartAccount, AccountType } from '../data/finance'
+import { Skeleton } from 'boneyard-js/react'
+import { financeAccountingBones } from '../bones/registry'
 import { useToast } from './Toast'
 import { FinanceAccountingChart } from './FinanceAccountingChart'
 
@@ -73,6 +75,14 @@ export function FinanceAccounting({
   const [natureFilter, setNatureFilter] = useState<string>('Todas')
   const [statusFilter, setStatusFilter] = useState<string>('Todos')
   const [searchQuery, setSearchQuery] = useState('')
+  const [isAccountsLoading, setIsAccountsLoading] = useState(false)
+
+  const handleMacroTypeChange = (macro: MacroAccountType) => {
+    setMacroTypeFilter(macro)
+    setSubTypeFilter('Todos')
+    setIsAccountsLoading(true)
+    setTimeout(() => setIsAccountsLoading(false), 320)
+  }
 
   // New Account Modal
   const [isNewAccountModalOpen, setIsNewAccountModalOpen] = useState(false)
@@ -364,10 +374,7 @@ export function FinanceAccounting({
           <div className="warehouse-tab-selector" role="tablist">
             <button
               className={`wh-tab ${macroTypeFilter === 'Todos' ? 'active' : ''}`}
-              onClick={() => {
-                setMacroTypeFilter('Todos')
-                setSubTypeFilter('Todos')
-              }}
+              onClick={() => handleMacroTypeChange('Todos')}
             >
               <Layers size={13} />
               Todas las cuentas
@@ -379,16 +386,37 @@ export function FinanceAccounting({
                 <button
                   key={group}
                   className={`wh-tab ${macroTypeFilter === group ? 'active' : ''}`}
-                  onClick={() => {
-                    setMacroTypeFilter(group)
-                    setSubTypeFilter('Todos')
-                  }}
+                  onClick={() => handleMacroTypeChange(group)}
                 >
                   {group}
                   <span className="wh-badge">{count}</span>
                 </button>
               )
             })}
+          </div>
+        </div>
+
+        {/* Real-time search field in toolbar */}
+        <div className="ops-toolbar-search">
+          <div className="ops-search-input-wrap">
+            <Search size={14} />
+            <input
+              type="text"
+              placeholder="Buscar por nombre o código en tiempo real..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Buscar cuentas contables por código o nombre"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                onClick={() => setSearchQuery('')}
+                title="Limpiar búsqueda"
+              >
+                <X size={13} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -417,26 +445,6 @@ export function FinanceAccounting({
       {/* Dropdown Filters Bar */}
       <div className="accounting-filters-bar">
         <div className="accounting-filters-left">
-          {/* Search Input */}
-          <div className="ops-search-input-wrap" style={{ minWidth: '240px' }}>
-            <Search size={14} />
-            <input
-              type="text"
-              placeholder="Buscar por código, nombre o descripción..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            {searchQuery && (
-              <button
-                className="search-clear-btn"
-                onClick={() => setSearchQuery('')}
-                title="Limpiar búsqueda"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-
           {/* Desplegable de Tipo (Activo, Pasivo, Capital, Ingreso, Gasto) */}
           <div className="accounting-select-wrap">
             <Filter size={12} />
@@ -549,7 +557,13 @@ export function FinanceAccounting({
       </div>
 
       {/* Accounts Table */}
-      <div className="table-wrap ops-table-wrap">
+      <Skeleton
+        name="finance-accounting-table"
+        loading={isAccountsLoading}
+        initialBones={financeAccountingBones}
+        className="accounting-skeleton-container"
+      >
+        <div className="table-wrap ops-table-wrap">
         <table className="data-table ops-data-table">
           <thead>
             <tr>
@@ -566,7 +580,23 @@ export function FinanceAccounting({
             {filteredAccounts.length === 0 ? (
               <tr>
                 <td colSpan={7} className="empty-cell">
-                  No se encontraron cuentas contables con los criterios seleccionados.
+                  {searchQuery.trim() ? (
+                    <div style={{ padding: '14px 0' }}>
+                      <p style={{ margin: '0 0 6px', fontWeight: 600 }}>
+                        No se encontraron cuentas contables que coincidan con «{searchQuery.trim()}».
+                      </p>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        style={{ minHeight: '26px', padding: '0 10px', fontSize: '9px', display: 'inline-flex' }}
+                        onClick={() => setSearchQuery('')}
+                      >
+                        Limpiar búsqueda
+                      </button>
+                    </div>
+                  ) : (
+                    'No se encontraron cuentas contables con los criterios seleccionados.'
+                  )}
                 </td>
               </tr>
             ) : (
@@ -627,6 +657,7 @@ export function FinanceAccounting({
           </tbody>
         </table>
       </div>
+      </Skeleton>
 
       {/* Modal: Agregar Cuenta Contable */}
       {isNewAccountModalOpen && (
