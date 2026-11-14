@@ -1,6 +1,10 @@
+import { makeValidClabe } from './ebp'
+import type { SalesLineItem } from './sales'
+
 export interface InvoiceReceivable {
   id: string
   folio: string
+  orderId?: string
   orderFolio: string
   clientCompany: string
   clientName: string
@@ -15,6 +19,11 @@ export interface InvoiceReceivable {
   status: 'Pendiente' | 'Pagada' | 'Parcial' | 'Vencida'
   currency: 'MXN' | 'USD'
   paymentMethod?: string
+  paymentTerms?: string
+  cfdiUse?: string
+  billingPercentage?: number
+  notes?: string
+  items?: SalesLineItem[]
 }
 
 export interface BillPayable {
@@ -81,6 +90,7 @@ export interface BankAccount {
   balance: number
   currency: 'MXN' | 'USD'
   type: 'Cheques / Operativa' | 'Concentradora' | 'Caja chica'
+  bankPackValues?: Record<string, Record<string, string>>
 }
 
 export const initialBankAccounts: BankAccount[] = [
@@ -88,19 +98,52 @@ export const initialBankAccounts: BankAccount[] = [
     id: 'bank_1',
     bankName: 'BBVA México',
     accountNumber: '**** 4920',
-    clabe: '012180004920192841',
+    clabe: makeValidClabe('01218000492019284'),
     balance: 512400,
     currency: 'MXN',
     type: 'Cheques / Operativa',
+    bankPackValues: {
+      pack_bbva_netcash_nomina: {
+        emisoraCode: '00048219',
+        contractNumber: '98210455',
+        serviceType: 'NOM',
+      },
+      pack_banorte_bem_pagos: {
+        companyId: '008812',
+        originAccount11: '04920192841',
+      },
+      pack_santander_enlace_csv: {
+        clientCode: 'BBVA-4920',
+      },
+      pack_iso20022_pain001_xml: {
+        bicOrigin: 'BCMRMXMMPYM',
+        serviceLevel: 'URGP',
+      },
+    },
   },
   {
     id: 'bank_2',
     bankName: 'Banorte',
     accountNumber: '**** 8812',
-    clabe: '072180008812049182',
+    clabe: makeValidClabe('07218000881204918'),
     balance: 310800,
     currency: 'MXN',
     type: 'Concentradora',
+    bankPackValues: {
+      pack_banorte_bem_pagos: {
+        companyId: '008812',
+        originAccount11: '0881204918',
+      },
+      pack_bbva_netcash_nomina: {
+        emisoraCode: '00048219',
+        contractNumber: '98210455',
+        serviceType: 'NOM',
+      },
+      pack_iso20022_pain001_xml: {
+        bicOrigin: 'MENOMXMTXXX',
+        serviceLevel: 'URGP',
+      },
+    },
   },
   {
     id: 'bank_3',
@@ -117,6 +160,7 @@ export const initialReceivables: InvoiceReceivable[] = [
   {
     id: 'cxc_1',
     folio: 'FAC-2026-001',
+    orderId: 'order_1',
     orderFolio: 'PED-2026-001',
     clientCompany: 'Estudio Nómada',
     clientName: 'Sofía Ramírez',
@@ -135,6 +179,7 @@ export const initialReceivables: InvoiceReceivable[] = [
   {
     id: 'cxc_2',
     folio: 'FAC-2026-002',
+    orderId: 'order_2',
     orderFolio: 'PED-2026-002',
     clientCompany: 'Casa Oliva',
     clientName: 'Valentina Ruiz',
@@ -153,6 +198,7 @@ export const initialReceivables: InvoiceReceivable[] = [
   {
     id: 'cxc_3',
     folio: 'FAC-2026-003',
+    orderId: 'order_3',
     orderFolio: 'PED-2026-003',
     clientCompany: 'Lumen Studio',
     clientName: 'Mateo Cruz',

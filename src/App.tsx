@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo, useRef, type FormEvent } from 'react'
 import {
   ArrowRight, ArrowUpRight, Bell, BellRing, BriefcaseBusiness,
-  CalendarDays, ChevronDown, CircleHelp, Clock3,
-  FolderKanban, LayoutDashboard, Menu,
+  CalendarDays, ChevronDown, CircleHelp, Clock3, Edit3, Eye,
+  FolderKanban, Landmark, LayoutDashboard, Menu,
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
@@ -14,24 +14,33 @@ import CountryDropdown, { countries, findCountry } from './components/CountryDro
 import { CountryFlag } from './components/CountryFlag'
 import { ToastProvider, useToast } from './components/Toast'
 import { SettingsSection } from './components/SettingsSection'
+import { CrmEmployees } from './components/CrmEmployees'
+import { CrmPayroll } from './components/CrmPayroll'
+import { DirectorySheetModal, DirectoryEditModal } from './components/DirectorySheetModal'
+import { initialEmployees, type EmployeeRecord } from './data/employees'
+import { initialPayrollRuns, type PayrollRunRecord } from './data/payroll'
 import { ProductsAndServices } from './components/ProductsAndServices'
 import { QuotesSection } from './components/QuotesSection'
 import { OrdersSection } from './components/OrdersSection'
+import { SalesInvoices } from './components/SalesInvoices'
 import { SalesOverview } from './components/SalesOverview'
 import { initialQuotes, initialOrders, type Quote, type SalesOrder } from './data/sales'
 import { initialProductsAndServices } from './data/products'
 import { OperationsInventory } from './components/OperationsInventory'
+import { OperationsTransfers } from './components/OperationsTransfers'
 import { OperationsPurchases } from './components/OperationsPurchases'
 import { OperationsDeliveries } from './components/OperationsDeliveries'
 import { OperationsOverview } from './components/OperationsOverview'
 import {
   initialWarehouses,
   initialInventory,
+  initialTransfers,
   initialMovements,
   initialPurchaseOrders,
   initialShipments,
   type Warehouse,
   type InventoryItemLocation,
+  type InventoryTransfer,
   type StockMovement,
   type PurchaseOrder,
   type ShipmentDelivery,
@@ -41,6 +50,16 @@ import { FinancePayables } from './components/FinancePayables'
 import { FinanceExpenses } from './components/FinanceExpenses'
 import { FinanceOverview } from './components/FinanceOverview'
 import { FinanceAccounting } from './components/FinanceAccounting'
+import { FinanceEbp } from './components/FinanceEbp'
+import { EbpBatchWizardModal, type EbpWizardCandidateLine } from './components/EbpBatchWizardModal'
+import {
+  initialBankFormatPacks,
+  initialEbpBatches,
+  makeValidClabe,
+  validateEbpFieldValue,
+  type BankFormatPack,
+  type ElectronicPaymentBatch,
+} from './data/ebp'
 import {
   AdministrationSection,
   type DepartmentRecord,
@@ -73,14 +92,16 @@ const sections: { label: string; items: { name: string; icon: typeof LayoutDashb
 ]
 
 const moduleDetails = {
-  CRM: { icon: Users, phase: 'H2 · Piloto comercial', description: 'Centraliza las relaciones y el seguimiento comercial de tu organización.', areas: ['Empresas y contactos', 'Oportunidades y pipeline', 'Actividades y seguimiento'] },
-  Ventas: { icon: ShoppingBag, phase: 'H2 · Piloto comercial', description: 'Acompaña el proceso desde una cotización hasta la confirmación del pedido.', areas: ['Catálogo de productos y servicios', 'Cotizaciones y aprobaciones', 'Pedidos de venta'] },
-  Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Compras y recepciones', 'Entregas y devoluciones'] },
+  CRM: { icon: Users, phase: 'H2 · Piloto comercial', description: 'Centraliza las relaciones y el seguimiento comercial de tu organización.', areas: ['Empresas y contactos', 'Empleados y colaboradores', 'Nómina de empleados', 'Oportunidades y pipeline', 'Actividades y seguimiento'] },
+  Ventas: { icon: ShoppingBag, phase: 'H2 · Piloto comercial', description: 'Acompaña el proceso desde una cotización y pedido hasta la factura de venta sincronizada con Finanzas.', areas: ['Catálogo de productos y servicios', 'Cotizaciones y aprobaciones', 'Pedidos de venta', 'Facturas de venta y CxC'] },
+  Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
   Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Configura la organización, el acceso de las personas y los controles de operación.', areas: ['Organización y entidad legal', 'Usuarios, membresías y roles', 'Auditoría y configuración'] },
 } as const
 
 type DirectoryRecord = {
+  clientCode?: string
+  supplierCode?: string
   name: string
   company: string
   email: string
@@ -96,22 +117,28 @@ type DirectoryRecord = {
   city?: string
   state?: string
   country?: string
+  notes?: string
   addresses?: ClientAddress[]
+  bankName?: string
+  clabe?: string
+  accountNumber?: string
+  defaultReference?: string
+  bankPackValues?: Record<string, Record<string, string>>
 }
 
 const clients: DirectoryRecord[] = [
-  { name: 'Sofía Ramírez', company: 'Estudio Nómada', email: 'sofia@estudionomada.mx', phone: '55 2184 6301', status: 'Activo', lastActivity: 'Hoy', initials: 'SR', color: 'lilac', rfc: 'ENO190520AB1', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'CDMX', addresses: [{ id: 'a1', street: 'Colima 245, Roma Norte', city: 'Ciudad de México', state: 'CDMX', zipCode: '06700', country: 'MX', isShipping: true, isBilling: true }] },
-  { name: 'Diego Fernández', company: 'Taller Norte', email: 'diego@tallernorte.mx', phone: '81 3045 1120', status: 'Activo', lastActivity: 'Ayer', initials: 'DF', color: 'peach', rfc: 'FED901102XX3', entityType: 'individual', currency: 'MXN', paymentTerms: 'Crédito 15 días', country: 'MX', city: 'Monterrey', addresses: [{ id: 'a2', street: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', zipCode: '64000', country: 'MX', isShipping: true, isBilling: false }] },
-  { name: 'Valentina Ruiz', company: 'Casa Oliva', email: 'valentina@casaoliva.mx', phone: '33 1470 9822', status: 'Prospecto', lastActivity: 'Ayer', initials: 'VR', color: 'sage', rfc: 'COL210314TY7', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'Guadalajara', addresses: [{ id: 'a3', street: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', zipCode: '44160', country: 'MX', isShipping: false, isBilling: true }] },
-  { name: 'Mateo Cruz', company: 'Lumen Studio', email: 'mateo@lumenstudio.mx', phone: '55 7740 2108', status: 'Activo', lastActivity: '12 nov', initials: 'MC', color: 'blue', rfc: 'LUM180905MK8', entityType: 'company', currency: 'MXN', paymentTerms: 'Crédito 30 días', country: 'MX', city: 'CDMX' },
-  { name: 'Camila Torres', company: 'Punto Cero', email: 'camila@puntocero.mx', phone: '55 4402 7718', status: 'Inactivo', lastActivity: '28 oct', initials: 'CT', color: 'amber', rfc: 'PCE160719881', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'Puebla' },
+  { clientCode: 'CLI-001', name: 'Sofía Ramírez', company: 'Estudio Nómada', email: 'sofia@estudionomada.mx', phone: '55 2184 6301', status: 'Activo', lastActivity: 'Hoy', initials: 'SR', color: 'lilac', rfc: 'ENO190520AB1', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'CDMX', addresses: [{ id: 'a1', street: 'Colima 245, Roma Norte', city: 'Ciudad de México', state: 'CDMX', zipCode: '06700', country: 'MX', isShipping: true, isBilling: true }] },
+  { clientCode: 'CLI-002', name: 'Diego Fernández', company: 'Taller Norte', email: 'diego@tallernorte.mx', phone: '81 3045 1120', status: 'Activo', lastActivity: 'Ayer', initials: 'DF', color: 'peach', rfc: 'FED901102XX3', entityType: 'individual', currency: 'MXN', paymentTerms: 'Crédito 15 días', country: 'MX', city: 'Monterrey', addresses: [{ id: 'a2', street: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', zipCode: '64000', country: 'MX', isShipping: true, isBilling: false }] },
+  { clientCode: 'CLI-003', name: 'Valentina Ruiz', company: 'Casa Oliva', email: 'valentina@casaoliva.mx', phone: '33 1470 9822', status: 'Prospecto', lastActivity: 'Ayer', initials: 'VR', color: 'sage', rfc: 'COL210314TY7', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'Guadalajara', addresses: [{ id: 'a3', street: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', zipCode: '44160', country: 'MX', isShipping: false, isBilling: true }] },
+  { clientCode: 'CLI-004', name: 'Mateo Cruz', company: 'Lumen Studio', email: 'mateo@lumenstudio.mx', phone: '55 7740 2108', status: 'Activo', lastActivity: '12 nov', initials: 'MC', color: 'blue', rfc: 'LUM180905MK8', entityType: 'company', currency: 'MXN', paymentTerms: 'Crédito 30 días', country: 'MX', city: 'CDMX' },
+  { clientCode: 'CLI-005', name: 'Camila Torres', company: 'Punto Cero', email: 'camila@puntocero.mx', phone: '55 4402 7718', status: 'Inactivo', lastActivity: '28 oct', initials: 'CT', color: 'amber', rfc: 'PCE160719881', entityType: 'company', currency: 'MXN', paymentTerms: 'Contado', country: 'MX', city: 'Puebla' },
 ]
 
 const suppliers: DirectoryRecord[] = [
-  { name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue', country: 'MX', city: 'CDMX', addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }] },
-  { name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', country: 'MX' },
-  { name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', country: 'MX' },
-  { name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', country: 'MX' },
+  { supplierCode: 'PRV-001', name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue', rfc: 'ACO170812K90', bankName: 'BBVA México', clabe: makeValidClabe('01218000512098761'), accountNumber: '0512098761', defaultReference: '1049201', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } }, country: 'MX', city: 'CDMX', addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }] },
+  { supplierCode: 'PRV-002', name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', rfc: 'CIN190305AB4', bankName: 'Banorte', clabe: makeValidClabe('07258000334455112'), accountNumber: '0334455112', defaultReference: '2055102', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } }, country: 'MX' },
+  { supplierCode: 'PRV-003', name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', rfc: 'LVA200918RT2', bankName: 'Santander', clabe: makeValidClabe('01432000991122334'), accountNumber: '9911223340', defaultReference: '3091122', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } }, country: 'MX' },
+  { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
 ]
 
 const initialDepartments: DepartmentRecord[] = [
@@ -165,6 +192,10 @@ const crmSectionFromPath = (pathname: string) =>
     ? 'Clientes'
     : pathname === '/crm/vendors' || pathname === '/crm/suppliers' || pathname === '/crm/proveedores'
     ? 'Proveedores'
+    : pathname === '/crm/employees' || pathname === '/crm/empleados'
+    ? 'Empleados'
+    : pathname === '/crm/payroll' || pathname === '/crm/nomina'
+    ? 'Nómina'
     : pathname === '/crm/opportunities' || pathname === '/crm/oportunidades'
     ? 'Oportunidades'
     : pathname === '/crm/activities' || pathname === '/crm/actividades'
@@ -176,12 +207,16 @@ const salesSectionFromPath = (pathname: string) =>
     ? 'Cotizaciones'
     : pathname === '/sales/orders' || pathname === '/ventas/pedidos'
     ? 'Pedidos'
+    : pathname === '/sales/invoices' || pathname === '/ventas/facturas'
+    ? 'Facturas'
     : pathname === '/sales/summary' || pathname === '/ventas/resumen'
     ? 'Resumen'
     : 'Catálogo'
 
 const operationsSectionFromPath = (pathname: string) =>
-  pathname === '/operations/purchases' || pathname === '/operations/compras' || pathname === '/operaciones/compras'
+  pathname === '/operations/transfers' || pathname === '/operations/traslados' || pathname === '/operaciones/traslados'
+    ? 'Traslados'
+    : pathname === '/operations/purchases' || pathname === '/operations/compras' || pathname === '/operaciones/compras'
     ? 'Compras'
     : pathname === '/operations/deliveries' || pathname === '/operations/entregas' || pathname === '/operaciones/entregas'
     ? 'Entregas'
@@ -192,6 +227,8 @@ const operationsSectionFromPath = (pathname: string) =>
 const financeSectionFromPath = (pathname: string) =>
   pathname === '/finance/accounting' || pathname === '/finance/cuentas-contables' || pathname === '/finanzas/cuentas-contables'
     ? 'Cuentas contables'
+    : pathname === '/finance/ebp' || pathname === '/finance/pagos-bancarios' || pathname === '/finanzas/pagos-bancarios'
+    ? 'Pagos Bancarios'
     : pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
     ? 'Pagos'
     : pathname === '/finance/expenses' || pathname === '/finance/gastos' || pathname === '/finanzas/gastos'
@@ -211,14 +248,19 @@ function AppContent() {
   const toast = useToast()
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
-  const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
-  const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
-  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
+  const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
+  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<'Departamentos' | 'Ubicaciones' | 'Resumen'>(() => adminSectionFromPath(window.location.pathname))
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
-  const [warehouses] = useState<Warehouse[]>(initialWarehouses)
+  const [presetOrderToInvoice, setPresetOrderToInvoice] = useState<SalesOrder | null>(null)
+  const [presetInvoiceIdToView, setPresetInvoiceIdToView] = useState<string | null>(null)
+  const [presetOrderFolioToView, setPresetOrderFolioToView] = useState<string | null>(null)
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(initialWarehouses)
   const [inventory, setInventory] = useState<InventoryItemLocation[]>(initialInventory)
+  const [transfers, setTransfers] = useState<InventoryTransfer[]>(initialTransfers)
+  const [presetTransferItem, setPresetTransferItem] = useState<InventoryItemLocation | null>(null)
 
   // Notificaciones Push y Alerta Persistente de Stock en Barra Superior
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
@@ -324,6 +366,317 @@ function AppContent() {
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
   const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
   const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
+  const [employees, setEmployees] = useState<EmployeeRecord[]>(initialEmployees)
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
+  const [ebpPacks, setEbpPacks] = useState<BankFormatPack[]>(() => {
+    try {
+      const saved = window.localStorage.getItem('aes_nexus_ebp_packs_v1')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      }
+    } catch {
+      // fallback
+    }
+    return initialBankFormatPacks
+  })
+  const [ebpBatches, setEbpBatches] = useState<ElectronicPaymentBatch[]>(initialEbpBatches)
+  const [globalEbpWizard, setGlobalEbpWizard] = useState<{
+    isOpen: boolean
+    batchType: 'Nómina' | 'Proveedores'
+    sourceRefId: string
+    sourceFolio: string
+    candidates: EbpWizardCandidateLine[]
+  }>({
+    isOpen: false,
+    batchType: 'Nómina',
+    sourceRefId: '',
+    sourceFolio: '',
+    candidates: [],
+  })
+  const [editingSupplierBank, setEditingSupplierBank] = useState<DirectoryRecord | null>(null)
+  const [detailDirectory, setDetailDirectory] = useState<{
+    kind: 'client' | 'supplier'
+    record: DirectoryRecord
+  } | null>(null)
+  const [editingDirectory, setEditingDirectory] = useState<{
+    kind: 'client' | 'supplier'
+    originalEmail: string
+    originalCompany: string
+    record: DirectoryRecord
+  } | null>(null)
+
+  const handleUpdateEbpPacks = (next: BankFormatPack[]) => {
+    setEbpPacks(next)
+    try {
+      window.localStorage.setItem('aes_nexus_ebp_packs_v1', JSON.stringify(next))
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  const handleUpdateBankAccountPackValues = (
+    accountId: string,
+    packId: string,
+    values: Record<string, string>
+  ) => {
+    setBankAccounts((prev) =>
+      prev.map((acc) =>
+        acc.id === accountId
+          ? {
+              ...acc,
+              bankPackValues: {
+                ...(acc.bankPackValues || {}),
+                [packId]: values,
+              },
+            }
+          : acc
+      )
+    )
+  }
+
+  const settlePayrollInFinance = (run: PayrollRunRecord, overrideBankId?: string, refLabel?: string) => {
+    const bankAcc =
+      bankAccounts.find((b) => b.id === (overrideBankId || run.bankAccountId)) || bankAccounts[0]
+    if (bankAcc) {
+      handleUpdateBankAccountBalance(bankAcc.id, -run.totalNet)
+    }
+    const today = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const dateStr = `${String(today.getDate()).padStart(2, '0')} ${months[today.getMonth()]} ${today.getFullYear()}`
+    handleAddTransaction({
+      id: `txn_${Date.now()}`,
+      folio: `TXN-2026-${String(transactions.length + 1).padStart(3, '0')}`,
+      date: dateStr,
+      type: 'Gasto operativo',
+      entityName: `Nómina ${run.periodLabel}`,
+      reference: refLabel || run.folio,
+      amount: -run.totalNet,
+      method: 'Transferencia SPEI',
+      account: bankAcc ? `${bankAcc.bankName} ${bankAcc.accountNumber}` : 'Cuenta operativa',
+    })
+    handleAddExpense({
+      id: `exp_${Date.now()}`,
+      folio: `GAS-2026-${String(expenses.length + 1).padStart(3, '0')}`,
+      date: dateStr,
+      category: 'Nómina y honorarios',
+      description: `Dispersión de nómina ${run.folio} (${run.periodLabel}) · ${run.employeesCount} empleados`,
+      beneficiary: 'Plantilla de empleados',
+      amount: run.totalGross + run.totalBonuses,
+      tax: 0,
+      total: run.totalNet,
+      paymentMethod: run.paymentMethod,
+      referenceDoc: refLabel || run.folio,
+      user: 'Andrea Morales',
+    })
+
+    // Sync ISR + IMSS tax retention liability into Payables & Chart Accounts (2005-001 & 6002-001)
+    const taxRetentionTotal = run.receipts.reduce(
+      (sum, r) => sum + r.isrDeduction + r.imssDeduction,
+      0
+    )
+    if (taxRetentionTotal > 0) {
+      const taxDue = new Date()
+      taxDue.setDate(17)
+      if (taxDue <= today) taxDue.setMonth(taxDue.getMonth() + 1)
+      const dueStr = `${String(taxDue.getDate()).padStart(2, '0')} ${months[taxDue.getMonth()]} ${taxDue.getFullYear()}`
+      setPayables((prev) => [
+        {
+          id: `cxp_tax_${Date.now()}`,
+          folio: `CXP-SAT-${run.folio.replace('NOM-', '')}`,
+          purchaseOrderFolio: run.folio,
+          supplierCompany: 'SAT / IMSS · Retenciones de Nómina',
+          supplierContact: 'Entero mensual de ISR e IMSS',
+          issueDate: dateStr,
+          dueDate: dueStr,
+          subtotal: taxRetentionTotal,
+          tax: 0,
+          total: taxRetentionTotal,
+          paidAmount: 0,
+          balance: taxRetentionTotal,
+          status: 'Pendiente',
+          currency: 'MXN',
+          paymentMethod: 'Línea de captura SAT',
+        },
+        ...prev,
+      ])
+    }
+
+    const bankAccCode = bankAcc?.id === 'bank_2' ? '1002-002' : '1002-001'
+    setChartAccounts((prev) =>
+      prev.map((acc) => {
+        if (acc.code === bankAccCode) return { ...acc, balance: acc.balance - run.totalNet }
+        if (acc.code === '6002-001')
+          return { ...acc, balance: acc.balance + run.totalGross + run.totalBonuses }
+        if (acc.code === '2005-001')
+          return { ...acc, balance: acc.balance + taxRetentionTotal }
+        return acc
+      })
+    )
+  }
+
+  const handlePayPayrollRun = (run: PayrollRunRecord) => {
+    settlePayrollInFinance(run)
+  }
+
+  const handleApplyEbpBatchInFinance = (batch: ElectronicPaymentBatch) => {
+    if (batch.status === 'Aplicado en banco') return
+    const bankAcc = bankAccounts.find((b) => b.id === batch.bankAccountId) || bankAccounts[0]
+    if (!bankAcc || bankAcc.balance < batch.totalAmount) {
+      toast.warning(
+        `Saldo insuficiente en ${bankAcc?.bankName || 'cuenta'} para aplicar el lote ${batch.folio}.`,
+        'Saldo insuficiente'
+      )
+      return
+    }
+
+    const now = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const dateStr = `${String(now.getDate()).padStart(2, '0')} ${months[now.getMonth()]} ${now.getFullYear()}`
+    const appliedAt = `${dateStr} · ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+
+    if (batch.batchType === 'Nómina') {
+      const targetRun = payrollRuns.find(
+        (r) => r.id === batch.sourceRefId || r.folio === batch.sourceFolio
+      )
+      if (targetRun) {
+        if (targetRun.status !== 'Pagada') {
+          setPayrollRuns((prev) =>
+            prev.map((r) =>
+              r.id === targetRun.id
+                ? {
+                    ...r,
+                    status: 'Pagada',
+                    bankAccountId: bankAcc.id,
+                    paymentMethod: `EBP ${batch.packName} · ${bankAcc.bankName}`,
+                  }
+                : r
+            )
+          )
+          settlePayrollInFinance(targetRun, bankAcc.id, `${batch.folio} (${batch.generatedFilename})`)
+        } else {
+          handleUpdateBankAccountBalance(bankAcc.id, -batch.totalAmount)
+          handleAddTransaction({
+            id: `txn_${Date.now()}`,
+            folio: `TXN-2026-${String(transactions.length + 1).padStart(3, '0')}`,
+            date: dateStr,
+            type: 'Gasto operativo',
+            entityName: `Lote EBP Nómina ${batch.sourceFolio}`,
+            reference: `${batch.folio} · ${batch.generatedFilename}`,
+            amount: -batch.totalAmount,
+            method: `EBP (${batch.packName})`,
+            account: `${bankAcc.bankName} ${bankAcc.accountNumber}`,
+          })
+        }
+      }
+    } else {
+      // Proveedores: liquidar facturas incluidas en el lote
+      const lineAmountByBillId = new Map(
+        batch.lines.map((l) => [l.sourceLineId, l.amount])
+      )
+      setPayables((prev) =>
+        prev.map((bill) => {
+          const paidDelta = lineAmountByBillId.get(bill.id)
+          if (!paidDelta) return bill
+          const nextPaid = bill.paidAmount + paidDelta
+          const nextBal = Math.max(0, bill.total - nextPaid)
+          return {
+            ...bill,
+            paidAmount: nextPaid,
+            balance: nextBal,
+            status: nextBal === 0 ? 'Pagada' : 'Parcial',
+            paymentMethod: `EBP · ${batch.folio}`,
+          }
+        })
+      )
+      handleUpdateBankAccountBalance(bankAcc.id, -batch.totalAmount)
+      handleAddTransaction({
+        id: `txn_${Date.now()}`,
+        folio: `PAG-2026-${String(transactions.length + 1).padStart(3, '0')}`,
+        date: dateStr,
+        type: 'Pago a proveedor',
+        entityName: `Lote EBP (${batch.operationsCount} proveedores)`,
+        reference: `${batch.folio} · ${batch.generatedFilename}`,
+        amount: batch.totalAmount,
+        method: `EBP (${batch.packName})`,
+        account: bankAcc.bankName,
+      })
+      const bankAccCode = bankAcc.id === 'bank_2' ? '1002-002' : '1002-001'
+      setChartAccounts((prev) =>
+        prev.map((acc) => {
+          if (acc.code === bankAccCode) return { ...acc, balance: acc.balance - batch.totalAmount }
+          if (acc.code === '2001-001')
+            return { ...acc, balance: Math.max(0, acc.balance - batch.totalAmount) }
+          return acc
+        })
+      )
+    }
+
+    setEbpBatches((prev) =>
+      prev.map((b) =>
+        b.id === batch.id ? { ...b, status: 'Aplicado en banco', appliedAt } : b
+      )
+    )
+    toast.success(
+      `Lote ${batch.folio} aplicado en Finanzas (${money(batch.totalAmount)} debitados de ${bankAcc.bankName} y póliza actualizada).`,
+      'Dispersión bancaria aplicada'
+    )
+  }
+
+  const openEbpWizardForPayrollRun = (run: PayrollRunRecord) => {
+    const empMap = new Map(employees.map((e) => [e.id, e]))
+    const candidates: EbpWizardCandidateLine[] = run.receipts.map((rec) => {
+      const emp = empMap.get(rec.employeeId)
+      return {
+        sourceLineId: rec.id,
+        beneficiaryName: rec.employeeName,
+        beneficiaryCode: rec.employeeCode,
+        rfc: emp?.rfc,
+        bankName: emp?.bankName || rec.bankName || '',
+        clabe: emp?.clabe || rec.clabe || '',
+        accountNumber: emp?.accountNumber,
+        amount: rec.netPay,
+        reference: run.folio.replace(/\D/g, '') || '202601',
+        concept: `NOMINA ${run.periodLabel}`,
+        bankPackValues: emp?.bankPackValues,
+      }
+    })
+    setGlobalEbpWizard({
+      isOpen: true,
+      batchType: 'Nómina',
+      sourceRefId: run.id,
+      sourceFolio: run.folio,
+      candidates,
+    })
+  }
+
+  const openEbpWizardForVendorBills = (bills: BillPayable[]) => {
+    const supMap = new Map(supplierRecords.map((s) => [s.company.toLowerCase(), s]))
+    const candidates: EbpWizardCandidateLine[] = bills.map((bill) => {
+      const sup = supMap.get(bill.supplierCompany.toLowerCase())
+      return {
+        sourceLineId: bill.id,
+        beneficiaryName: bill.supplierCompany,
+        beneficiaryCode: bill.folio,
+        rfc: sup?.rfc,
+        bankName: sup?.bankName || '',
+        clabe: sup?.clabe || '',
+        accountNumber: sup?.accountNumber,
+        amount: bill.balance,
+        reference: sup?.defaultReference || bill.folio.replace(/\D/g, '').slice(-7) || '100001',
+        concept: `PAGO ${bill.folio}`,
+        bankPackValues: sup?.bankPackValues,
+      }
+    })
+    setGlobalEbpWizard({
+      isOpen: true,
+      batchType: 'Proveedores',
+      sourceRefId: bills.map((b) => b.id).join(','),
+      sourceFolio:
+        bills.length === 1 ? bills[0].folio : `LOTE-CXP (${bills.length} fact.)`,
+      candidates,
+    })
+  }
 
   const handleAddMovement = (mov: StockMovement) => {
     setMovements((prev) => [mov, ...prev])
@@ -343,6 +696,56 @@ function AppContent() {
 
   const handleAddLocation = (loc: PhysicalLocationRecord) => {
     setLocations((prev) => [loc, ...prev])
+    setWarehouses((prev) => {
+      const exists = prev.some(
+        (w) =>
+          w.locationId === loc.id ||
+          w.code.toLowerCase() === loc.code.toLowerCase() ||
+          w.name.toLowerCase() === loc.name.toLowerCase()
+      )
+      if (exists) return prev
+      return [
+        ...prev,
+        {
+          id: `wh_${loc.id}`,
+          code: loc.code,
+          name: loc.name,
+          city: loc.city,
+          state: loc.state,
+          address: loc.address,
+          capacityPercentage: 0,
+          isDefault: false,
+          active: loc.active,
+          locationId: loc.id,
+          locationType: loc.type,
+        },
+      ]
+    })
+  }
+
+  const handleUpdateLocations = (updatedLocations: PhysicalLocationRecord[]) => {
+    setLocations(updatedLocations)
+    setWarehouses((prev) =>
+      prev.map((w) => {
+        const matched = updatedLocations.find(
+          (l) =>
+            l.id === w.locationId ||
+            l.code.toLowerCase() === w.code.toLowerCase() ||
+            l.name.toLowerCase() === w.name.toLowerCase()
+        )
+        return matched
+          ? {
+              ...w,
+              active: matched.active,
+              name: matched.name,
+              city: matched.city,
+              state: matched.state,
+              address: matched.address,
+              locationType: matched.type,
+            }
+          : w
+      })
+    )
   }
 
   const handleUpdateBankAccountBalance = (accountId: string, delta: number) => {
@@ -352,8 +755,11 @@ function AppContent() {
   }
 
   const handleConvertToOrder = (quote: Quote) => {
-    const nextNum = orders.length + 1
-    const folio = `PED-2026-${String(nextNum).padStart(3, '0')}`
+    const maxNum = orders.reduce((max, o) => {
+      const n = parseInt(o.folio.split('-').pop() || '0', 10)
+      return Number.isNaN(n) ? max : Math.max(max, n)
+    }, orders.length)
+    const folio = `PED-2026-${String(maxNum + 1).padStart(3, '0')}`
     const today = new Date()
     const delivery = new Date()
     delivery.setDate(today.getDate() + 7)
@@ -390,6 +796,33 @@ function AppContent() {
     setSalesSection('Pedidos')
     toast.success(`La cotización ${quote.folio} se convirtió en el pedido ${folio}.`, 'Pedido de venta generado')
   }
+
+  const handleCreateSalesInvoice = (invoice: InvoiceReceivable) => {
+    setReceivables((prev) => [invoice, ...prev])
+    if (invoice.orderId || (invoice.orderFolio && invoice.orderFolio !== 'DIRECTA')) {
+      setOrders((prevOrders) =>
+        prevOrders.map((ord) => {
+          const isMatch =
+            (invoice.orderId && ord.id === invoice.orderId) ||
+            ord.folio === invoice.orderFolio
+          if (!isMatch) return ord
+          return {
+            ...ord,
+            invoiceIds: [...(ord.invoiceIds || []), invoice.id],
+            invoiceFolios: [...(ord.invoiceFolios || []), invoice.folio],
+          }
+        })
+      )
+    }
+    setChartAccounts((prev) =>
+      prev.map((acc) => {
+        if (acc.code === '1005-001') return { ...acc, balance: acc.balance + invoice.total }
+        if (acc.code === '4001-001') return { ...acc, balance: acc.balance + invoice.subtotal }
+        if (acc.code === '2005-001') return { ...acc, balance: acc.balance + invoice.tax }
+        return acc
+      })
+    )
+  }
   const [clientQuery, setClientQuery] = useState('')
   const [clientStatus, setClientStatus] = useState('Todos')
   const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
@@ -398,6 +831,7 @@ function AppContent() {
   const [activityRecords, setActivityRecords] = useState(activities)
   const [createKind, setCreateKind] = useState<CreateKind | null>(null)
   const [createForm, setCreateForm] = useState({
+    supplierCode: '',
     name: '',
     company: '',
     email: '',
@@ -415,8 +849,15 @@ function AppContent() {
     addressIsShipping: true,
     addressIsBilling: true,
     addressesList: [] as ClientAddress[],
+    rfc: '',
+    bankName: 'BBVA México',
+    clabe: '',
+    accountNumber: '',
+    defaultReference: '',
+    bankPackValues: {} as Record<string, Record<string, string>>,
   })
   const [clientForm, setClientForm] = useState({
+    clientCode: '',
     name: '',
     company: '',
     email: '',
@@ -476,12 +917,14 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen') => {
+  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen') => {
     setActivePage('Finanzas')
     setFinanceSection(section)
     const route =
       section === 'Cuentas contables'
         ? '/finance/accounting'
+        : section === 'Pagos Bancarios'
+        ? '/finance/ebp'
         : section === 'Pagos'
         ? '/finance/payables'
         : section === 'Gastos'
@@ -492,11 +935,13 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToOperationsSection = (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => {
+  const navigateToOperationsSection = (section: 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen') => {
     setActivePage('Operaciones')
     setOperationsSection(section)
     const route =
-      section === 'Compras'
+      section === 'Traslados'
+        ? '/operations/transfers'
+        : section === 'Compras'
         ? '/operations/purchases'
         : section === 'Entregas'
         ? '/operations/deliveries'
@@ -506,7 +951,7 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToSalesSection = (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Resumen') => {
+  const navigateToSalesSection = (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen') => {
     setActivePage('Ventas')
     setSalesSection(section)
     const route =
@@ -514,6 +959,8 @@ function AppContent() {
         ? '/sales/quotes'
         : section === 'Pedidos'
         ? '/sales/orders'
+        : section === 'Facturas'
+        ? '/sales/invoices'
         : section === 'Resumen'
         ? '/sales/summary'
         : '/sales'
@@ -528,6 +975,10 @@ function AppContent() {
         ? '/crm/customers'
         : section === 'Proveedores'
         ? '/crm/vendors'
+        : section === 'Empleados'
+        ? '/crm/employees'
+        : section === 'Nómina'
+        ? '/crm/payroll'
         : section === 'Oportunidades'
         ? '/crm/opportunities'
         : section === 'Actividades'
@@ -539,6 +990,7 @@ function AppContent() {
   const openCreate = (kind: CreateKind) => {
     setCreateKind(kind)
     setCreateForm({
+      supplierCode: '',
       name: '',
       company: '',
       email: '',
@@ -556,8 +1008,15 @@ function AppContent() {
       addressIsShipping: true,
       addressIsBilling: true,
       addressesList: [],
+      rfc: '',
+      bankName: 'BBVA México',
+      clabe: '',
+      accountNumber: '',
+      defaultReference: '',
+      bankPackValues: {},
     })
     setClientForm({
+      clientCode: '',
       name: '',
       company: '',
       email: '',
@@ -611,6 +1070,7 @@ function AppContent() {
 
         const primaryAddr = clientAddresses[0]
         const response = await createClientApi({
+          clientCode: clientForm.clientCode,
           name: clientForm.name,
           company: clientForm.company,
           email: clientForm.email,
@@ -628,6 +1088,7 @@ function AppContent() {
         })
         const clientData = response.data
         const newRecord: DirectoryRecord = {
+          clientCode: clientData.clientCode || clientForm.clientCode.trim() || undefined,
           name: clientData.name,
           company: clientData.company,
           email: clientData.email,
@@ -643,6 +1104,7 @@ function AppContent() {
           city: primaryAddr?.city || clientData.address?.city,
           state: primaryAddr?.state || clientData.address?.state,
           country: primaryAddr?.country || clientData.address?.country || clientForm.country || 'MX',
+          notes: clientForm.notes.trim() || undefined,
           addresses: clientAddresses,
         }
         setClientRecords((records) => [newRecord, ...records])
@@ -685,6 +1147,7 @@ function AppContent() {
 
       setSupplierRecords((records) => [
         {
+          supplierCode: createForm.supplierCode.trim() || undefined,
           name,
           company,
           email: createForm.email.trim(),
@@ -697,6 +1160,12 @@ function AppContent() {
           city: supplierAddresses[0]?.city,
           state: supplierAddresses[0]?.state,
           addresses: supplierAddresses,
+          rfc: createForm.rfc.trim().toUpperCase() || undefined,
+          bankName: createForm.bankName.trim() || undefined,
+          clabe: createForm.clabe.trim() || undefined,
+          accountNumber: createForm.accountNumber.trim() || undefined,
+          defaultReference: createForm.defaultReference.trim() || undefined,
+          bankPackValues: createForm.bankPackValues,
         },
         ...records,
       ])
@@ -730,6 +1199,7 @@ function AppContent() {
       setActivePage(pageFromPath(window.location.pathname))
       setCrmSection(crmSectionFromPath(window.location.pathname))
       setSalesSection(salesSectionFromPath(window.location.pathname))
+      setOperationsSection(operationsSectionFromPath(window.location.pathname))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -744,7 +1214,7 @@ function AppContent() {
   const filteredDirectory = directoryRecords.filter((client) => {
     const query = clientQuery.trim().toLowerCase()
     const countryName = findCountry(client.country)?.name || ''
-    const matchesQuery = !query || `${client.name} ${client.company} ${client.email} ${client.rfc || ''} ${client.country || ''} ${countryName}`.toLowerCase().includes(query)
+    const matchesQuery = !query || `${client.clientCode || ''} ${client.supplierCode || ''} ${client.name} ${client.company} ${client.email} ${client.rfc || ''} ${client.country || ''} ${countryName}`.toLowerCase().includes(query)
     const matchesStatus = clientStatus === 'Todos' || client.status === clientStatus
     return matchesQuery && matchesStatus
   })
@@ -796,7 +1266,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? 'Productos y servicios' : salesSection}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? 'Inventario por almacén' : operationsSection === 'Compras' ? 'Compras y recepciones' : operationsSection === 'Entregas' ? 'Entregas y devoluciones' : 'Resumen operativo'}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? 'Cuentas por cobrar y cobros' : financeSection === 'Pagos' ? 'Cuentas por pagar a proveedores' : financeSection === 'Gastos' ? 'Gastos y egresos operativos' : financeSection === 'Cuentas contables' ? 'Cuentas contables' : 'Resumen financiero'}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? 'Departamentos de la organización' : adminSection === 'Ubicaciones' ? 'Ubicaciones y sedes físicas' : 'Resumen organizacional'}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? 'Productos y servicios' : salesSection}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? 'Inventario por almacén' : operationsSection === 'Traslados' ? 'Traslados entre ubicaciones' : operationsSection === 'Compras' ? 'Compras y recepciones' : operationsSection === 'Entregas' ? 'Entregas y devoluciones' : 'Resumen operativo'}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? 'Cuentas por cobrar y cobros' : financeSection === 'Pagos' ? 'Cuentas por pagar a proveedores' : financeSection === 'Pagos Bancarios' ? 'Pagos Bancarios Electrónicos (EBP)' : financeSection === 'Gastos' ? 'Gastos y egresos operativos' : financeSection === 'Cuentas contables' ? 'Cuentas contables' : 'Resumen financiero'}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? 'Departamentos de la organización' : adminSection === 'Ubicaciones' ? 'Ubicaciones y sedes físicas' : 'Resumen organizacional'}</span> </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> DEMO</span>
 
@@ -1027,10 +1497,35 @@ function AppContent() {
                 <button className={crmSection === 'Resumen' ? 'active' : ''} onClick={() => navigateToCrmSection('Resumen')}>Resumen</button>
                 <button className={crmSection === 'Clientes' ? 'active' : ''} onClick={() => navigateToCrmSection('Clientes')}>Clientes <span>{clientRecords.length}</span></button>
                 <button className={crmSection === 'Proveedores' ? 'active' : ''} onClick={() => navigateToCrmSection('Proveedores')}>Proveedores <span>{supplierRecords.length}</span></button>
+                <button className={crmSection === 'Empleados' ? 'active' : ''} onClick={() => navigateToCrmSection('Empleados')}>Empleados <span>{employees.length}</span></button>
+                <button className={crmSection === 'Nómina' ? 'active' : ''} onClick={() => navigateToCrmSection('Nómina')}>Nómina <span>{payrollRuns.length}</span></button>
                 <button className={crmSection === 'Oportunidades' ? 'active' : ''} onClick={() => navigateToCrmSection('Oportunidades')}>Oportunidades <span>{opportunityRecords.length}</span></button>
                 <button className={crmSection === 'Actividades' ? 'active' : ''} onClick={() => navigateToCrmSection('Actividades')}>Actividades <span>{activityRecords.length}</span></button>
               </nav>
-              {crmSection === 'Oportunidades' ? <>
+              {crmSection === 'Empleados' ? (
+                <CrmEmployees
+                  employees={employees}
+                  departments={departments}
+                  locations={locations}
+                  installedPacks={ebpPacks}
+                  onAddEmployee={(emp) => setEmployees((prev) => [emp, ...prev])}
+                  onUpdateEmployee={(updated) =>
+                    setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
+                  }
+                />
+              ) : crmSection === 'Nómina' ? (
+                <CrmPayroll
+                  employees={employees}
+                  payrollRuns={payrollRuns}
+                  bankAccounts={bankAccounts}
+                  onAddPayrollRun={(run) => setPayrollRuns((prev) => [run, ...prev])}
+                  onUpdatePayrollRun={(updated) =>
+                    setPayrollRuns((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+                  }
+                  onPayPayrollRun={handlePayPayrollRun}
+                  onOpenEbpWizard={openEbpWizardForPayrollRun}
+                />
+              ) : crmSection === 'Oportunidades' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="opportunity-summary"><article><span className="kpi-icon"><Target size={17} /></span><div><strong>{opportunityRecords.length}</strong><small>Abiertas</small></div></article><article><span className="kpi-icon icon-sand"><BriefcaseBusiness size={17} /></span><div><strong>{money(opportunityRecords.reduce((total, opportunity) => total + opportunity.value, 0))}</strong><small>Valor del pipeline</small></div></article><article><span className="kpi-icon icon-green"><ArrowUpRight size={17} /></span><div><strong>32%</strong><small>Tasa de conversión</small></div></article></div>
                 <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3><button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button></div><div className="opportunities-list">{opportunityRecords.map((opportunity) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span><button className="row-more" aria-label={`Opciones para ${opportunity.company}`} onClick={() => { setNotice(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`, 'Oportunidad') }}><MoreHorizontal size={17} /></button></article>)}</div></div>
@@ -1039,9 +1534,9 @@ function AppContent() {
                 <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div><button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button></div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => { setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`); toast.info(`La actividad “${activity.title}” se marcará al conectar el CRM.`, 'Actividad') }}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
               </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
+                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
                 <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
-                <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th><span className="sr-only">Opciones</span></th></tr></thead><tbody>{filteredDirectory.map((client) => {
+                <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th style={{ textAlign: 'right' }}>ACCIONES</th></tr></thead><tbody>{filteredDirectory.map((client) => {
   const countryObj = findCountry(client.country)
   return (
     <tr key={client.email}>
@@ -1049,7 +1544,14 @@ function AppContent() {
         <div className="company-cell">
           <div className={`company-avatar ${client.color}`}>{client.initials}</div>
           <div>
-            <strong>{client.company}</strong>
+            <div className="emp-name-row">
+              <strong>{client.company}</strong>
+              {(crmSection === 'Clientes' ? client.clientCode : client.supplierCode) && (
+                <span className="emp-code-pill">
+                  {crmSection === 'Clientes' ? client.clientCode : client.supplierCode}
+                </span>
+              )}
+            </div>
             <span>
               {client.name} {client.rfc ? `· ${client.rfc}` : ''}
               {countryObj && (
@@ -1076,17 +1578,140 @@ function AppContent() {
                 {client.addresses.length > 1 && <span className="address-more-tag">+{client.addresses.length - 1}</span>}
               </span>
             )}
+            {crmSection === 'Proveedores' && client.clabe && (
+              <span className="client-address-snippet mono" style={{ marginTop: 2 }}>
+                <span>{client.bankName || 'Banco'} · CLABE {client.clabe}</span>
+              </span>
+            )}
           </div>
         </div>
       </td>
       <td><div className="client-contact"><span>{client.email}</span><small>{client.phone}</small></div></td>
       <td><span className={`client-status status-${client.status.toLowerCase()}`}><i />{client.status}</span></td>
       <td className="date-cell">{client.lastActivity}</td>
-      <td><button className="row-more" aria-label={`Opciones para ${client.name}`} onClick={() => { setNotice(`Las acciones para ${client.name} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${client.name} estarán disponibles al conectar el CRM.`, 'Opciones') }}><MoreHorizontal size={17} /></button></td>
+      <td style={{ textAlign: 'right' }}>
+        <div className="emp-row-actions">
+          <button
+            type="button"
+            className="button-icon-action"
+            onClick={() =>
+              setDetailDirectory({
+                kind: crmSection === 'Proveedores' ? 'supplier' : 'client',
+                record: client,
+              })
+            }
+            title={`Ver ficha completa del ${crmSection === 'Proveedores' ? 'proveedor' : 'cliente'}`}
+          >
+            <Eye size={12} /> Ficha
+          </button>
+          {crmSection === 'Proveedores' ? (
+            <button
+              type="button"
+              className="button-icon-action"
+              onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
+              title="Configurar datos bancarios y packs EBP del proveedor"
+            >
+              <Landmark size={12} /> Datos bancarios
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="button-icon-action"
+              onClick={() =>
+                setEditingDirectory({
+                  kind: 'client',
+                  originalEmail: client.email,
+                  originalCompany: client.company,
+                  record: JSON.parse(JSON.stringify(client)),
+                })
+              }
+              title="Editar datos del cliente"
+            >
+              <Edit3 size={12} /> Editar
+            </button>
+          )}
+        </div>
+      </td>
     </tr>
   )
 })}</tbody></table>{filteredDirectory.length === 0 && <div className="clients-empty"><Users size={20} /><strong>No encontramos {crmSection.toLowerCase()}</strong><span>Prueba con otro nombre, empresa o estado.</span></div>}</div>
-              </> : <div className="crm-overview-grid"><article className="crm-overview-card crm-overview-highlight"><span className="kpi-icon"><Users size={17} /></span><div><strong>{clientRecords.length}</strong><span>Clientes y prospectos</span></div><button className="text-link" onClick={() => navigateToCrmSection('Clientes')}>Ver clientes <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-lilac"><Target size={17} /></span><div><strong>12</strong><span>Oportunidades abiertas</span></div><button className="text-link" onClick={() => { setNotice('El pipeline estará disponible en la siguiente iteración.'); toast.info('El pipeline estará disponible en la siguiente iteración.', 'CRM') }}>Ver pipeline <ArrowRight size={13} /></button></article><article className="crm-overview-card"><span className="kpi-icon icon-sand"><Clock3 size={17} /></span><div><strong>8</strong><span>Actividades esta semana</span></div><button className="text-link" onClick={() => { setNotice('La agenda estará disponible en la siguiente iteración.'); toast.info('La agenda estará disponible en la siguiente iteración.', 'CRM') }}>Ver agenda <ArrowRight size={13} /></button></article></div>}
+              </> : (
+                <div className="crm-overview-grid">
+                  <article className="crm-overview-card crm-overview-highlight">
+                    <span className="kpi-icon"><Users size={17} /></span>
+                    <div>
+                      <strong>{clientRecords.length}</strong>
+                      <span>
+                        Clientes y prospectos · {clientRecords.filter((c) => c.status === 'Activo').length} activos
+                      </span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Clientes')}>
+                      Ver clientes <ArrowRight size={13} />
+                    </button>
+                  </article>
+
+                  <article className="crm-overview-card">
+                    <span className="kpi-icon icon-blue"><BriefcaseBusiness size={17} /></span>
+                    <div>
+                      <strong>{supplierRecords.length}</strong>
+                      <span>
+                        Proveedores registrados · {supplierRecords.filter((s) => Boolean(s.clabe)).length} con CLABE EBP
+                      </span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Proveedores')}>
+                      Ver proveedores <ArrowRight size={13} />
+                    </button>
+                  </article>
+
+                  <article className="crm-overview-card">
+                    <span className="kpi-icon icon-green"><Users size={17} /></span>
+                    <div>
+                      <strong>{employees.filter((e) => e.status === 'Activo').length}</strong>
+                      <span>Empleados activos de {employees.length} registrados</span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Empleados')}>
+                      Ver empleados <ArrowRight size={13} />
+                    </button>
+                  </article>
+
+                  <article className="crm-overview-card">
+                    <span className="kpi-icon icon-amber"><WalletCards size={17} /></span>
+                    <div>
+                      <strong>{payrollRuns.length}</strong>
+                      <span>
+                        Periodos de nómina · {money(payrollRuns.reduce((sum, r) => sum + r.totalNet, 0))} neto
+                      </span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Nómina')}>
+                      Ver nómina <ArrowRight size={13} />
+                    </button>
+                  </article>
+
+                  <article className="crm-overview-card">
+                    <span className="kpi-icon icon-lilac"><Target size={17} /></span>
+                    <div>
+                      <strong>{opportunityRecords.length}</strong>
+                      <span>
+                        Oportunidades abiertas · {money(opportunityRecords.reduce((sum, o) => sum + o.value, 0))}
+                      </span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Oportunidades')}>
+                      Ver pipeline <ArrowRight size={13} />
+                    </button>
+                  </article>
+
+                  <article className="crm-overview-card">
+                    <span className="kpi-icon icon-sand"><Clock3 size={17} /></span>
+                    <div>
+                      <strong>{activityRecords.length}</strong>
+                      <span>Actividades programadas esta semana</span>
+                    </div>
+                    <button className="text-link" onClick={() => navigateToCrmSection('Actividades')}>
+                      Ver agenda <ArrowRight size={13} />
+                    </button>
+                  </article>
+                </div>
+              )}
             </section>
           ) : activePage === 'Ventas' ? (
             <section className="crm-page sales-page" aria-labelledby="sales-title">
@@ -1094,7 +1719,7 @@ function AppContent() {
                 <div>
                   <div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · H2 PILOTO COMERCIAL</div>
                   <h1 id="sales-title">Ventas</h1>
-                  <p>Acompaña el proceso comercial desde el catálogo de productos y servicios hasta la confirmación de pedidos.</p>
+                  <p>Acompaña el proceso comercial desde el catálogo y pedidos hasta la emisión de facturas sincronizadas con Cuentas por cobrar.</p>
                 </div>
               </div>
               {notice && <div className="notice" role="status">{notice}<button aria-label="Cerrar aviso" onClick={() => setNotice('')}><X size={15} /></button></div>}
@@ -1116,6 +1741,12 @@ function AppContent() {
                   onClick={() => navigateToSalesSection('Pedidos')}
                 >
                   Pedidos de venta <span>{orders.length}</span>
+                </button>
+                <button
+                  className={salesSection === 'Facturas' ? 'active' : ''}
+                  onClick={() => navigateToSalesSection('Facturas')}
+                >
+                  Facturas de venta <span>{receivables.length}</span>
                 </button>
                 <button
                   className={salesSection === 'Resumen' ? 'active' : ''}
@@ -1146,6 +1777,17 @@ function AppContent() {
                 <OrdersSection
                   orders={orders}
                   onUpdateOrders={setOrders}
+                  receivables={receivables}
+                  onInvoiceOrder={(ord) => {
+                    setPresetOrderToInvoice(ord)
+                    navigateToSalesSection('Facturas')
+                  }}
+                  onViewInvoice={(inv) => {
+                    setPresetInvoiceIdToView(inv.id)
+                    navigateToSalesSection('Facturas')
+                  }}
+                  presetOrderFolioToView={presetOrderFolioToView}
+                  onClearPresetOrderView={() => setPresetOrderFolioToView(null)}
                   clientNames={clientRecords.map((c, idx) => ({
                     id: `cli_${idx}_${c.company.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
                     name: c.name,
@@ -1156,10 +1798,34 @@ function AppContent() {
                       : undefined,
                   }))}
                 />
+              ) : salesSection === 'Facturas' ? (
+                <SalesInvoices
+                  receivables={receivables}
+                  orders={orders}
+                  clientsList={clientRecords.map((c) => ({
+                    company: c.company,
+                    name: c.name,
+                    email: c.email,
+                    rfc: c.rfc,
+                    paymentTerms: c.paymentTerms,
+                    currency: c.currency,
+                  }))}
+                  presetOrderToInvoice={presetOrderToInvoice}
+                  onClearPresetOrder={() => setPresetOrderToInvoice(null)}
+                  presetInvoiceIdToView={presetInvoiceIdToView}
+                  onClearPresetInvoiceView={() => setPresetInvoiceIdToView(null)}
+                  onCreateInvoice={handleCreateSalesInvoice}
+                  onNavigateToFinanceReceivables={() => navigateToFinanceSection('Cobros')}
+                  onNavigateToOrder={(orderFolio) => {
+                    setPresetOrderFolioToView(orderFolio)
+                    navigateToSalesSection('Pedidos')
+                  }}
+                />
               ) : (
                 <SalesOverview
                   quotes={quotes}
                   orders={orders}
+                  receivables={receivables}
                   products={initialProductsAndServices}
                   onNavigateSection={(sec) => navigateToSalesSection(sec)}
                   onOpenNewQuote={() => navigateToSalesSection('Cotizaciones')}
@@ -1185,6 +1851,12 @@ function AppContent() {
                   Inventario por almacén <span>{inventory.length}</span>
                 </button>
                 <button
+                  className={operationsSection === 'Traslados' ? 'active' : ''}
+                  onClick={() => navigateToOperationsSection('Traslados')}
+                >
+                  Traslados entre ubicaciones <span>{transfers.length}</span>
+                </button>
+                <button
                   className={operationsSection === 'Compras' ? 'active' : ''}
                   onClick={() => navigateToOperationsSection('Compras')}
                 >
@@ -1208,8 +1880,26 @@ function AppContent() {
                 <OperationsInventory
                   warehouses={warehouses}
                   inventory={inventory}
+                  transfers={transfers}
                   movements={movements}
                   onUpdateInventory={setInventory}
+                  onUpdateTransfers={setTransfers}
+                  onAddMovement={handleAddMovement}
+                  onStartTransfer={(item) => {
+                    if (item) setPresetTransferItem(item)
+                    navigateToOperationsSection('Traslados')
+                  }}
+                />
+              ) : operationsSection === 'Traslados' ? (
+                <OperationsTransfers
+                  warehouses={warehouses}
+                  inventory={inventory}
+                  transfers={transfers}
+                  movementsCount={movements.length}
+                  presetItem={presetTransferItem}
+                  onClearPresetItem={() => setPresetTransferItem(null)}
+                  onUpdateInventory={setInventory}
+                  onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
                 />
               ) : operationsSection === 'Compras' ? (
@@ -1275,6 +1965,12 @@ function AppContent() {
                   Cuentas por pagar <span>{payables.length}</span>
                 </button>
                 <button
+                  className={financeSection === 'Pagos Bancarios' ? 'active' : ''}
+                  onClick={() => navigateToFinanceSection('Pagos Bancarios')}
+                >
+                  Pagos Bancarios (EBP) <span>{ebpBatches.length}</span>
+                </button>
+                <button
                   className={financeSection === 'Gastos' ? 'active' : ''}
                   onClick={() => navigateToFinanceSection('Gastos')}
                 >
@@ -1320,6 +2016,31 @@ function AppContent() {
                   onUpdatePayables={setPayables}
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
+                  onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
+                />
+              ) : financeSection === 'Pagos Bancarios' ? (
+                <FinanceEbp
+                  packs={ebpPacks}
+                  batches={ebpBatches}
+                  bankAccounts={bankAccounts}
+                  employees={employees}
+                  suppliers={supplierRecords.map((s) => ({
+                    name: s.name,
+                    company: s.company,
+                    email: s.email,
+                    rfc: s.rfc,
+                    bankName: s.bankName,
+                    clabe: s.clabe,
+                    accountNumber: s.accountNumber,
+                    defaultReference: s.defaultReference,
+                    bankPackValues: s.bankPackValues,
+                  }))}
+                  payrollRuns={payrollRuns}
+                  payables={payables}
+                  onUpdatePacks={handleUpdateEbpPacks}
+                  onCreateBatch={(batch) => setEbpBatches((prev) => [batch, ...prev])}
+                  onApplyBatchInFinance={handleApplyEbpBatchInFinance}
+                  onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
                 />
               ) : financeSection === 'Gastos' ? (
                 <FinanceExpenses
@@ -1352,7 +2073,7 @@ function AppContent() {
               onAddDepartment={handleAddDepartment}
               onAddLocation={handleAddLocation}
               onUpdateDepartments={setDepartments}
-              onUpdateLocations={setLocations}
+              onUpdateLocations={handleUpdateLocations}
               adminSection={adminSection}
               onNavigateSection={navigateToAdminSection}
             />
@@ -1417,13 +2138,13 @@ function AppContent() {
                 <div className="form-section-divider">Datos generales y fiscales</div>
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>Razón Social / Empresa *</span>
+                    <span>Código de cliente</span>
                     <input
-                      required
-                      autoFocus
-                      value={clientForm.company}
-                      onChange={(event) => setClientForm({ ...clientForm, company: event.target.value })}
-                      placeholder="Ej. Distribuidora del Norte S.A. de C.V."
+                      className="mono"
+                      value={clientForm.clientCode}
+                      onChange={(event) => setClientForm({ ...clientForm, clientCode: event.target.value })}
+                      placeholder="Ej. CLI-006 o ID sistema previo"
+                      title="Código externo o de catálogo para trazabilidad e identificación al migrar desde otro sistema"
                     />
                   </label>
                   <label className="form-field">
@@ -1437,6 +2158,17 @@ function AppContent() {
                     </select>
                   </label>
                 </div>
+
+                <label className="form-field">
+                  <span>Razón Social / Empresa *</span>
+                  <input
+                    required
+                    autoFocus
+                    value={clientForm.company}
+                    onChange={(event) => setClientForm({ ...clientForm, company: event.target.value })}
+                    placeholder="Ej. Distribuidora del Norte S.A. de C.V."
+                  />
+                </label>
 
                 <div className="form-grid">
                   <label className="form-field">
@@ -1701,7 +2433,28 @@ function AppContent() {
 
             {createKind === 'supplier' && (
               <>
-                <label className="form-field"><span>Nombre del contacto *</span><input required autoFocus value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Ej. Laura Méndez" /></label>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Código de proveedor</span>
+                    <input
+                      className="mono"
+                      value={createForm.supplierCode}
+                      onChange={(event) => setCreateForm({ ...createForm, supplierCode: event.target.value })}
+                      placeholder="Ej. PRV-005 o ID sistema previo"
+                      title="Código externo o de catálogo para trazabilidad e identificación al migrar desde otro sistema"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Nombre del contacto *</span>
+                    <input
+                      required
+                      autoFocus
+                      value={createForm.name}
+                      onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })}
+                      placeholder="Ej. Laura Méndez"
+                    />
+                  </label>
+                </div>
                 <label className="form-field"><span>Empresa *</span><input required value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Suministros del Centro" /></label>
                 <div className="form-grid">
                   <label className="form-field"><span>Correo *</span><input type="email" required value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} placeholder="correo@empresa.mx" /></label>
@@ -1873,6 +2626,47 @@ function AppContent() {
                 >
                   <Plus size={13} /> Guardar esta dirección y agregar otra
                 </button>
+
+                <div className="form-section-divider">Datos bancarios para pagos electrónicos (EBP)</div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>RFC del proveedor</span>
+                    <input
+                      value={createForm.rfc}
+                      maxLength={13}
+                      onChange={(e) => setCreateForm({ ...createForm, rfc: e.target.value.toUpperCase() })}
+                      placeholder="Ej. ACO170812K90"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Banco receptor</span>
+                    <input
+                      value={createForm.bankName}
+                      onChange={(e) => setCreateForm({ ...createForm, bankName: e.target.value })}
+                      placeholder="Ej. BBVA México / Banorte"
+                    />
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>CLABE interbancaria (18 dígitos)</span>
+                    <input
+                      className="mono"
+                      maxLength={18}
+                      value={createForm.clabe}
+                      onChange={(e) => setCreateForm({ ...createForm, clabe: e.target.value })}
+                      placeholder="18 dígitos"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Referencia numérica predeterminada</span>
+                    <input
+                      value={createForm.defaultReference}
+                      onChange={(e) => setCreateForm({ ...createForm, defaultReference: e.target.value })}
+                      placeholder="Ej. 1049201"
+                    />
+                  </label>
+                </div>
               </>
             )}
             {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado (MXN)</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
@@ -1886,6 +2680,339 @@ function AppContent() {
           </form>
         </section>
       </div>}
+
+      {/* Modal: Configurar datos bancarios + Packs EBP del Proveedor */}
+      {editingSupplierBank && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingSupplierBank(null)
+          }}
+        >
+          <section className="create-modal modal-wide" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">PROVEEDOR · DISPERSIÓN BANCARIA EBP</div>
+                <h2>{editingSupplierBank.company}</h2>
+                <p>Configura CLABE, RFC y campos dinámicos exigidos por tus packs bancarios instalados.</p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Cerrar"
+                onClick={() => setEditingSupplierBank(null)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                setSupplierRecords((prev) =>
+                  prev.map((s) =>
+                    s.email === editingSupplierBank.email && s.company === editingSupplierBank.company
+                      ? editingSupplierBank
+                      : s
+                  )
+                )
+                toast.success(
+                  `Datos bancarios de ${editingSupplierBank.company} actualizados para lotes EBP.`,
+                  'Proveedor actualizado'
+                )
+                setEditingSupplierBank(null)
+              }}
+            >
+              <div className="form-grid-3">
+                <label className="form-field">
+                  <span>RFC</span>
+                  <input
+                    className="mono"
+                    maxLength={13}
+                    value={editingSupplierBank.rfc || ''}
+                    onChange={(e) =>
+                      setEditingSupplierBank({
+                        ...editingSupplierBank,
+                        rfc: e.target.value.toUpperCase(),
+                      })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Banco receptor</span>
+                  <input
+                    value={editingSupplierBank.bankName || ''}
+                    onChange={(e) =>
+                      setEditingSupplierBank({ ...editingSupplierBank, bankName: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Referencia predeterminada</span>
+                  <input
+                    value={editingSupplierBank.defaultReference || ''}
+                    onChange={(e) =>
+                      setEditingSupplierBank({
+                        ...editingSupplierBank,
+                        defaultReference: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>CLABE interbancaria (18 dígitos)</span>
+                  <input
+                    className="mono"
+                    maxLength={18}
+                    value={editingSupplierBank.clabe || ''}
+                    onChange={(e) =>
+                      setEditingSupplierBank({ ...editingSupplierBank, clabe: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Número de cuenta</span>
+                  <input
+                    className="mono"
+                    value={editingSupplierBank.accountNumber || ''}
+                    onChange={(e) =>
+                      setEditingSupplierBank({
+                        ...editingSupplierBank,
+                        accountNumber: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              {ebpPacks.filter(
+                (p) =>
+                  p.installed &&
+                  (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
+                  p.beneficiaryBankSchema.length > 0
+              ).length > 0 && (
+                <>
+                  <div className="form-section-divider">
+                    Campos específicos de Packs Bancarios EBP instalados
+                  </div>
+                  <div className="ebp-dynamic-packs-stack">
+                    {ebpPacks
+                      .filter(
+                        (p) =>
+                          p.installed &&
+                          (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
+                          p.beneficiaryBankSchema.length > 0
+                      )
+                      .map((pack) => {
+                        const vals = editingSupplierBank.bankPackValues?.[pack.id] || {}
+                        return (
+                          <div key={pack.id} className="ebp-dynamic-pack-subbox">
+                            <div className="ebp-subbox-title">
+                              <strong>{pack.name}</strong>
+                              <span className="emp-code-pill">{pack.bankName}</span>
+                            </div>
+                            <div className="form-grid">
+                              {pack.beneficiaryBankSchema.map((field) => {
+                                const val = vals[field.key] ?? field.defaultValue ?? ''
+                                const err = validateEbpFieldValue(
+                                  field,
+                                  val,
+                                  pack.embeddedCatalogs
+                                )
+                                const cat = field.catalogRef
+                                  ? pack.embeddedCatalogs[field.catalogRef]
+                                  : undefined
+                                return (
+                                  <label key={field.key} className="form-field">
+                                    <span>
+                                      {field.label} {field.validators.required ? '*' : ''}
+                                    </span>
+                                    {field.type === 'select_catalog' && cat ? (
+                                      <select
+                                        value={val}
+                                        onChange={(e) =>
+                                          setEditingSupplierBank({
+                                            ...editingSupplierBank,
+                                            bankPackValues: {
+                                              ...(editingSupplierBank.bankPackValues || {}),
+                                              [pack.id]: { ...vals, [field.key]: e.target.value },
+                                            },
+                                          })
+                                        }
+                                      >
+                                        <option value="">Selecciona opción...</option>
+                                        {cat.options.map((opt) => (
+                                          <option key={opt.code} value={opt.code}>
+                                            {opt.label}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <input
+                                        value={val}
+                                        placeholder={field.placeholder}
+                                        onChange={(e) =>
+                                          setEditingSupplierBank({
+                                            ...editingSupplierBank,
+                                            bankPackValues: {
+                                              ...(editingSupplierBank.bankPackValues || {}),
+                                              [pack.id]: { ...vals, [field.key]: e.target.value },
+                                            },
+                                          })
+                                        }
+                                      />
+                                    )}
+                                    {err && <small className="ebp-field-err">{err}</small>}
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
+                </>
+              )}
+
+              <div className="create-modal-actions">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setEditingSupplierBank(null)}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="button button-primary">
+                  <Check size={14} /> Guardar datos bancarios
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Ficha de Cliente / Proveedor (mismo diseño que Ficha de Empleados) */}
+      {detailDirectory && (() => {
+        const isSup = detailDirectory.kind === 'supplier'
+        const rec = detailDirectory.record
+        const relatedDocs = isSup
+          ? payables.filter((b) => b.supplierCompany.toLowerCase() === rec.company.toLowerCase())
+          : receivables.filter((r) => r.clientCompany.toLowerCase() === rec.company.toLowerCase())
+        const openBalance = relatedDocs.reduce((s, d) => s + d.balance, 0)
+        const totalVolume = relatedDocs.reduce((s, d) => s + d.total, 0)
+
+        return (
+          <DirectorySheetModal
+            kind={detailDirectory.kind}
+            record={rec}
+            installedPacks={ebpPacks}
+            openBalance={openBalance}
+            totalVolume={totalVolume}
+            documentsCount={relatedDocs.length}
+            onClose={() => setDetailDirectory(null)}
+            onQuickStatusChange={(nextStatus) => {
+              const updated = { ...rec, status: nextStatus, lastActivity: 'Ahora' }
+              if (isSup) {
+                setSupplierRecords((prev) =>
+                  prev.map((s) =>
+                    s.email === rec.email && s.company === rec.company ? updated : s
+                  )
+                )
+              } else {
+                setClientRecords((prev) =>
+                  prev.map((c) =>
+                    c.email === rec.email && c.company === rec.company ? updated : c
+                  )
+                )
+              }
+              setDetailDirectory({ kind: detailDirectory.kind, record: updated })
+              toast.info(
+                `Estado de ${rec.company} cambiado a ${nextStatus}.`,
+                'Estado actualizado'
+              )
+            }}
+            onEdit={() => {
+              const snapshot = JSON.parse(JSON.stringify(rec)) as DirectoryRecord
+              const kindCopy = detailDirectory.kind
+              setDetailDirectory(null)
+              setEditingDirectory({
+                kind: kindCopy,
+                originalEmail: rec.email,
+                originalCompany: rec.company,
+                record: snapshot,
+              })
+            }}
+            onEditBank={
+              isSup
+                ? () => {
+                    const snapshot = JSON.parse(JSON.stringify(rec)) as DirectoryRecord
+                    setDetailDirectory(null)
+                    setEditingSupplierBank(snapshot)
+                  }
+                : undefined
+            }
+          />
+        )
+      })()}
+
+      {/* Modal: Editar ficha de Cliente o Proveedor */}
+      {editingDirectory && (
+        <DirectoryEditModal
+          kind={editingDirectory.kind}
+          record={editingDirectory.record}
+          installedPacks={ebpPacks}
+          onClose={() => setEditingDirectory(null)}
+          onSave={(updated) => {
+            if (editingDirectory.kind === 'supplier') {
+              setSupplierRecords((prev) =>
+                prev.map((s) =>
+                  s.email === editingDirectory.originalEmail &&
+                  s.company === editingDirectory.originalCompany
+                    ? updated
+                    : s
+                )
+              )
+            } else {
+              setClientRecords((prev) =>
+                prev.map((c) =>
+                  c.email === editingDirectory.originalEmail &&
+                  c.company === editingDirectory.originalCompany
+                    ? updated
+                    : c
+                )
+              )
+            }
+            toast.success(
+              `Ficha de ${updated.company} actualizada correctamente.`,
+              editingDirectory.kind === 'supplier' ? 'Proveedor actualizado' : 'Cliente actualizado'
+            )
+            setEditingDirectory(null)
+          }}
+        />
+      )}
+
+      {/* Global EBP Batch Wizard Modal (launched from CRM Payroll or Finance Payables) */}
+      {globalEbpWizard.isOpen && (
+        <EbpBatchWizardModal
+          isOpen={globalEbpWizard.isOpen}
+          batchType={globalEbpWizard.batchType}
+          sourceRefId={globalEbpWizard.sourceRefId}
+          sourceFolio={globalEbpWizard.sourceFolio}
+          candidates={globalEbpWizard.candidates}
+          packs={ebpPacks}
+          bankAccounts={bankAccounts}
+          existingBatchesCount={ebpBatches.length}
+          onClose={() => setGlobalEbpWizard((prev) => ({ ...prev, isOpen: false }))}
+          onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
+          onCreateBatch={(batch) => {
+            setEbpBatches((prev) => [batch, ...prev])
+            navigateToFinanceSection('Pagos Bancarios')
+          }}
+        />
+      )}
     </div>
   )
 }

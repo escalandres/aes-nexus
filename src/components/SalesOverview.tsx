@@ -1,8 +1,9 @@
 import {
   DollarSign, ShoppingBag, FileText, ArrowRight,
-  CheckCircle2, Plus, ArrowUpRight
+  CheckCircle2, Plus, ArrowUpRight, ReceiptText
 } from 'lucide-react'
 import type { Quote, SalesOrder } from '../data/sales'
+import type { InvoiceReceivable } from '../data/finance'
 import type { ProductServiceItem } from '../data/products'
 
 const formatMoney = (amount: number) => {
@@ -16,8 +17,9 @@ const formatMoney = (amount: number) => {
 interface SalesOverviewProps {
   quotes: Quote[]
   orders: SalesOrder[]
+  receivables?: InvoiceReceivable[]
   products: ProductServiceItem[]
-  onNavigateSection: (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos') => void
+  onNavigateSection: (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas') => void
   onOpenNewQuote: () => void
   onOpenNewOrder: () => void
 }
@@ -25,6 +27,7 @@ interface SalesOverviewProps {
 export function SalesOverview({
   quotes,
   orders,
+  receivables = [],
   products,
   onNavigateSection,
   onOpenNewQuote,
@@ -116,6 +119,9 @@ export function SalesOverview({
           <div className="funnel-quick-actions">
             <button className="button button-secondary" onClick={onOpenNewQuote}>
               <Plus size={14} /> Nueva cotización
+            </button>
+            <button className="button button-secondary" onClick={() => onNavigateSection('Facturas')}>
+              <ReceiptText size={14} /> Facturas ({receivables.length})
             </button>
             <button className="button button-primary" onClick={onOpenNewOrder}>
               <Plus size={14} /> Nuevo pedido

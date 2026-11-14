@@ -55,6 +55,8 @@ export interface SalesOrder {
   status: OrderStatus
   shippingAddress?: string
   notes?: string
+  invoiceIds?: string[]
+  invoiceFolios?: string[]
 }
 
 export const initialQuotes: Quote[] = [
@@ -243,6 +245,8 @@ export const initialOrders: SalesOrder[] = [
     status: 'En preparación',
     shippingAddress: 'Av. Paseo de la Reforma 222, Piso 14, Cuauhtémoc, CDMX',
     notes: 'Configurar terminales con la imagen predeterminada antes del despacho.',
+    invoiceIds: ['cxc_1'],
+    invoiceFolios: ['FAC-2026-001'],
     items: [
       {
         id: 'li_1',
@@ -287,6 +291,8 @@ export const initialOrders: SalesOrder[] = [
     status: 'Entregado',
     shippingAddress: 'Colima 180, Roma Norte, Cuauhtémoc, CDMX',
     notes: 'Entrega en recepción con acuse firmado por almacenista.',
+    invoiceIds: ['cxc_2'],
+    invoiceFolios: ['FAC-2026-002'],
     items: [
       {
         id: 'li_8',
@@ -331,6 +337,8 @@ export const initialOrders: SalesOrder[] = [
     status: 'Confirmado',
     shippingAddress: 'Orizaba 42, Roma Norte, Cuauhtémoc, CDMX',
     notes: 'Confirmado con anticipo recibido en banco.',
+    invoiceIds: ['cxc_3'],
+    invoiceFolios: ['FAC-2026-003'],
     items: [
       {
         id: 'li_10',
@@ -349,5 +357,49 @@ export const initialOrders: SalesOrder[] = [
     subtotal: 17400,
     taxTotal: 2784,
     total: 20184,
+  },
+  {
+    id: 'order_4',
+    folio: 'PED-2026-004',
+    clientId: 'cli_taller',
+    clientName: 'Diego Fernández',
+    clientCompany: 'Taller Norte',
+    date: '10 nov 2026',
+    deliveryDate: '18 nov 2026',
+    currency: 'MXN',
+    status: 'Confirmado',
+    shippingAddress: 'Av. Constitución 1400, Monterrey, Nuevo León',
+    notes: 'Pedido confirmado pendiente de emitir factura al 100% o anticipo.',
+    items: [
+      {
+        id: 'li_11',
+        sku: 'HW-TERM-POS',
+        name: 'Terminal Punto de Venta Touch 15.6" IP65',
+        type: 'product',
+        quantity: 2,
+        unitPrice: 12400,
+        taxRate: '16%',
+        unitOfMeasure: 'Pza',
+        subtotal: 24800,
+        taxAmount: 3968,
+        total: 28768,
+      },
+      {
+        id: 'li_12',
+        sku: 'SRV-SUP-GOLD',
+        name: 'Póliza de Soporte Técnico Gold 24/7',
+        type: 'service',
+        quantity: 1,
+        unitPrice: 8500,
+        taxRate: '16%',
+        unitOfMeasure: 'Mes',
+        subtotal: 8500,
+        taxAmount: 1360,
+        total: 9860,
+      },
+    ],
+    subtotal: 33300,
+    taxTotal: 5328,
+    total: 38628,
   },
 ]

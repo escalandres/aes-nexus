@@ -28,7 +28,7 @@ interface OperationsOverviewProps {
   movements: StockMovement[]
   purchaseOrders: PurchaseOrder[]
   shipments: ShipmentDelivery[]
-  onNavigateSection: (sec: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
+  onNavigateSection: (sec: 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen') => void
 }
 
 const money = (val: number) =>
@@ -287,6 +287,12 @@ export function OperationsOverview({
                 onClick={() => onNavigateSection('Inventario')}
               >
                 <Boxes size={14} /> Kardex y existencias
+              </button>
+              <button
+                className="shortcut-btn"
+                onClick={() => onNavigateSection('Traslados')}
+              >
+                <ArrowLeftRight size={14} /> Traslados entre ubicaciones
               </button>
               <button
                 className="shortcut-btn"

@@ -8,6 +8,42 @@ export interface Warehouse {
   capacityPercentage: number
   isDefault: boolean
   active: boolean
+  locationId?: string
+  locationType?: string
+}
+
+export type TransferStatus = 'En tránsito' | 'Completado' | 'Cancelado'
+
+export interface InventoryTransferItem {
+  id: string
+  inventoryItemId: string
+  productId: string
+  sku: string
+  name: string
+  unitOfMeasure: string
+  quantity: number
+  unitCost: number
+  sourceBin: string
+  targetBin: string
+}
+
+export interface InventoryTransfer {
+  id: string
+  folio: string
+  date: string
+  expectedArrival?: string
+  completedDate?: string
+  sourceWarehouseId: string
+  sourceWarehouseName: string
+  targetWarehouseId: string
+  targetWarehouseName: string
+  items: InventoryTransferItem[]
+  totalUnits: number
+  totalValue: number
+  status: TransferStatus
+  carrierOrMethod: string
+  responsibleUser: string
+  notes?: string
 }
 
 export interface InventoryItemLocation {
@@ -112,6 +148,8 @@ export const initialWarehouses: Warehouse[] = [
     capacityPercentage: 74,
     isDefault: true,
     active: true,
+    locationId: 'loc_2',
+    locationType: 'Almacén / Bodega',
   },
   {
     id: 'wh_norte',
@@ -123,6 +161,21 @@ export const initialWarehouses: Warehouse[] = [
     capacityPercentage: 48,
     isDefault: false,
     active: true,
+    locationId: 'loc_3',
+    locationType: 'Sucursal',
+  },
+  {
+    id: 'wh_gdl',
+    code: 'SUC-GDL',
+    name: 'Punto de Operación Guadalajara',
+    city: 'Guadalajara',
+    state: 'Jalisco',
+    address: 'Av. Chapultepec 480, Guadalajara',
+    capacityPercentage: 32,
+    isDefault: false,
+    active: true,
+    locationId: 'loc_4',
+    locationType: 'Punto de venta',
   },
 ]
 
@@ -231,6 +284,85 @@ export const initialInventory: InventoryItemLocation[] = [
     cost: 5100,
     unitOfMeasure: 'Pza',
     locationBin: 'Rack D-02',
+  },
+  {
+    id: 'inv_8',
+    productId: 'prod_5',
+    sku: 'HW-TERM-POS',
+    name: 'Terminal Punto de Venta Touch 15.6" IP65',
+    warehouseId: 'wh_gdl',
+    warehouseName: 'Punto de Operación Guadalajara',
+    stock: 4,
+    reserved: 0,
+    inTransit: 2,
+    minStock: 2,
+    cost: 8650,
+    unitOfMeasure: 'Pza',
+    locationBin: 'Mostrador G-01',
+  },
+]
+
+export const initialTransfers: InventoryTransfer[] = [
+  {
+    id: 'trf_2',
+    folio: 'TRF-2026-002',
+    date: '12 nov 2026',
+    expectedArrival: '14 nov 2026',
+    sourceWarehouseId: 'wh_central',
+    sourceWarehouseName: 'Almacén Central Vallejo',
+    targetWarehouseId: 'wh_gdl',
+    targetWarehouseName: 'Punto de Operación Guadalajara',
+    items: [
+      {
+        id: 'trfi_2',
+        inventoryItemId: 'inv_3',
+        productId: 'prod_5',
+        sku: 'HW-TERM-POS',
+        name: 'Terminal Punto de Venta Touch 15.6" IP65',
+        unitOfMeasure: 'Pza',
+        quantity: 2,
+        unitCost: 8650,
+        sourceBin: 'Pasillo B-12',
+        targetBin: 'Mostrador G-01',
+      },
+    ],
+    totalUnits: 2,
+    totalValue: 17300,
+    status: 'En tránsito',
+    carrierOrMethod: 'Logística del Valle',
+    responsibleUser: 'Andrea Morales',
+    notes: 'Reposición programada para demostraciones y entregas en punto de venta Guadalajara.',
+  },
+  {
+    id: 'trf_1',
+    folio: 'TRF-2026-001',
+    date: '04 nov 2026',
+    expectedArrival: '05 nov 2026',
+    completedDate: '05 nov 2026',
+    sourceWarehouseId: 'wh_central',
+    sourceWarehouseName: 'Almacén Central Vallejo',
+    targetWarehouseId: 'wh_norte',
+    targetWarehouseName: 'Almacén Norte Monterrey',
+    items: [
+      {
+        id: 'trfi_1',
+        inventoryItemId: 'inv_5',
+        productId: 'prod_7',
+        sku: 'HW-LECT-BAR',
+        name: 'Lector Óptico de Código de Barras 2D Inalámbrico',
+        unitOfMeasure: 'Pza',
+        quantity: 5,
+        unitCost: 1820,
+        sourceBin: 'Gaveta C-05',
+        targetBin: 'Gaveta N-08',
+      },
+    ],
+    totalUnits: 5,
+    totalValue: 9100,
+    status: 'Completado',
+    carrierOrMethod: 'Mensajería interna',
+    responsibleUser: 'Andrea Morales',
+    notes: 'Rebalanceo de stock para sucursal norte.',
   },
 ]
 
