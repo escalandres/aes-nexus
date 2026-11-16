@@ -1,8 +1,9 @@
-import { useState, useMemo, type FormEvent } from 'react'
+import { useState, useMemo, useEffect, type FormEvent } from 'react'
 import {
   BadgeCheck,
   Building2,
   CalendarDays,
+  Check,
   Download,
   Edit3,
   Eye,
@@ -12,6 +13,7 @@ import {
   Phone,
   Plus,
   Search,
+  ShieldCheck,
   UserCheck,
   Users,
   Wallet,
@@ -23,6 +25,13 @@ import type {
   EmployeeStatus,
   PaymentFrequency,
 } from '../data/employees'
+import {
+  ROLES_CHANGED_EVENT,
+  loadStoredRoleDefinitions,
+  type RoleDefinition,
+  type RoleKey,
+} from '../data/settings'
+import { useI18n } from '../i18n/I18nContext'
 import {
   validateEbpFieldValue,
   type BankFormatPack,
@@ -40,6 +49,7 @@ interface CrmEmployeesProps {
   installedPacks?: BankFormatPack[]
   onAddEmployee: (employee: EmployeeRecord) => void
   onUpdateEmployee: (employee: EmployeeRecord) => void
+  onNavigateSettingsRoles?: () => void
 }
 
 const money = (value: number) =>
@@ -64,19 +74,47 @@ export function CrmEmployees({
   installedPacks = [],
   onAddEmployee,
   onUpdateEmployee,
+  onNavigateSettingsRoles,
 }: CrmEmployeesProps) {
   const toast = useToast()
+  const { t } = useI18n()
+
+  // Live role catalog synced with Settings > Roles y permisos
+  const [roleDefinitions, setRoleDefinitions] = useState<RoleDefinition[]>(() =>
+    loadStoredRoleDefinitions()
+  )
+
+  useEffect(() => {
+    const syncRoles = () => setRoleDefinitions(loadStoredRoleDefinitions())
+    window.addEventListener(ROLES_CHANGED_EVENT, syncRoles)
+    window.addEventListener('storage', syncRoles)
+    return () => {
+      window.removeEventListener(ROLES_CHANGED_EVENT, syncRoles)
+      window.removeEventListener('storage', syncRoles)
+    }
+  }, [])
+
+  const getRoleDisplayName = (roleId: RoleKey) => {
+    if (roleId === 'Administrador') return t('settings.roles.roleLabel.Administrador')
+    if (roleId === 'Operaciones') return t('settings.roles.roleLabel.Operaciones')
+    if (roleId === 'Ventas') return t('settings.roles.roleLabel.Ventas')
+    if (roleId === 'Finanzas') return t('settings.roles.roleLabel.Finanzas')
+    return roleDefinitions.find((r) => r.id === roleId)?.name || roleId
+  }
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
   const [departmentFilter, setDepartmentFilter] = useState('Todos')
   const [locationFilter, setLocationFilter] = useState('Todos')
+  const [roleFilter, setRoleFilter] = useState('Todos')
   const [statusFilter, setStatusFilter] = useState<'Todos' | EmployeeStatus>('Todos')
 
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [detailEmployee, setDetailEmployee] = useState<EmployeeRecord | null>(null)
+  const [rolePickerEmployee, setRolePickerEmployee] = useState<EmployeeRecord | null>(null)
+  const [rolePickerDraft, setRolePickerDraft] = useState<RoleKey[]>([])
 
   // Form fields
   const [employeeCode, setEmployeeCode] = useState('')
@@ -84,6 +122,7 @@ export function CrmEmployees({
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [roleTitle, setRoleTitle] = useState('')
+  const [selectedRoles, setSelectedRoles] = useState<RoleKey[]>([])
   const [departmentId, setDepartmentId] = useState('')
   const [locationId, setLocationId] = useState('')
   const [contractType, setContractType] = useState<ContractType>('Tiempo completo')
@@ -132,21 +171,24 @@ export function CrmEmployees({
   const filteredEmployees = useMemo(() => {
     const q = searchQuery.toLowerCase().trim()
     return employees.filter((emp) => {
+      const empRoles = emp.roles || []
       const matchesDept = departmentFilter === 'Todos' || emp.departmentId === departmentFilter
       const matchesLoc = locationFilter === 'Todos' || emp.locationId === locationFilter
+      const matchesRole = roleFilter === 'Todos' || empRoles.includes(roleFilter)
       const matchesStatus = statusFilter === 'Todos' || emp.status === statusFilter
       const matchesQuery =
         !q ||
         emp.fullName.toLowerCase().includes(q) ||
         emp.employeeCode.toLowerCase().includes(q) ||
         emp.roleTitle.toLowerCase().includes(q) ||
+        empRoles.some((rId) => getRoleDisplayName(rId).toLowerCase().includes(q)) ||
         emp.email.toLowerCase().includes(q) ||
         emp.departmentName.toLowerCase().includes(q) ||
         emp.locationName.toLowerCase().includes(q) ||
         (emp.rfc && emp.rfc.toLowerCase().includes(q))
-      return matchesDept && matchesLoc && matchesStatus && matchesQuery
+      return matchesDept && matchesLoc && matchesRole && matchesStatus && matchesQuery
     })
-  }, [employees, searchQuery, departmentFilter, locationFilter, statusFilter])
+  }, [employees, searchQuery, departmentFilter, locationFilter, roleFilter, statusFilter, roleDefinitions])
 
   const openCreateModal = () => {
     setEditingId(null)
@@ -156,6 +198,7 @@ export function CrmEmployees({
     setEmail('')
     setPhone('')
     setRoleTitle('')
+    setSelectedRoles(roleDefinitions[1] ? [roleDefinitions[1].id] : [])
     setDepartmentId(departments[0]?.id || '')
     setLocationId(locations[0]?.id || '')
     setContractType('Tiempo completo')
@@ -175,12 +218,14 @@ export function CrmEmployees({
   }
 
   const openEditModal = (emp: EmployeeRecord) => {
+    const validIds = new Set(roleDefinitions.map((r) => r.id))
     setEditingId(emp.id)
     setEmployeeCode(emp.employeeCode)
     setFullName(emp.fullName)
     setEmail(emp.email)
     setPhone(emp.phone)
     setRoleTitle(emp.roleTitle)
+    setSelectedRoles((emp.roles || []).filter((id) => validIds.has(id)))
     setDepartmentId(emp.departmentId)
     setLocationId(emp.locationId)
     setContractType(emp.contractType)
@@ -197,6 +242,43 @@ export function CrmEmployees({
     setEmergencyContact(emp.emergencyContact || '')
     setNotes(emp.notes || '')
     setIsFormOpen(true)
+  }
+
+  const toggleFormRole = (roleId: RoleKey) => {
+    setSelectedRoles((prev) =>
+      prev.includes(roleId) ? prev.filter((id) => id !== roleId) : [...prev, roleId]
+    )
+  }
+
+  const openRolePicker = (emp: EmployeeRecord) => {
+    const validIds = new Set(roleDefinitions.map((r) => r.id))
+    setRolePickerEmployee(emp)
+    setRolePickerDraft((emp.roles || []).filter((id) => validIds.has(id)))
+  }
+
+  const togglePickerRole = (roleId: RoleKey) => {
+    setRolePickerDraft((prev) =>
+      prev.includes(roleId) ? prev.filter((id) => id !== roleId) : [...prev, roleId]
+    )
+  }
+
+  const handleSaveQuickRoles = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!rolePickerEmployee) return
+    const updated: EmployeeRecord = {
+      ...rolePickerEmployee,
+      roles: [...rolePickerDraft],
+    }
+    onUpdateEmployee(updated)
+    if (detailEmployee?.id === updated.id) setDetailEmployee(updated)
+    const names = rolePickerDraft.map(getRoleDisplayName).join(', ')
+    toast.success(
+      rolePickerDraft.length > 0
+        ? `Roles de ${updated.fullName} actualizados (${names}).`
+        : `Se limpiaron los roles asignados de ${updated.fullName}.`,
+      'Roles actualizados'
+    )
+    setRolePickerEmployee(null)
   }
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
@@ -228,6 +310,7 @@ export function CrmEmployees({
         email: email.trim(),
         phone: phone.trim(),
         roleTitle: roleTitle.trim(),
+        roles: [...selectedRoles],
         departmentId,
         departmentName: deptObj?.name || existing.departmentName || 'Sin departamento',
         locationId,
@@ -260,6 +343,7 @@ export function CrmEmployees({
         email: email.trim(),
         phone: phone.trim(),
         roleTitle: roleTitle.trim(),
+        roles: [...selectedRoles],
         departmentId,
         departmentName: deptObj?.name || 'General',
         locationId,
@@ -305,6 +389,7 @@ export function CrmEmployees({
       'CÓDIGO',
       'NOMBRE COMPLETO',
       'PUESTO',
+      'ROLES ASIGNADOS',
       'DEPARTAMENTO',
       'UBICACIÓN',
       'CORREO',
@@ -322,6 +407,7 @@ export function CrmEmployees({
         esc(emp.employeeCode),
         esc(emp.fullName),
         esc(emp.roleTitle),
+        esc((emp.roles || []).map(getRoleDisplayName).join(' | ')),
         esc(emp.departmentName),
         esc(emp.locationName),
         esc(emp.email),
@@ -450,6 +536,18 @@ export function CrmEmployees({
           ))}
         </select>
         <select
+          aria-label="Filtrar por rol"
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+        >
+          <option value="Todos">Todos los roles</option>
+          {roleDefinitions.map((role) => (
+            <option key={role.id} value={role.id}>
+              {getRoleDisplayName(role.id)}
+            </option>
+          ))}
+        </select>
+        <select
           aria-label="Filtrar por estado"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as 'Todos' | EmployeeStatus)}
@@ -475,6 +573,7 @@ export function CrmEmployees({
             <tr>
               <th>COLABORADOR</th>
               <th>PUESTO Y ÁREA</th>
+              <th>ROLES</th>
               <th>SEDE / UBICACIÓN</th>
               <th>COMPENSACIÓN BASE</th>
               <th>ESTADO</th>
@@ -482,7 +581,10 @@ export function CrmEmployees({
             </tr>
           </thead>
           <tbody>
-            {filteredEmployees.map((emp) => (
+            {filteredEmployees.map((emp) => {
+              const validIds = new Set(roleDefinitions.map((r) => r.id))
+              const activeEmpRoles = (emp.roles || []).filter((id) => validIds.has(id))
+              return (
               <tr key={emp.id}>
                 <td>
                   <div className="company-cell">
@@ -508,6 +610,27 @@ export function CrmEmployees({
                     <strong>{emp.roleTitle}</strong>
                     <span>{emp.departmentName}</span>
                     <small>{emp.contractType}</small>
+                  </div>
+                </td>
+                <td>
+                  <div className="emp-roles-table-cell">
+                    <div className="emp-roles-inline-list">
+                      {activeEmpRoles.length === 0 ? (
+                        <span className="emp-no-roles-text">Sin roles</span>
+                      ) : (
+                        <span>
+                          {activeEmpRoles.map((rId) => getRoleDisplayName(rId)).join(' · ')}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="emp-role-selector-trigger"
+                      onClick={() => openRolePicker(emp)}
+                      aria-label={`Seleccionar roles para ${emp.fullName}`}
+                    >
+                      <ShieldCheck size={12} /> Seleccionar ({activeEmpRoles.length})
+                    </button>
                   </div>
                 </td>
                 <td>
@@ -553,7 +676,8 @@ export function CrmEmployees({
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
 
@@ -708,6 +832,52 @@ export function CrmEmployees({
                     <option value="Inactivo">Inactivo</option>
                   </select>
                 </label>
+              </div>
+
+              <div className="emp-roles-selector-block">
+                <div className="emp-roles-selector-header">
+                  <span>Roles asignados (definidos en Settings &gt; Roles y permisos)</span>
+                  <div className="emp-roles-selector-meta">
+                    <small className="tabular-nums">
+                      {selectedRoles.length} rol(es) seleccionado(s)
+                    </small>
+                    {onNavigateSettingsRoles && (
+                      <button
+                        type="button"
+                        className="emp-roles-settings-link"
+                        onClick={() => {
+                          setIsFormOpen(false)
+                          onNavigateSettingsRoles()
+                        }}
+                      >
+                        Configurar en Settings &rarr;
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="emp-roles-selector-grid">
+                  {roleDefinitions.map((role) => {
+                    const checked = selectedRoles.includes(role.id)
+                    return (
+                      <label
+                        key={role.id}
+                        className={`emp-role-check-item ${checked ? 'checked' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleFormRole(role.id)}
+                        />
+                        <div className="emp-role-check-copy">
+                          <strong>{getRoleDisplayName(role.id)}</strong>
+                          <small className="tabular-nums">
+                            {role.capabilities.length} permisos
+                          </small>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
 
               <div className="form-section-divider">Datos fiscales y base de nómina</div>
@@ -956,6 +1126,43 @@ export function CrmEmployees({
                 </div>
               </div>
 
+              {/* Section: Roles en el Sistema */}
+              <div className="emp-sheet-section">
+                <div className="emp-sheet-section-title emp-sheet-section-title-row">
+                  <span>
+                    <ShieldCheck size={13} /> Roles de acceso asignados ({(detailEmployee.roles || []).length})
+                  </span>
+                  <button
+                    type="button"
+                    className="emp-role-selector-trigger"
+                    onClick={() => openRolePicker(detailEmployee)}
+                  >
+                    <Edit3 size={11} /> Ajustar roles
+                  </button>
+                </div>
+                {(detailEmployee.roles || []).length === 0 ? (
+                  <p className="emp-no-roles-text" style={{ margin: 0 }}>
+                    Este colaborador aún no tiene roles de sistema asignados.
+                  </p>
+                ) : (
+                  <div className="emp-sheet-roles-list">
+                    {(detailEmployee.roles || []).map((roleId) => {
+                      const def = roleDefinitions.find((r) => r.id === roleId)
+                      return (
+                        <div key={roleId} className="emp-sheet-role-row">
+                          <strong>
+                            <Check size={12} /> {getRoleDisplayName(roleId)}
+                          </strong>
+                          <span className="tabular-nums">
+                            {def ? `${def.capabilities.length} permisos` : ''}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Section: Contacto y Emergencia */}
               <div className="emp-sheet-section">
                 <div className="emp-sheet-section-title">
@@ -1105,6 +1312,118 @@ export function CrmEmployees({
                 </button>
               </div>
             </footer>
+          </section>
+        </div>
+      )}
+      {/* Modal: Quick Multi-Role Selector */}
+      {rolePickerEmployee && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setRolePickerEmployee(null)
+          }}
+        >
+          <section
+            className="create-modal"
+            style={{ maxWidth: '500px' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="emp-role-picker-title"
+          >
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">ASIGNACIÓN DE ROLES · MÚLTIPLE</div>
+                <h2 id="emp-role-picker-title">
+                  Roles de {rolePickerEmployee.fullName}
+                </h2>
+                <p>
+                  {rolePickerEmployee.roleTitle} · Asigna uno o varios roles. La creación y permisos de roles se configuran en{' '}
+                  <strong>Settings &gt; Roles y permisos</strong>.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setRolePickerEmployee(null)}
+                aria-label="Cerrar selector de roles"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveQuickRoles}>
+              <div className="emp-roles-selector-header" style={{ marginBottom: '8px' }}>
+                <span>Catálogo de roles activos (Settings)</span>
+                <div className="emp-roles-selector-meta">
+                  <small className="tabular-nums">
+                    {rolePickerDraft.length} seleccionado(s)
+                  </small>
+                  {onNavigateSettingsRoles && (
+                    <button
+                      type="button"
+                      className="emp-roles-settings-link"
+                      onClick={() => {
+                        setRolePickerEmployee(null)
+                        onNavigateSettingsRoles()
+                      }}
+                    >
+                      Configurar en Settings &rarr;
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="emp-roles-selector-grid">
+                {roleDefinitions.map((role) => {
+                  const checked = rolePickerDraft.includes(role.id)
+                  return (
+                    <label
+                      key={role.id}
+                      className={`emp-role-check-item ${checked ? 'checked' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => togglePickerRole(role.id)}
+                      />
+                      <div className="emp-role-check-copy">
+                        <strong>{getRoleDisplayName(role.id)}</strong>
+                        <small className="tabular-nums">
+                          {role.capabilities.length} permisos
+                        </small>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+
+              <div
+                className="create-modal-actions"
+                style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}
+              >
+                <button
+                  type="button"
+                  className="button button-ghost button-sm"
+                  onClick={() => setRolePickerDraft([])}
+                  disabled={rolePickerDraft.length === 0}
+                >
+                  Limpiar selección
+                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setRolePickerEmployee(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <Check size={14} /> Guardar roles
+                  </button>
+                </div>
+              </div>
+            </form>
           </section>
         </div>
       )}

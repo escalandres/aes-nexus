@@ -56,6 +56,7 @@ import type {
 import type { Opportunity } from '../data/dashboard'
 import { RevenueTargetChart } from './RevenueTargetChart'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface ExecutiveDashboardProps {
   orders: SalesOrder[]
@@ -87,13 +88,6 @@ interface ExecutiveDashboardProps {
   onOpenCreateOpportunity: () => void
 }
 
-const money = (val: number) =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits: 0,
-  }).format(val)
-
 export function ExecutiveDashboard({
   orders,
   quotes: _quotes,
@@ -116,6 +110,8 @@ export function ExecutiveDashboard({
   onOpenCreateOpportunity,
 }: ExecutiveDashboardProps) {
   const toast = useToast()
+  const { locale, regional, t, formatCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, undefined, 0)
   const [period, setPeriod] = useState<'Este mes' | 'Este trimestre' | 'Año 2026'>('Este mes')
   const [showAlertHub, setShowAlertHub] = useState(true)
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
@@ -499,13 +495,18 @@ export function ExecutiveDashboard({
     setShowStockConfigModal(false)
   }
 
-  // Dynamic Greeting & Localized Date in Spanish
+  // Dynamic Greeting & Localized Date aware of selected language and corporate timezone
   const greeting = useMemo(() => {
-    const hour = new Date().getHours()
-    if (hour < 12) return 'Buenos días, Andrea'
-    if (hour < 19) return 'Buenas tardes, Andrea'
-    return 'Buenas noches, Andrea'
-  }, [])
+    const hourStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      hour12: false,
+      timeZone: regional.timezone,
+    }).format(new Date())
+    const hour = Number(hourStr) || new Date().getHours()
+    if (hour < 12) return t('dashboard.greetingMorning', { name: 'Andrea' })
+    if (hour < 19) return t('dashboard.greetingAfternoon', { name: 'Andrea' })
+    return t('dashboard.greetingEvening', { name: 'Andrea' })
+  }, [regional.timezone, t])
 
   const formattedDate = useMemo(() => {
     const now = new Date()
@@ -514,10 +515,29 @@ export function ExecutiveDashboard({
       day: 'numeric',
       month: 'long',
       year: 'numeric',
+      timeZone: regional.timezone,
     }
-    const str = new Intl.DateTimeFormat('es-MX', options).format(now)
-    return str.toUpperCase()
-  }, [])
+    try {
+      const str = new Intl.DateTimeFormat(locale, options).format(now)
+      return str.toUpperCase()
+    } catch {
+      return new Intl.DateTimeFormat('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+        .format(now)
+        .toUpperCase()
+    }
+  }, [locale, regional.timezone])
+
+  const periodDisplayLabel =
+    period === 'Este mes'
+      ? t('dashboard.period.month')
+      : period === 'Este trimestre'
+      ? t('dashboard.period.quarter')
+      : t('dashboard.period.year')
 
   // Top Sales KPIs (Ventas, Margen, Clientes, Oportunidades)
   const monthlySales = useMemo(() => {
@@ -589,7 +609,7 @@ export function ExecutiveDashboard({
             <span className="wave">✳</span>
           </h1>
           <p className="welcome-subtitle">
-            Aquí tienes el pulso ejecutivo de tu negocio en tiempo real. <span>Todo en orden.</span>
+            {t('dashboard.welcomeBody')} <span>{t('dashboard.welcomeAllGood')}</span>
           </p>
         </div>
 
@@ -602,7 +622,7 @@ export function ExecutiveDashboard({
             disabled={isLoadingDashboard}
           >
             <RefreshCw size={14} className={isLoadingDashboard ? 'animate-spin' : ''} />
-            {isLoadingDashboard ? 'Cargando...' : 'Actualizar'}
+            {isLoadingDashboard ? t('dashboard.loading') : t('dashboard.refresh')}
           </button>
           <button
             type="button"
@@ -614,7 +634,7 @@ export function ExecutiveDashboard({
             title="Panel de configuración: definir umbrales mínimos de stock por producto y notificaciones push / correo"
           >
             <SlidersHorizontal size={14} />
-            Umbrales y Alertas
+            {t('dashboard.thresholdsBtn')}
             {lowStockItems.length > 0 ? (
               <span className="mini-alert-dot" title={`${lowStockItems.length} SKUs bajo umbral mínimo`}>
                 {lowStockItems.length}
@@ -640,7 +660,7 @@ export function ExecutiveDashboard({
             }}
           >
             <CalendarDays size={15} />
-            {period}
+            {periodDisplayLabel}
             <ChevronDown size={14} />
           </button>
           <button
@@ -648,7 +668,7 @@ export function ExecutiveDashboard({
             className="button button-primary"
             onClick={onOpenCreateOpportunity}
           >
-            <Plus size={16} /> Nueva oportunidad
+            <Plus size={16} /> {t('dashboard.newOpportunity')}
           </button>
         </div>
       </section>
@@ -712,49 +732,49 @@ export function ExecutiveDashboard({
       )}
 
       {/* Executive Quick Actions Bar */}
-      <section className="quick-actions-strip" aria-label="Acciones rápidas del negocio">
-        <span className="quick-actions-label">Accesos rápidos:</span>
+      <section className="quick-actions-strip" aria-label={t('dashboard.quickActionsLabel')}>
+        <span className="quick-actions-label">{t('dashboard.quickActionsLabel')}</span>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateSales('Cotizaciones')}
         >
-          <FileText size={13} /> Nueva cotización
+          <FileText size={13} /> {t('dashboard.quickQuote')}
         </button>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateSales('Pedidos')}
         >
-          <Truck size={13} /> Nuevo pedido
+          <Truck size={13} /> {t('dashboard.quickOrder')}
         </button>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateFinance('Cobros')}
         >
-          <CreditCard size={13} /> Registrar cobro
+          <CreditCard size={13} /> {t('dashboard.quickPayment')}
         </button>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateFinance('Gastos')}
         >
-          <Scale size={13} /> Registrar gasto
+          <Scale size={13} /> {t('dashboard.quickExpense')}
         </button>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateOperations('Inventario')}
         >
-          <Package size={13} /> Ajustar inventario
+          <Package size={13} /> {t('dashboard.quickInventory')}
         </button>
         <button
           type="button"
           className="quick-action-item"
           onClick={() => onNavigateFinance('Cuentas contables')}
         >
-          <FileSpreadsheet size={13} /> Catálogo de cuentas
+          <FileSpreadsheet size={13} /> {t('dashboard.quickChartAccounts')}
         </button>
         <button
           type="button"
