@@ -11,6 +11,7 @@ export const ACTIVE_SESSION_STORAGE_KEY = 'aes_nexus_active_session_v1'
 export const MODULE_SECTIONS = {
   CRM: ['Resumen', 'Clientes', 'Proveedores', 'Empleados', 'Nómina', 'Oportunidades', 'Actividades'],
   Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Resumen'],
+  Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
   Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
   Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
@@ -47,6 +48,13 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Pedidos: ['issueOrders', 'createQuotes'],
     Facturas: ['issueOrders'],
     Resumen: ['createQuotes', 'issueOrders', 'pipelineReports'],
+  },
+  Compras: {
+    Resumen: ['approvePurchases', 'receiveGoods', 'inventoryControl', 'schedulePayments'],
+    Requisiciones: ['approvePurchases', 'inventoryControl', 'adjustThresholds', 'receiveGoods'],
+    'Órdenes de compra': ['approvePurchases', 'receiveGoods'],
+    Recepciones: ['receiveGoods', 'inventoryControl'],
+    Facturas: ['approvePurchases', 'schedulePayments', 'expenseControl'],
   },
   Operaciones: {
     Inventario: ['inventoryControl', 'adjustThresholds', 'stockLedger'],

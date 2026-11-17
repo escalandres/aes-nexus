@@ -26,7 +26,9 @@ import type {
   PaymentFrequency,
 } from '../data/employees'
 import {
+  DEFAULT_NEW_USER_ROLE_CHANGED_EVENT,
   ROLES_CHANGED_EVENT,
+  loadDefaultNewUserRole,
   loadStoredRoleDefinitions,
   type RoleDefinition,
   type RoleKey,
@@ -83,13 +85,25 @@ export function CrmEmployees({
   const [roleDefinitions, setRoleDefinitions] = useState<RoleDefinition[]>(() =>
     loadStoredRoleDefinitions()
   )
+  const [defaultNewUserRole, setDefaultNewUserRole] = useState<RoleKey>(() =>
+    loadDefaultNewUserRole(loadStoredRoleDefinitions())
+  )
 
   useEffect(() => {
-    const syncRoles = () => setRoleDefinitions(loadStoredRoleDefinitions())
+    const syncRoles = () => {
+      const latestRoles = loadStoredRoleDefinitions()
+      setRoleDefinitions(latestRoles)
+      setDefaultNewUserRole(loadDefaultNewUserRole(latestRoles))
+    }
+    const syncDefaultRole = () => {
+      setDefaultNewUserRole(loadDefaultNewUserRole(loadStoredRoleDefinitions()))
+    }
     window.addEventListener(ROLES_CHANGED_EVENT, syncRoles)
+    window.addEventListener(DEFAULT_NEW_USER_ROLE_CHANGED_EVENT, syncDefaultRole)
     window.addEventListener('storage', syncRoles)
     return () => {
       window.removeEventListener(ROLES_CHANGED_EVENT, syncRoles)
+      window.removeEventListener(DEFAULT_NEW_USER_ROLE_CHANGED_EVENT, syncDefaultRole)
       window.removeEventListener('storage', syncRoles)
     }
   }, [])
@@ -198,7 +212,7 @@ export function CrmEmployees({
     setEmail('')
     setPhone('')
     setRoleTitle('')
-    setSelectedRoles(roleDefinitions[1] ? [roleDefinitions[1].id] : [])
+    setSelectedRoles([loadDefaultNewUserRole(roleDefinitions)])
     setDepartmentId(departments[0]?.id || '')
     setLocationId(locations[0]?.id || '')
     setContractType('Tiempo completo')
@@ -858,6 +872,7 @@ export function CrmEmployees({
                 <div className="emp-roles-selector-grid">
                   {roleDefinitions.map((role) => {
                     const checked = selectedRoles.includes(role.id)
+                    const isDefault = role.id === defaultNewUserRole
                     return (
                       <label
                         key={role.id}
@@ -869,7 +884,12 @@ export function CrmEmployees({
                           onChange={() => toggleFormRole(role.id)}
                         />
                         <div className="emp-role-check-copy">
-                          <strong>{getRoleDisplayName(role.id)}</strong>
+                          <div className="emp-role-check-title-row">
+                            <strong>{getRoleDisplayName(role.id)}</strong>
+                            {isDefault && (
+                              <span className="invite-role-default-badge">Predeterminado</span>
+                            )}
+                          </div>
                           <small className="tabular-nums">
                             {role.capabilities.length} permisos
                           </small>

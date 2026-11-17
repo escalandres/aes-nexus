@@ -30,6 +30,7 @@ import {
   RefreshCw,
   ImagePlus,
   Upload,
+  AlertTriangle,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -43,6 +44,7 @@ import {
   ALL_CAPABILITIES,
   AUDIT_CHANGED_EVENT,
   DEFAULT_INTEGRATIONS,
+  DEFAULT_NEW_USER_ROLE_CHANGED_EVENT,
   DEFAULT_PLAN_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
   ROLES_CHANGED_EVENT,
@@ -51,10 +53,12 @@ import {
   appendAuditLog,
   getWorkspaceUserRoleIds,
   isGeneralAdminRole,
+  loadDefaultNewUserRole,
   loadStoredAuditEvents,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
   readStoredJson,
+  saveDefaultNewUserRole,
   writeStoredJson,
   type AuditEventRecord,
   type BuiltInRoleKey,
@@ -348,12 +352,27 @@ export function SettingsSection({
   const [roleDefinitions, setRoleDefinitions] = useState<RoleDefinition[]>(() =>
     loadStoredRoleDefinitions()
   )
+  const [defaultNewUserRole, setDefaultNewUserRole] = useState<RoleKey>(() =>
+    loadDefaultNewUserRole(loadStoredRoleDefinitions())
+  )
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null)
   const [roleCapsDraft, setRoleCapsDraft] = useState<RoleCapabilityId[]>([])
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleDesc, setNewRoleDesc] = useState('')
   const [newRoleCapsDraft, setNewRoleCapsDraft] = useState<RoleCapabilityId[]>([])
+
+  useEffect(() => {
+    const syncDefaultRole = () => {
+      setDefaultNewUserRole(loadDefaultNewUserRole(roleDefinitions))
+    }
+    window.addEventListener(DEFAULT_NEW_USER_ROLE_CHANGED_EVENT, syncDefaultRole)
+    window.addEventListener('storage', syncDefaultRole)
+    return () => {
+      window.removeEventListener(DEFAULT_NEW_USER_ROLE_CHANGED_EVENT, syncDefaultRole)
+      window.removeEventListener('storage', syncDefaultRole)
+    }
+  }, [roleDefinitions])
 
   // 8. INTEGRATIONS STATE
   const [integrations, setIntegrations] = useState<IntegrationConfig[]>(() =>
@@ -392,7 +411,9 @@ export function SettingsSection({
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [inviteName, setInviteName] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRoles, setInviteRoles] = useState<RoleKey[]>(['Operaciones'])
+  const [inviteRoles, setInviteRoles] = useState<RoleKey[]>(() => [
+    loadDefaultNewUserRole(loadStoredRoleDefinitions()),
+  ])
   const [hoveredRolesPopover, setHoveredRolesPopover] = useState<{
     userId: string
     roles: string[]
@@ -763,7 +784,7 @@ export function SettingsSection({
     })
     setInviteName('')
     setInviteEmail('')
-    setInviteRoles([roleDefinitions.find((r) => r.id === 'Operaciones')?.id || roleDefinitions[0]?.id || 'Operaciones'])
+    setInviteRoles([loadDefaultNewUserRole(roleDefinitions)])
     setShowInviteModal(false)
     toast.success(
       t('settings.users.invitedToast', {
@@ -774,7 +795,57 @@ export function SettingsSection({
     )
   }
 
+  const handleOpenInviteModal = () => {
+    const resolvedDefault = loadDefaultNewUserRole(roleDefinitions)
+    setInviteRoles([resolvedDefault])
+    setShowInviteModal(true)
+  }
+
+  const handleChangeDefaultNewUserRole = (nextRoleId: RoleKey) => {
+    if (!isFullAdmin) {
+      toast.warning(
+        'Solo un administrador puede modificar el rol predeterminado para nuevos usuarios.',
+        'Acceso restringido'
+      )
+      return
+    }
+    const targetRole = roleDefinitions.find((r) => r.id === nextRoleId)
+    if (!targetRole || nextRoleId === defaultNewUserRole) return
+    setDefaultNewUserRole(nextRoleId)
+    saveDefaultNewUserRole(nextRoleId)
+    setInviteRoles([nextRoleId])
+    const roleLabel = getRoleCardTitle(targetRole)
+    recordAudit({
+      category: 'users',
+      action: 'Rol predeterminado de registro actualizado',
+      detail: `Nuevos usuarios recibirán: ${roleLabel}`,
+      user: 'Andrea Morales',
+    })
+    toast.success(
+      `Todo usuario nuevo registrado o invitado recibirá automáticamente el rol "${roleLabel}".`,
+      'Rol predeterminado actualizado'
+    )
+  }
+
+  const isUserAdminRole = (user: WorkspaceUserRecord) => {
+    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+    const userRoleIds = getWorkspaceUserRoleIds(user, validRoleIds)
+    return userRoleIds.some((rId) => {
+      if (rId === 'Administrador') return true
+      const def = roleDefinitions.find((r) => r.id === rId)
+      return isGeneralAdminRole(def)
+    })
+  }
+
   const handleToggleUserStatus = (userId: string) => {
+    const targetUser = users.find((u) => u.id === userId)
+    if (targetUser && targetUser.status === 'active' && isUserAdminRole(targetUser)) {
+      toast.warning(
+        'Los usuarios con el rol Administrador no pueden ser suspendidos.',
+        'Usuario protegido'
+      )
+      return
+    }
     const updated = users.map((u) => {
       if (u.id === userId) {
         const nextStatus = u.status === 'active' ? ('suspended' as const) : ('active' as const)
@@ -1018,6 +1089,10 @@ export function SettingsSection({
       const filtered = prev.filter((id) => id !== role.id)
       return filtered.length > 0 ? filtered : fallbackRole ? [fallbackRole.id] : []
     })
+    if (defaultNewUserRole === role.id && fallbackRole) {
+      setDefaultNewUserRole(fallbackRole.id)
+      saveDefaultNewUserRole(fallbackRole.id)
+    }
     persistRoleDefinitions(remaining)
     const roleDisplay = getRoleCardTitle(role)
     recordAudit({
@@ -2127,10 +2202,91 @@ export function SettingsSection({
                   <h2>{t('settings.users.heading')}</h2>
                   <p>{t('settings.users.subheading')}</p>
                 </div>
-                <button className="button button-primary" onClick={() => setShowInviteModal(true)}>
+                <button className="button button-primary" onClick={handleOpenInviteModal}>
                   <Plus size={14} /> {t('settings.users.inviteBtn')}
                 </button>
               </div>
+
+              {(() => {
+                const selectedDefaultDef =
+                  roleDefinitions.find((r) => r.id === defaultNewUserRole) || roleDefinitions[0]
+                const isDefaultAdmin = isGeneralAdminRole(selectedDefaultDef)
+                const capsCount = selectedDefaultDef?.capabilities?.length || 0
+                return (
+                  <div className="settings-section-card default-role-config-card">
+                    <div className="default-role-config-body">
+                      <div className="default-role-config-copy">
+                        <div className="default-role-kicker">POLÍTICA DE ALTA DE USUARIOS</div>
+                        <h3>Rol predeterminado para usuarios nuevos</h3>
+                        <p>
+                          Define el rol que se asignará automáticamente cada vez que se invite un colaborador o se registre un empleado nuevo en la plataforma.
+                        </p>
+                      </div>
+
+                      <div className="default-role-select-group">
+                        <label htmlFor="default-new-user-role-select">
+                          Rol inicial al registrar
+                        </label>
+                        <div className="default-role-control-row">
+                          <select
+                            id="default-new-user-role-select"
+                            className="default-role-select"
+                            value={defaultNewUserRole}
+                            disabled={!isFullAdmin}
+                            aria-label="Rol predeterminado para usuarios nuevos"
+                            onChange={(e) => handleChangeDefaultNewUserRole(e.target.value)}
+                          >
+                            {roleDefinitions.map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {getRoleCardTitle(r)} ({r.capabilities.length} permisos)
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="button button-ghost button-sm"
+                            onClick={() => onSelectSetting('Roles y permisos')}
+                          >
+                            Ver permisos &rarr;
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {selectedDefaultDef && (
+                      <div className="default-role-preview-bar">
+                        <span className="default-role-preview-title">
+                          <ShieldCheck size={13} />
+                          <span>
+                            Perfil activo: <strong>{getRoleCardTitle(selectedDefaultDef)}</strong>
+                          </span>
+                        </span>
+                        <span className="default-role-preview-meta tabular-nums">
+                          {capsCount} permisos incluidos · {getRoleCardDesc(selectedDefaultDef)}
+                        </span>
+                      </div>
+                    )}
+
+                    {isDefaultAdmin && (
+                      <div className="default-role-security-note" role="status">
+                        <AlertTriangle size={14} />
+                        <span>
+                          Advertencia de seguridad: asignar <strong>Administrador</strong> de forma predeterminada otorga acceso completo e irrestricto a cada usuario recién registrado.
+                        </span>
+                      </div>
+                    )}
+
+                    {!isFullAdmin && (
+                      <div className="default-role-lock-note">
+                        <LockKeyhole size={13} />
+                        <span>
+                          Solo el perfil de Administrador puede modificar el rol predeterminado de registro.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
 
               <div className="settings-section-card">
                 <div className="card-header-row">
@@ -2180,6 +2336,7 @@ export function SettingsSection({
                           )
                         }
                         const isPopoverActive = hoveredRolesPopover?.userId === user.id
+                        const isAdminUser = isUserAdminRole(user)
 
                         return (
                           <tr key={user.id}>
@@ -2235,15 +2392,27 @@ export function SettingsSection({
                               <span className="user-last-login">{user.lastLogin}</span>
                             </td>
                             <td style={{ textAlign: 'right' }}>
-                              <button
-                                type="button"
-                                className="button button-ghost button-sm"
-                                onClick={() => handleToggleUserStatus(user.id)}
-                              >
-                                {user.status === 'active'
-                                  ? t('settings.users.actionSuspend')
-                                  : t('settings.users.actionReactivate')}
-                              </button>
+                              {isAdminUser && user.status === 'active' ? (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm user-admin-protected-btn"
+                                  disabled
+                                  title="Los usuarios con el rol Administrador no pueden ser suspendidos"
+                                  aria-label="Usuario Administrador protegido contra suspensión"
+                                >
+                                  <LockKeyhole size={12} /> Protegido
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm"
+                                  onClick={() => handleToggleUserStatus(user.id)}
+                                >
+                                  {user.status === 'active'
+                                    ? t('settings.users.actionSuspend')
+                                    : t('settings.users.actionReactivate')}
+                                </button>
+                              )}
                             </td>
                           </tr>
                         )
@@ -2311,6 +2480,33 @@ export function SettingsSection({
                 </button>
               </div>
 
+              <div className="default-role-roles-strip">
+                <div className="default-role-roles-strip-info">
+                  <ShieldCheck size={15} />
+                  <div>
+                    <strong>Rol predeterminado para usuarios nuevos</strong>
+                    <span>
+                      Se preselecciona al invitar miembros o registrar empleados nuevos.
+                    </span>
+                  </div>
+                </div>
+                <div className="default-role-roles-strip-control">
+                  <select
+                    aria-label="Seleccionar rol predeterminado para nuevos usuarios"
+                    className="default-role-select compact"
+                    value={defaultNewUserRole}
+                    disabled={!isFullAdmin}
+                    onChange={(e) => handleChangeDefaultNewUserRole(e.target.value)}
+                  >
+                    {roleDefinitions.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {getRoleCardTitle(r)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="roles-grid">
                 {roleDefinitions.map((role) => {
                   const usersCount = users.filter((u) =>
@@ -2319,11 +2515,20 @@ export function SettingsSection({
                   const assignedCaps = role.capabilities || []
                   const roleTitle = getRoleCardTitle(role)
                   const roleDesc = getRoleCardDesc(role)
+                  const isDefaultRole = role.id === defaultNewUserRole
                   return (
-                    <div key={role.id} className="role-profile-card">
+                    <div
+                      key={role.id}
+                      className={`role-profile-card ${isDefaultRole ? 'is-default-role' : ''}`}
+                    >
                       <div className="role-header">
                         <div>
-                          <h3>{roleTitle}</h3>
+                          <div className="role-title-inline">
+                            <h3>{roleTitle}</h3>
+                            {isDefaultRole && (
+                              <span className="role-default-tag">Predeterminado</span>
+                            )}
+                          </div>
                           <span className="role-users-tag">
                             {t('settings.roles.usersAssigned', { count: usersCount })}
                           </span>
@@ -3065,6 +3270,7 @@ export function SettingsSection({
                 <div className="invite-roles-checklist">
                   {roleDefinitions.map((r) => {
                     const checked = inviteRoles.includes(r.id)
+                    const isDefault = r.id === defaultNewUserRole
                     const labelText =
                       r.id === 'Operaciones'
                         ? t('settings.modal.invite.roleOps')
@@ -3092,6 +3298,9 @@ export function SettingsSection({
                           }
                         />
                         <span>{labelText}</span>
+                        {isDefault && (
+                          <span className="invite-role-default-badge">Predeterminado</span>
+                        )}
                       </label>
                     )
                   })}

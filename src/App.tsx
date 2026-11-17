@@ -3,10 +3,11 @@ import {
   ArrowRight, ArrowUpRight, Bell, BellRing, BriefcaseBusiness,
   CalendarDays, ChevronDown, CircleHelp, Clock3, Edit3, Eye,
   FolderKanban, Landmark, LayoutDashboard, Menu,
-  MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
+  MoreHorizontal, Plus, Search, Settings2, ShoppingBag, ShoppingCart, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
+  LogIn, LogOut,
 } from 'lucide-react'
 import { activities, opportunities } from './data/dashboard'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
@@ -17,6 +18,7 @@ import { ToastProvider, useToast } from './components/Toast'
 import { I18nProvider, useI18n } from './i18n/I18nContext'
 import type { TranslationKey } from './i18n/translations'
 import { SettingsSection } from './components/SettingsSection'
+import { RoleSessionSelectorModal } from './components/RoleSessionSelectorModal'
 import { CrmEmployees } from './components/CrmEmployees'
 import { CrmPayroll } from './components/CrmPayroll'
 import { DirectorySheetModal, DirectoryEditModal } from './components/DirectorySheetModal'
@@ -56,6 +58,15 @@ import { OperationsTransfers } from './components/OperationsTransfers'
 import { OperationsPurchases } from './components/OperationsPurchases'
 import { OperationsDeliveries } from './components/OperationsDeliveries'
 import { OperationsOverview } from './components/OperationsOverview'
+import { PurchasesOverview } from './components/PurchasesOverview'
+import { PurchasesRequisitions } from './components/PurchasesRequisitions'
+import { PurchasesReceptions } from './components/PurchasesReceptions'
+import { PurchasesInvoices } from './components/PurchasesInvoices'
+import {
+  initialRequisitions,
+  type PurchaseRequisition,
+  type PurchasesSectionTab,
+} from './data/purchases'
 import {
   initialWarehouses,
   initialInventory,
@@ -111,6 +122,7 @@ const sections: { labelKey: TranslationKey; items: { name: string; labelKey: Tra
   { labelKey: 'nav.modules', items: [
     { name: 'CRM', labelKey: 'nav.crm', icon: Users, count: 'H2' },
     { name: 'Ventas', labelKey: 'nav.sales', icon: ShoppingBag, count: 'H2' },
+    { name: 'Compras', labelKey: 'nav.purchases', icon: ShoppingCart, count: 'H3' },
     { name: 'Operaciones', labelKey: 'nav.operations', icon: WarehouseIcon, count: 'H3' },
     { name: 'Finanzas', labelKey: 'nav.finance', icon: WalletCards, count: 'H3' },
     { name: 'Administración', labelKey: 'nav.admin', icon: ShieldCheck, count: 'H1' },
@@ -120,6 +132,7 @@ const sections: { labelKey: TranslationKey; items: { name: string; labelKey: Tra
 const moduleDetails = {
   CRM: { icon: Users, phase: 'H2 · Piloto comercial', description: 'Centraliza las relaciones y el seguimiento comercial de tu organización.', areas: ['Empresas y contactos', 'Empleados y colaboradores', 'Nómina de empleados', 'Oportunidades y pipeline', 'Actividades y seguimiento'] },
   Ventas: { icon: ShoppingBag, phase: 'H2 · Piloto comercial', description: 'Acompaña el proceso desde una cotización y pedido hasta la factura de venta sincronizada con Finanzas.', areas: ['Catálogo de productos y servicios', 'Cotizaciones y aprobaciones', 'Pedidos de venta', 'Facturas de venta y CxC'] },
+  Compras: { icon: ShoppingCart, phase: 'H3 · MVP operativo', description: 'Centraliza requisiciones internas, órdenes de compra a proveedores, recepciones en almacén y facturas sincronizadas con Finanzas.', areas: ['Requisiciones y aprobación', 'Órdenes de compra', 'Recepciones en andén', 'Facturas de proveedor (CxP)'] },
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
   Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos', 'Historial de auditoría'] },
@@ -193,10 +206,47 @@ type CreateKind = 'client' | 'supplier' | 'opportunity' | 'activity'
 
 const money = (value: number) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 }).format(value)
 
+const SPANISH_MONTH_INDEX: Record<string, number> = {
+  ene: 0, enero: 0,
+  feb: 1, febrero: 1,
+  mar: 2, marzo: 2,
+  abr: 3, abril: 3,
+  may: 4, mayo: 4,
+  jun: 5, junio: 5,
+  jul: 6, julio: 6,
+  ago: 7, agosto: 7,
+  sep: 8, sept: 8, septiembre: 8,
+  oct: 9, octubre: 9,
+  nov: 10, noviembre: 10,
+  dic: 11, diciembre: 11,
+}
+
+const isDateInCurrentMonth = (rawDate: string, reference: Date): boolean => {
+  const targetMonth = reference.getMonth()
+  const targetYear = reference.getFullYear()
+  const trimmed = rawDate.trim().toLowerCase()
+  const spanishMatch = trimmed.match(/^(\d{1,2})\s+([a-záéíóú]+)\.?\s+(\d{4})$/i)
+  if (spanishMatch) {
+    const m = SPANISH_MONTH_INDEX[spanishMatch[2]]
+    const y = Number(spanishMatch[3])
+    return m === targetMonth && y === targetYear
+  }
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoMatch) {
+    return Number(isoMatch[1]) === targetYear && Number(isoMatch[2]) - 1 === targetMonth
+  }
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (slashMatch) {
+    return Number(slashMatch[3]) === targetYear && Number(slashMatch[2]) - 1 === targetMonth
+  }
+  return false
+}
+
 const pageRoutes: Record<string, string> = {
   Inicio: '/',
   CRM: '/crm',
   Ventas: '/sales',
+  Compras: '/purchases',
   Operaciones: '/operations',
   Finanzas: '/finance',
   Administración: '/admin',
@@ -206,12 +256,24 @@ const pageRoutes: Record<string, string> = {
 const pageFromPath = (pathname: string) => {
   if (pathname.startsWith('/crm')) return 'CRM'
   if (pathname.startsWith('/sales') || pathname.startsWith('/ventas')) return 'Ventas'
+  if (pathname.startsWith('/purchases') || pathname.startsWith('/compras')) return 'Compras'
   if (pathname.startsWith('/operations') || pathname.startsWith('/operaciones')) return 'Operaciones'
   if (pathname.startsWith('/finance') || pathname.startsWith('/finanzas')) return 'Finanzas'
   const normalized = pathname.replace(/\/$/, '') || '/'
   if (normalized === '/administracion') return 'Administración'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
 }
+
+const purchasesSectionFromPath = (pathname: string): PurchasesSectionTab =>
+  pathname === '/purchases/requisitions' || pathname === '/compras/requisiciones'
+    ? 'Requisiciones'
+    : pathname === '/purchases/orders' || pathname === '/compras/ordenes'
+    ? 'Órdenes de compra'
+    : pathname === '/purchases/receptions' || pathname === '/compras/recepciones'
+    ? 'Recepciones'
+    : pathname === '/purchases/invoices' || pathname === '/compras/facturas'
+    ? 'Facturas'
+    : 'Resumen'
 
 const crmSectionFromPath = (pathname: string) =>
   pathname === '/crm/customers' || pathname === '/crm/clients' || pathname === '/crm/clientes'
@@ -278,6 +340,7 @@ function AppContent() {
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
   const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
+  const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
   const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
@@ -398,6 +461,7 @@ function AppContent() {
   }, [isNotificationCenterOpen])
   const [movements, setMovements] = useState<StockMovement[]>(initialMovements)
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(initialPurchaseOrders)
+  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>(initialRequisitions)
   const [shipments, setShipments] = useState<ShipmentDelivery[]>(initialShipments)
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(initialBankAccounts)
   const [receivables, setReceivables] = useState<InvoiceReceivable[]>(initialReceivables)
@@ -443,7 +507,7 @@ function AppContent() {
     title: string
     desc: string
     meta: string
-    targetModule: 'Operaciones' | 'Finanzas' | 'Ventas'
+    targetModule: 'Compras' | 'Operaciones' | 'Finanzas' | 'Ventas'
     targetSection: string
     actionLabel: string
   }
@@ -484,9 +548,9 @@ function AppContent() {
           .slice(0, 2)
           .map((p) => `${p.folio} (${p.supplierCompany})`)
           .join(', ')}${pendingPurchaseOrders.length > 2 ? ` y ${pendingPurchaseOrders.length - 2} más` : ''} esperando recepción en almacén.`,
-        meta: 'Operaciones · Compras',
-        targetModule: 'Operaciones',
-        targetSection: 'Compras',
+        meta: 'Compras · Recepciones',
+        targetModule: 'Compras',
+        targetSection: 'Recepciones',
         actionLabel: 'Ir a Compras',
       })
     }
@@ -711,6 +775,9 @@ function AppContent() {
   })
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement>(null)
+  const [isTopbarRoleMenuOpen, setIsTopbarRoleMenuOpen] = useState(false)
+  const topbarRoleMenuRef = useRef<HTMLDivElement>(null)
+  const [roleLoginDialogMode, setRoleLoginDialogMode] = useState<'modal' | 'gate' | null>(null)
 
   useEffect(() => {
     const syncRoles = () => setRoleDefinitions(loadStoredRoleDefinitions())
@@ -753,21 +820,93 @@ function AppContent() {
     }
   }, [isProfileMenuOpen])
 
+  useEffect(() => {
+    if (!isTopbarRoleMenuOpen) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (topbarRoleMenuRef.current && !topbarRoleMenuRef.current.contains(e.target as Node)) {
+        setIsTopbarRoleMenuOpen(false)
+      }
+    }
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsTopbarRoleMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEsc)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleEsc)
+    }
+  }, [isTopbarRoleMenuOpen])
+
   const getRoleDisplayName = (roleId: RoleKey) => {
     const found = roleDefinitions.find((r) => r.id === roleId)
     return found?.name || roleId
   }
 
   const activeSessionProfile = useMemo(() => {
+    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+
+    if (activeSessionId.startsWith('userrole:')) {
+      const rest = activeSessionId.slice('userrole:'.length)
+      const sepIndex = rest.indexOf(':')
+      const userId = sepIndex >= 0 ? rest.slice(0, sepIndex) : rest
+      const requestedRoleId = sepIndex >= 0 ? rest.slice(sepIndex + 1) : ''
+      const user =
+        workspaceUsers.find((u) => u.id === userId) ||
+        workspaceUsers.find((u) => u.status === 'active') ||
+        workspaceUsers[0]
+      const resolvedRoleId = validRoleIds.has(requestedRoleId)
+        ? requestedRoleId
+        : getWorkspaceUserRoleIds(user, validRoleIds)[0] || roleDefinitions[0]?.id || 'Administrador'
+      const isActive = user.status === 'active'
+      const roleTitle = getRoleDisplayName(resolvedRoleId)
+      return {
+        key: `userrole:${user.id}:${resolvedRoleId}`,
+        kind: 'userrole' as const,
+        baseUserId: user.id,
+        activeRoleId: resolvedRoleId as RoleKey | 'COMBINED',
+        name: user.name,
+        initials: user.avatarInitials,
+        roles: [resolvedRoleId],
+        isActive,
+        statusLabel: isActive ? 'Activo' : 'Suspendido',
+        subtitle: !isActive ? 'Suspendido' : roleTitle,
+      }
+    }
+
+    if (activeSessionId.startsWith('role:')) {
+      const requestedRoleId = activeSessionId.slice('role:'.length)
+      const resolvedRoleId = validRoleIds.has(requestedRoleId)
+        ? requestedRoleId
+        : roleDefinitions[0]?.id || 'Administrador'
+      const roleTitle = getRoleDisplayName(resolvedRoleId)
+      const fallbackUser = workspaceUsers.find((u) => u.status === 'active') || workspaceUsers[0]
+      return {
+        key: `role:${resolvedRoleId}`,
+        kind: 'role' as const,
+        baseUserId: fallbackUser?.id || 'usr_1',
+        activeRoleId: resolvedRoleId as RoleKey | 'COMBINED',
+        name: roleTitle,
+        initials: roleTitle.slice(0, 2).toUpperCase(),
+        roles: [resolvedRoleId],
+        isActive: true,
+        statusLabel: 'Activo',
+        subtitle: `Rol activo · ${roleTitle}`,
+      }
+    }
+
     if (activeSessionId.startsWith('emp:')) {
       const empId = activeSessionId.slice(4)
       const emp = employees.find((e) => e.id === empId)
       if (emp) {
         const empRoles = emp.roles || []
         const isActive = emp.status !== 'Inactivo'
+        const fallbackUser = workspaceUsers.find((u) => u.status === 'active') || workspaceUsers[0]
         return {
           key: `emp:${emp.id}`,
           kind: 'employee' as const,
+          baseUserId: fallbackUser?.id || 'usr_1',
+          activeRoleId: (empRoles.length === 1 ? empRoles[0] : 'COMBINED') as RoleKey | 'COMBINED',
           name: emp.fullName,
           initials: emp.initials,
           roles: empRoles,
@@ -781,9 +920,9 @@ function AppContent() {
         }
       }
     }
+
     const userId = activeSessionId.startsWith('user:') ? activeSessionId.slice(5) : activeSessionId
     const user = workspaceUsers.find((u) => u.id === userId) || workspaceUsers[0]
-    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
     const userRoles = getWorkspaceUserRoleIds(user, validRoleIds)
     const isActive = user.status === 'active'
     const rolesText =
@@ -791,6 +930,8 @@ function AppContent() {
     return {
       key: `user:${user.id}`,
       kind: 'user' as const,
+      baseUserId: user.id,
+      activeRoleId: (userRoles.length === 1 ? userRoles[0] : 'COMBINED') as RoleKey | 'COMBINED',
       name: user.name,
       initials: user.avatarInitials,
       roles: userRoles,
@@ -842,6 +983,7 @@ function AppContent() {
     const isSwitching = sessionKey !== activeSessionProfile.key
     setActiveSessionId(sessionKey)
     setIsProfileMenuOpen(false)
+    setIsTopbarRoleMenuOpen(false)
     if (isSwitching) {
       const deviceBrowser = detectClientDeviceBrowser()
       const ipAddress = resolveSessionIpAddress(sessionKey)
@@ -863,6 +1005,53 @@ function AppContent() {
       }
     }
     toast.info(`Sesión activa: ${label} (${subtitle})`, 'Cambio de perfil')
+  }
+
+  const handleSwitchActiveRole = (
+    roleSelection: RoleKey | 'COMBINED',
+    overrideUserId?: string
+  ) => {
+    const candidateUser =
+      workspaceUsers.find((u) => u.id === (overrideUserId || activeSessionProfile.baseUserId)) ||
+      workspaceUsers.find((u) => u.status === 'active') ||
+      workspaceUsers[0]
+    const targetUser =
+      candidateUser && candidateUser.status === 'active'
+        ? candidateUser
+        : workspaceUsers.find((u) => u.status === 'active') || candidateUser
+
+    if (!targetUser) return
+
+    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+    const assignedRoles = getWorkspaceUserRoleIds(targetUser, validRoleIds)
+
+    let nextSessionKey: string
+    let nextRoles: RoleKey[]
+    let nextSubtitle: string
+
+    if (roleSelection === 'COMBINED') {
+      nextSessionKey = `user:${targetUser.id}`
+      nextRoles = assignedRoles
+      nextSubtitle =
+        assignedRoles.length > 0
+          ? assignedRoles.map(getRoleDisplayName).join(', ')
+          : 'Sin rol asignado'
+    } else {
+      nextSessionKey = `userrole:${targetUser.id}:${roleSelection}`
+      nextRoles = [roleSelection]
+      nextSubtitle = getRoleDisplayName(roleSelection)
+    }
+
+    handleSelectSessionProfile(nextSessionKey, targetUser.name, nextSubtitle)
+    setRoleLoginDialogMode(null)
+
+    const nextAccess = resolveEffectiveAccess(nextRoles, roleDefinitions, true)
+    if (
+      activePage !== 'Inicio' &&
+      !canAccessModule(activePage, nextAccess.capabilities, nextAccess.isFullAdmin, true)
+    ) {
+      navigateTo('Inicio')
+    }
   }
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
   const [ebpPacks, setEbpPacks] = useState<BankFormatPack[]>(() => {
@@ -1378,6 +1567,221 @@ function AppContent() {
       user: activeSessionProfile.name,
     })
   }
+
+  const handleCreateRequisition = (req: PurchaseRequisition) => {
+    setRequisitions((prev) => [req, ...prev])
+    toast.success(`Requisición ${req.folio} creada por ${money(req.estimatedTotal)}.`, 'Requisición registrada')
+    appendAuditLog({
+      category: 'inventory',
+      action: 'Alta de requisición de compra',
+      detail: `${req.folio} · ${req.department} · ${req.warehouseName} · ${money(req.estimatedTotal)}`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleUpdateRequisitionStatus = (reqId: string, status: 'Aprobada' | 'Rechazada') => {
+    const today = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const dateStr = `${String(today.getDate()).padStart(2, '0')} ${months[today.getMonth()]} ${today.getFullYear()}`
+    let targetFolio = ''
+    setRequisitions((prev) =>
+      prev.map((r) => {
+        if (r.id !== reqId) return r
+        targetFolio = r.folio
+        return {
+          ...r,
+          status,
+          approvedBy: status === 'Aprobada' ? activeSessionProfile.name : r.approvedBy,
+          approvedAt: status === 'Aprobada' ? dateStr : r.approvedAt,
+        }
+      })
+    )
+    toast[status === 'Aprobada' ? 'success' : 'info'](
+      `Requisición ${targetFolio || reqId} marcada como ${status.toLowerCase()}.`,
+      status === 'Aprobada' ? 'Requisición aprobada' : 'Requisición rechazada'
+    )
+    appendAuditLog({
+      category: 'inventory',
+      action: `Requisición de compra ${status.toLowerCase()}`,
+      detail: `Folio ${targetFolio || reqId} revisada por ${activeSessionProfile.name}`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleConvertRequisitionToPo = (
+    req: PurchaseRequisition,
+    supplierCompany: string,
+    expectedDate: string
+  ) => {
+    const sup = supplierRecords.find((s) => s.company === supplierCompany)
+    const maxNum = purchaseOrders.reduce((max, po) => {
+      const n = parseInt(po.folio.split('-').pop() || '0', 10)
+      return Number.isNaN(n) ? max : Math.max(max, n)
+    }, purchaseOrders.length)
+    const folio = `OC-2026-${String(maxNum + 1).padStart(3, '0')}`
+    const today = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const dateStr = `${String(today.getDate()).padStart(2, '0')} ${months[today.getMonth()]} ${today.getFullYear()}`
+
+    const poItems = req.items.map((it, idx) => {
+      const sub = it.quantity * it.estimatedUnitCost
+      const tax = Math.round(sub * 0.16)
+      return {
+        id: `poi_${Date.now()}_${idx}`,
+        sku: it.sku,
+        name: it.name,
+        quantity: it.quantity,
+        receivedQty: 0,
+        unitCost: it.estimatedUnitCost,
+        taxRate: '16%' as const,
+        subtotal: sub,
+        taxAmount: tax,
+        total: sub + tax,
+      }
+    })
+
+    const subtotal = poItems.reduce((s, it) => s + it.subtotal, 0)
+    const taxTotal = poItems.reduce((s, it) => s + it.taxAmount, 0)
+    const total = subtotal + taxTotal
+
+    const newPO: PurchaseOrder = {
+      id: `po_${Date.now()}`,
+      folio,
+      supplierCompany,
+      supplierContact: sup?.email || 'ventas@proveedor.mx',
+      supplierEmail: sup?.email || 'ventas@proveedor.mx',
+      date: dateStr,
+      expectedDeliveryDate: expectedDate.trim() || req.neededByDate,
+      warehouseId: req.warehouseId,
+      warehouseName: req.warehouseName,
+      status: 'Emitida',
+      notes: `Generada desde requisición ${req.folio}. ${req.notes || ''}`.trim(),
+      items: poItems,
+      subtotal,
+      taxTotal,
+      total,
+      currency: 'MXN',
+    }
+
+    setPurchaseOrders((prev) => [newPO, ...prev])
+    setRequisitions((prev) =>
+      prev.map((r) =>
+        r.id === req.id ? { ...r, status: 'Convertida a OC', linkedPoFolio: folio } : r
+      )
+    )
+    setPurchasesSection('Órdenes de compra')
+    toast.success(
+      `Requisición ${req.folio} convertida en orden de compra ${folio} para ${supplierCompany}.`,
+      'Orden de compra emitida'
+    )
+    appendAuditLog({
+      category: 'inventory',
+      action: 'Conversión de requisición a Orden de Compra',
+      detail: `${req.folio} → ${folio} · ${supplierCompany} · ${money(total)}`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleCreateSupplierBill = (bill: BillPayable) => {
+    setPayables((prev) => [bill, ...prev])
+    setChartAccounts((prev) =>
+      prev.map((acc) => {
+        if (acc.code === '2001-001') return { ...acc, balance: acc.balance + bill.total }
+        if (acc.code === '1150-001') return { ...acc, balance: acc.balance + bill.subtotal }
+        return acc
+      })
+    )
+    appendAuditLog({
+      category: 'finance',
+      action: 'Factura de proveedor registrada (CxP)',
+      detail: `${bill.folio} · ${bill.supplierCompany}${bill.purchaseOrderFolio ? ` · ${bill.purchaseOrderFolio}` : ''} · ${money(bill.total)}`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleRegisterSupplierBillFromPO = (po: PurchaseOrder) => {
+    const existing = payables.find((b) => b.purchaseOrderFolio === po.folio)
+    if (existing) {
+      toast.info(
+        `La orden ${po.folio} ya está vinculada a la factura ${existing.folio}.`,
+        'Factura ya registrada'
+      )
+      return
+    }
+    const maxNum = payables.reduce((max, b) => {
+      const n = parseInt(b.folio.split('-').pop() || '0', 10)
+      return Number.isNaN(n) ? max : Math.max(max, n)
+    }, payables.length)
+    const folio = `CXP-2026-${String(maxNum + 1).padStart(3, '0')}`
+    const today = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const fmt = (d: Date) =>
+      `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`
+    const due = new Date()
+    due.setDate(today.getDate() + 15)
+
+    const newBill: BillPayable = {
+      id: `cxp_${Date.now()}`,
+      folio,
+      purchaseOrderFolio: po.folio,
+      supplierCompany: po.supplierCompany,
+      supplierContact: po.supplierEmail,
+      issueDate: fmt(today),
+      dueDate: fmt(due),
+      subtotal: po.subtotal,
+      tax: po.taxTotal,
+      total: po.total,
+      paidAmount: 0,
+      balance: po.total,
+      status: 'Pendiente',
+      currency: po.currency,
+      paymentMethod: 'Transferencia SPEI',
+    }
+    handleCreateSupplierBill(newBill)
+    toast.success(
+      `Factura ${folio} generada desde ${po.folio} por ${money(po.total)} en Cuentas por pagar.`,
+      'Factura CxP generada'
+    )
+  }
+
+  const purchasesTopKpis = useMemo(() => {
+    const now = new Date()
+    const monthLabel = new Intl.DateTimeFormat('es-MX', {
+      month: 'short',
+      year: 'numeric',
+    })
+      .format(now)
+      .replace('.', '')
+    const monthlyOrders = purchaseOrders.filter(
+      (po) => po.status !== 'Cancelada' && isDateInCurrentMonth(po.date, now)
+    )
+    const monthlyOrdersTotal = monthlyOrders.reduce((sum, po) => sum + po.total, 0)
+    const receivedInvoicesTotal = payables.reduce((sum, bill) => sum + bill.total, 0)
+    const receivedInvoicesPending = payables.reduce((sum, bill) => sum + bill.balance, 0)
+    const pendingDeliveryOrders = purchaseOrders.filter(
+      (po) => po.status === 'Emitida' || po.status === 'Recepción parcial'
+    )
+    const pendingDeliveryUnits = pendingDeliveryOrders.reduce(
+      (sum, po) =>
+        sum +
+        po.items.reduce(
+          (itemSum, item) => itemSum + Math.max(0, item.quantity - item.receivedQty),
+          0
+        ),
+      0
+    )
+
+    return {
+      monthLabel,
+      monthlyOrdersCount: monthlyOrders.length,
+      monthlyOrdersTotal,
+      receivedInvoicesCount: payables.length,
+      receivedInvoicesTotal,
+      receivedInvoicesPending,
+      pendingDeliveryCount: pendingDeliveryOrders.length,
+      pendingDeliveryUnits,
+    }
+  }, [purchaseOrders, payables])
   const [clientQuery, setClientQuery] = useState('')
   const [clientStatus, setClientStatus] = useState('Todos')
   const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
@@ -1543,6 +1947,15 @@ function AppContent() {
       )
       setCrmSection(first || 'Resumen')
     }
+    if (page === 'Compras') {
+      const first = getFirstAccessibleSection(
+        'Compras',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+      setPurchasesSection((first as PurchasesSectionTab) || 'Resumen')
+    }
     if (page === 'Operaciones') {
       const first = getFirstAccessibleSection(
         'Operaciones',
@@ -1684,6 +2097,34 @@ function AppContent() {
         : section === 'Resumen'
         ? '/operations/summary'
         : '/operations'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToPurchasesSection = (section: PurchasesSectionTab) => {
+    if (
+      !canAccessSection(
+        'Compras',
+        section,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+    ) {
+      notifyAccessDenied(`Compras · ${section}`)
+      return
+    }
+    setActivePage('Compras')
+    setPurchasesSection(section)
+    const route =
+      section === 'Requisiciones'
+        ? '/purchases/requisitions'
+        : section === 'Órdenes de compra'
+        ? '/purchases/orders'
+        : section === 'Recepciones'
+        ? '/purchases/receptions'
+        : section === 'Facturas'
+        ? '/purchases/invoices'
+        : '/purchases'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -1959,6 +2400,7 @@ function AppContent() {
       setActivePage(pageFromPath(window.location.pathname))
       setCrmSection(crmSectionFromPath(window.location.pathname))
       setSalesSection(salesSectionFromPath(window.location.pathname))
+      setPurchasesSection(purchasesSectionFromPath(window.location.pathname))
       setOperationsSection(operationsSectionFromPath(window.location.pathname))
     }
     window.addEventListener('popstate', handlePopState)
@@ -2100,10 +2542,47 @@ function AppContent() {
         )}
         <div className="profile-switcher-wrap" ref={profileMenuRef}>
           {isProfileMenuOpen && (
-            <div className="profile-switcher-popover" role="menu" aria-label="Cambiar usuario activo">
+            <div className="profile-switcher-popover" role="menu" aria-label="Cambiar rol o usuario activo">
               <div className="profile-switcher-header">
-                <strong>Cambiar perfil activo</strong>
-                <span>Prueba restricciones por rol y permisos</span>
+                <strong>Iniciar sesión / Cambiar rol</strong>
+                <span>Selecciona un rol o perfil para ajustar permisos</span>
+              </div>
+
+              <div className="profile-switcher-group">
+                <span className="profile-switcher-group-title">Roles del sistema (Cambio rápido)</span>
+                {roleDefinitions.map((role) => {
+                  const isCurrentRole = activeSessionProfile.activeRoleId === role.id
+                  return (
+                    <button
+                      key={`quick-role-${role.id}`}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={isCurrentRole}
+                      className={`profile-switcher-item ${isCurrentRole ? 'active' : ''}`}
+                      onClick={() => handleSwitchActiveRole(role.id)}
+                    >
+                      <span className="profile-switcher-avatar role-chip-avatar">
+                        <ShieldCheck size={12} />
+                      </span>
+                      <div className="profile-switcher-copy">
+                        <strong>{role.name}</strong>
+                        <small>{role.capabilities.length} permisos habilitados</small>
+                      </div>
+                      {isCurrentRole && <Check size={14} className="profile-switcher-check" />}
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="profile-switcher-open-login-btn"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    setRoleLoginDialogMode('modal')
+                  }}
+                >
+                  <LogIn size={12} /> Elegir usuario y rol de inicio...
+                </button>
               </div>
 
               <div className="profile-switcher-group">
@@ -2209,7 +2688,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -2329,10 +2808,10 @@ function AppContent() {
                             className="button button-ghost"
                             onClick={() => {
                               setIsNotificationCenterOpen(false)
-                              navigateToOperationsSection('Compras')
+                              navigateToPurchasesSection('Requisiciones')
                             }}
                           >
-                            <Package size={12} /> Compras
+                            <ShoppingCart size={12} /> Compras
                           </button>
                         </div>
                         <span className="notif-pin-footnote">
@@ -2417,7 +2896,9 @@ function AppContent() {
                       activeSystemNotifications.map((notice) => {
                         const isRead = notifPrefState.read[notice.id] === notice.fingerprint
                         const IconComp =
-                          notice.targetModule === 'Operaciones'
+                          notice.targetModule === 'Compras'
+                            ? ShoppingCart
+                            : notice.targetModule === 'Operaciones'
                             ? notice.targetSection === 'Entregas'
                               ? Truck
                               : Package
@@ -2427,7 +2908,11 @@ function AppContent() {
                         const handleOpenNoticeTarget = () => {
                           markSystemNotifRead(notice.id, notice.fingerprint, true)
                           setIsNotificationCenterOpen(false)
-                          if (notice.targetModule === 'Operaciones') {
+                          if (notice.targetModule === 'Compras') {
+                            navigateToPurchasesSection(
+                              notice.targetSection as PurchasesSectionTab
+                            )
+                          } else if (notice.targetModule === 'Operaciones') {
                             navigateToOperationsSection(
                               notice.targetSection as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
                             )
@@ -2527,11 +3012,121 @@ function AppContent() {
               )}
             </div>
 
-            <div
-              className="top-avatar"
-              title={`${activeSessionProfile.name} · ${activeSessionProfile.subtitle}`}
-            >
-              {activeSessionProfile.initials}
+            <div className="topbar-role-anchor" ref={topbarRoleMenuRef}>
+              <button
+                type="button"
+                className={`topbar-role-trigger ${isTopbarRoleMenuOpen ? 'open' : ''}`}
+                aria-expanded={isTopbarRoleMenuOpen}
+                aria-haspopup="menu"
+                aria-label={`Sesión activa: ${activeSessionProfile.name} (${activeSessionProfile.subtitle}). Abrir menú para cambiar rol`}
+                onClick={() => setIsTopbarRoleMenuOpen((prev) => !prev)}
+                title="Seleccionar o cambiar el rol de inicio de sesión"
+              >
+                <span className="top-avatar">{activeSessionProfile.initials}</span>
+                <span className="topbar-role-meta">
+                  <strong>{activeSessionProfile.name}</strong>
+                  <small>{activeSessionProfile.subtitle}</small>
+                </span>
+                <ChevronDown size={14} className="topbar-role-chevron" />
+              </button>
+
+              {isTopbarRoleMenuOpen && (
+                <div
+                  className="topbar-role-popover"
+                  role="menu"
+                  aria-label="Menú de selección y cambio de rol"
+                >
+                  <div className="topbar-role-popover-head">
+                    <div>
+                      <strong>{activeSessionProfile.name}</strong>
+                      <span>Rol activo: {activeSessionProfile.subtitle}</span>
+                    </div>
+                  </div>
+
+                  <div className="topbar-role-popover-section">
+                    <span className="topbar-role-section-label">Cambiar rol de sesión</span>
+                    {(() => {
+                      const baseUser = workspaceUsers.find(
+                        (u) => u.id === activeSessionProfile.baseUserId
+                      )
+                      const baseUserRoles = baseUser
+                        ? getWorkspaceUserRoleIds(
+                            baseUser,
+                            new Set(roleDefinitions.map((r) => r.id))
+                          )
+                        : []
+                      return (
+                        <>
+                          {baseUser && baseUserRoles.length > 1 && (
+                            <button
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={activeSessionProfile.activeRoleId === 'COMBINED'}
+                              className={`topbar-role-option ${
+                                activeSessionProfile.activeRoleId === 'COMBINED' ? 'active' : ''
+                              }`}
+                              onClick={() => handleSwitchActiveRole('COMBINED', baseUser.id)}
+                            >
+                              <div className="topbar-role-option-copy">
+                                <strong>Todos mis roles asignados ({baseUserRoles.length})</strong>
+                                <small>{baseUserRoles.map(getRoleDisplayName).join(', ')}</small>
+                              </div>
+                              {activeSessionProfile.activeRoleId === 'COMBINED' && (
+                                <Check size={14} className="topbar-role-check" />
+                              )}
+                            </button>
+                          )}
+
+                          {roleDefinitions.map((role) => {
+                            const isSelected = activeSessionProfile.activeRoleId === role.id
+                            return (
+                              <button
+                                key={role.id}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={isSelected}
+                                className={`topbar-role-option ${isSelected ? 'active' : ''}`}
+                                onClick={() => handleSwitchActiveRole(role.id)}
+                              >
+                                <div className="topbar-role-option-copy">
+                                  <strong>{role.name}</strong>
+                                  <small>{role.capabilities.length} permisos · {role.description}</small>
+                                </div>
+                                {isSelected && <Check size={14} className="topbar-role-check" />}
+                              </button>
+                            )
+                          })}
+                        </>
+                      )
+                    })()}
+                  </div>
+
+                  <div className="topbar-role-popover-footer">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="topbar-role-footer-btn"
+                      onClick={() => {
+                        setIsTopbarRoleMenuOpen(false)
+                        setRoleLoginDialogMode('modal')
+                      }}
+                    >
+                      <LogIn size={13} /> Elegir usuario y rol de inicio...
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="topbar-role-footer-btn danger"
+                      onClick={() => {
+                        setIsTopbarRoleMenuOpen(false)
+                        setRoleLoginDialogMode('gate')
+                      }}
+                    >
+                      <LogOut size={13} /> Cerrar sesión y seleccionar rol
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
@@ -2599,9 +3194,9 @@ function AppContent() {
                       <button
                         type="button"
                         className="button button-secondary"
-                        onClick={() => setIsProfileMenuOpen(true)}
+                        onClick={() => setRoleLoginDialogMode('modal')}
                       >
-                        <UserCheck size={14} /> Cambiar perfil activo
+                        <UserCheck size={14} /> Cambiar rol / Iniciar sesión
                       </button>
                     </div>
                   </div>
@@ -3079,6 +3674,242 @@ function AppContent() {
                 />
               )}
             </section>
+          ) : activePage === 'Compras' ? (
+            <section className="crm-page sales-page" aria-labelledby="purchases-title">
+              <div className="crm-heading">
+                <div>
+                  <div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · COMPRAS Y ABASTECIMIENTO</div>
+                  <h1 id="purchases-title">{t('module.purchases.title')}</h1>
+                  <p>{t('module.purchases.subtitle')}</p>
+                </div>
+              </div>
+
+              <section className="purchases-top-kpi-strip" aria-label="Indicadores clave de compras">
+                {(() => {
+                  const canGoOrders = canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+                  const canGoInvoices = canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+                  const canGoReceptions = canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+
+                  const OrderWrap = canGoOrders ? 'button' : 'div'
+                  const InvoiceWrap = canGoInvoices ? 'button' : 'div'
+                  const ReceptionWrap = canGoReceptions ? 'button' : 'div'
+
+                  return (
+                    <>
+                      <OrderWrap
+                        {...(canGoOrders
+                          ? {
+                              type: 'button' as const,
+                              onClick: () => navigateToPurchasesSection('Órdenes de compra'),
+                            }
+                          : {})}
+                        className={`purchases-top-kpi-item ${canGoOrders ? 'is-interactive' : ''}`}
+                      >
+                        <div className="purchases-top-kpi-head">
+                          <span>Órdenes del mes actual</span>
+                          <ShoppingCart size={14} className="purchases-top-kpi-icon" aria-hidden="true" />
+                        </div>
+                        <div className="purchases-top-kpi-value tabular-nums">
+                          {purchasesTopKpis.monthlyOrdersCount}{' '}
+                          <small>{purchasesTopKpis.monthlyOrdersCount === 1 ? 'orden' : 'órdenes'}</small>
+                        </div>
+                        <div className="purchases-top-kpi-sub tabular-nums">
+                          <span>{purchasesTopKpis.monthLabel}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{money(purchasesTopKpis.monthlyOrdersTotal)} comprometido</span>
+                        </div>
+                      </OrderWrap>
+
+                      <InvoiceWrap
+                        {...(canGoInvoices
+                          ? {
+                              type: 'button' as const,
+                              onClick: () => navigateToPurchasesSection('Facturas'),
+                            }
+                          : {})}
+                        className={`purchases-top-kpi-item ${canGoInvoices ? 'is-interactive' : ''}`}
+                      >
+                        <div className="purchases-top-kpi-head">
+                          <span>Valor en facturas recibidas</span>
+                          <Receipt size={14} className="purchases-top-kpi-icon" aria-hidden="true" />
+                        </div>
+                        <div className="purchases-top-kpi-value tabular-nums">
+                          {money(purchasesTopKpis.receivedInvoicesTotal)}
+                        </div>
+                        <div className="purchases-top-kpi-sub tabular-nums">
+                          <span>
+                            {purchasesTopKpis.receivedInvoicesCount}{' '}
+                            {purchasesTopKpis.receivedInvoicesCount === 1 ? 'factura' : 'facturas'}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>Saldo {money(purchasesTopKpis.receivedInvoicesPending)}</span>
+                        </div>
+                      </InvoiceWrap>
+
+                      <ReceptionWrap
+                        {...(canGoReceptions
+                          ? {
+                              type: 'button' as const,
+                              onClick: () => navigateToPurchasesSection('Recepciones'),
+                            }
+                          : {})}
+                        className={`purchases-top-kpi-item ${canGoReceptions ? 'is-interactive' : ''} ${
+                          purchasesTopKpis.pendingDeliveryCount > 0 ? 'has-pending' : ''
+                        }`}
+                      >
+                        <div className="purchases-top-kpi-head">
+                          <span>Órdenes con entregas pendientes</span>
+                          <Truck size={14} className="purchases-top-kpi-icon" aria-hidden="true" />
+                        </div>
+                        <div className="purchases-top-kpi-value tabular-nums">
+                          {purchasesTopKpis.pendingDeliveryCount}{' '}
+                          <small>{purchasesTopKpis.pendingDeliveryCount === 1 ? 'orden' : 'órdenes'}</small>
+                        </div>
+                        <div className="purchases-top-kpi-sub tabular-nums">
+                          <span>
+                            {purchasesTopKpis.pendingDeliveryCount > 0
+                              ? `${purchasesTopKpis.pendingDeliveryUnits} u. por recibir`
+                              : 'Todas entregadas'}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {purchasesTopKpis.pendingDeliveryCount > 0 ? 'En tránsito / andén' : 'Al día'}
+                          </span>
+                        </div>
+                      </ReceptionWrap>
+                    </>
+                  )
+                })()}
+              </section>
+
+              <nav className="crm-tabs" aria-label="Secciones de Compras">
+                {canAccessSection('Compras', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  <button
+                    className={purchasesSection === 'Resumen' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Resumen')}
+                  >
+                    {t('tabs.purchases.summary')}
+                  </button>
+                )}
+                {canAccessSection('Compras', 'Requisiciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  <button
+                    className={purchasesSection === 'Requisiciones' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Requisiciones')}
+                  >
+                    {t('tabs.purchases.requisitions')} <span>{requisitions.length}</span>
+                  </button>
+                )}
+                {canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  <button
+                    className={purchasesSection === 'Órdenes de compra' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Órdenes de compra')}
+                  >
+                    {t('tabs.purchases.orders')} <span>{purchaseOrders.length}</span>
+                  </button>
+                )}
+                {canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  <button
+                    className={purchasesSection === 'Recepciones' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Recepciones')}
+                  >
+                    {t('tabs.purchases.receptions')} <span>{purchaseOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length}</span>
+                  </button>
+                )}
+                {canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  <button
+                    className={purchasesSection === 'Facturas' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Facturas')}
+                  >
+                    {t('tabs.purchases.invoices')} <span>{payables.length}</span>
+                  </button>
+                )}
+              </nav>
+
+              {purchasesSection === 'Requisiciones' ? (
+                <PurchasesRequisitions
+                  requisitions={requisitions}
+                  warehouses={warehouses}
+                  inventory={inventory}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    cost: p.cost ?? 0,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  suppliers={supplierRecords.map((s) => ({
+                    name: s.name,
+                    company: s.company,
+                    email: s.email,
+                  }))}
+                  departments={departments.map((d) => d.name)}
+                  currentUserName={activeSessionProfile.name}
+                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  onCreateRequisition={handleCreateRequisition}
+                  onUpdateRequisitionStatus={handleUpdateRequisitionStatus}
+                  onConvertToPurchaseOrder={handleConvertRequisitionToPo}
+                  onNavigateToOrder={() => navigateToPurchasesSection('Órdenes de compra')}
+                />
+              ) : purchasesSection === 'Órdenes de compra' ? (
+                <OperationsPurchases
+                  purchaseOrders={purchaseOrders}
+                  warehouses={warehouses}
+                  suppliers={supplierRecords.map((s) => ({
+                    name: s.name,
+                    company: s.company,
+                    email: s.email,
+                  }))}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    cost: p.cost ?? 0,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  onUpdatePurchaseOrders={setPurchaseOrders}
+                  onUpdateInventory={setInventory}
+                  inventory={inventory}
+                  onAddMovement={handleAddMovement}
+                  movementsCount={movements.length}
+                  payables={payables}
+                  onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
+                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                />
+              ) : purchasesSection === 'Recepciones' ? (
+                <PurchasesReceptions
+                  purchaseOrders={purchaseOrders}
+                  inventory={inventory}
+                  movements={movements}
+                  canReceiveGoods={isFullAdmin || activeCapabilities.has('receiveGoods')}
+                  onUpdatePurchaseOrders={setPurchaseOrders}
+                  onUpdateInventory={setInventory}
+                  onAddMovement={handleAddMovement}
+                />
+              ) : purchasesSection === 'Facturas' ? (
+                <PurchasesInvoices
+                  payables={payables}
+                  purchaseOrders={purchaseOrders}
+                  suppliers={supplierRecords.map((s) => ({
+                    name: s.name,
+                    company: s.company,
+                    email: s.email,
+                  }))}
+                  onCreateSupplierBill={handleCreateSupplierBill}
+                  onNavigateToFinancePayables={() => navigateToFinanceSection('Pagos')}
+                />
+              ) : (
+                <PurchasesOverview
+                  requisitions={requisitions}
+                  purchaseOrders={purchaseOrders}
+                  inventory={inventory}
+                  payables={payables}
+                  departments={departments.filter((d) => d.active).map((d) => d.name)}
+                  onNavigateSection={(sec) => navigateToPurchasesSection(sec)}
+                  onQuickReplenishFromStock={() => navigateToPurchasesSection('Requisiciones')}
+                  onNavigateFinancePayables={() => navigateToFinanceSection('Pagos')}
+                />
+              )}
+            </section>
           ) : activePage === 'Operaciones' ? (
             <section className="sales-page" aria-labelledby="operations-title">
               <div className="crm-heading">
@@ -3179,6 +4010,10 @@ function AppContent() {
                   inventory={inventory}
                   onAddMovement={handleAddMovement}
                   movementsCount={movements.length}
+                  payables={payables}
+                  onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
+                  onOpenFullPurchasesModule={() => navigateToPurchasesSection('Resumen')}
+                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
                 />
               ) : operationsSection === 'Entregas' ? (
                 <OperationsDeliveries
@@ -3194,6 +4029,7 @@ function AppContent() {
                   purchaseOrders={purchaseOrders}
                   shipments={shipments}
                   onNavigateSection={(sec) => navigateToOperationsSection(sec)}
+                  onNavigatePurchases={() => navigateToPurchasesSection('Órdenes de compra')}
                 />
               )}
             </section>
@@ -3363,6 +4199,7 @@ function AppContent() {
               quotes={quotes}
               inventory={inventory}
               purchaseOrders={purchaseOrders}
+              requisitions={requisitions}
               shipments={shipments}
               onUpdateInventory={setInventory}
               isStockConfigOpen={isStockConfigOpen}
@@ -3381,6 +4218,7 @@ function AppContent() {
               capabilities={activeCapabilities}
               isAccountActive={activeSessionProfile.isActive}
               onNavigateSales={navigateToSalesSection}
+              onNavigatePurchases={navigateToPurchasesSection}
               onNavigateOperations={navigateToOperationsSection}
               onNavigateFinance={navigateToFinanceSection}
               onNavigateCrm={(sec) => {
@@ -4298,6 +5136,21 @@ function AppContent() {
             setEbpBatches((prev) => [batch, ...prev])
             navigateToFinanceSection('Pagos Bancarios')
           }}
+        />
+      )}
+
+      {roleLoginDialogMode && (
+        <RoleSessionSelectorModal
+          isOpen={true}
+          mode={roleLoginDialogMode}
+          roleDefinitions={roleDefinitions}
+          workspaceUsers={workspaceUsers}
+          currentUserId={activeSessionProfile.baseUserId}
+          currentRoleId={activeSessionProfile.activeRoleId}
+          onClose={() => setRoleLoginDialogMode(null)}
+          onConfirmSession={({ userId, roleSelection }) =>
+            handleSwitchActiveRole(roleSelection, userId)
+          }
         />
       )}
     </div>

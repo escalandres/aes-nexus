@@ -41,6 +41,8 @@ import {
   Warehouse as WarehouseIcon,
   WalletCards,
   Receipt,
+  ClipboardList,
+  ShoppingCart,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -63,6 +65,7 @@ import type {
   PurchaseOrder,
   ShipmentDelivery,
 } from '../data/operations'
+import type { PurchaseRequisition } from '../data/purchases'
 import type {
   InvoiceReceivable,
   BillPayable,
@@ -72,16 +75,71 @@ import type {
 } from '../data/finance'
 import type { Opportunity } from '../data/dashboard'
 import type { RoleCapabilityId } from '../data/settings'
-import { canAccessSection } from '../data/accessControl'
+import { canAccessModule, canAccessSection } from '../data/accessControl'
 import { RevenueTargetChart } from './RevenueTargetChart'
 import { useToast } from './Toast'
 import { useI18n } from '../i18n/I18nContext'
+
+type PurchasesKpiPeriod = 'Mensual' | 'Trimestral' | 'Anual'
+
+const SPANISH_MONTH_INDEX: Record<string, number> = {
+  ene: 0, enero: 0,
+  feb: 1, febrero: 1,
+  mar: 2, marzo: 2,
+  abr: 3, abril: 3,
+  may: 4, mayo: 4,
+  jun: 5, junio: 5,
+  jul: 6, julio: 6,
+  ago: 7, agosto: 7,
+  sep: 8, sept: 8, septiembre: 8,
+  oct: 9, octubre: 9,
+  nov: 10, noviembre: 10,
+  dic: 11, diciembre: 11,
+}
+
+const isDateInPurchasesPeriod = (
+  rawDate: string,
+  targetPeriod: PurchasesKpiPeriod,
+  reference: Date
+): boolean => {
+  const refMonth = reference.getMonth()
+  const refQuarter = Math.floor(refMonth / 3)
+  const refYear = reference.getFullYear()
+  const trimmed = rawDate.trim().toLowerCase()
+
+  let parsedMonth = -1
+  let parsedYear = -1
+
+  const spanishMatch = trimmed.match(/^(\d{1,2})\s+([a-záéíóú]+)\.?\s+(\d{4})$/i)
+  if (spanishMatch) {
+    parsedMonth = SPANISH_MONTH_INDEX[spanishMatch[2]] ?? -1
+    parsedYear = Number(spanishMatch[3])
+  } else {
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (isoMatch) {
+      parsedYear = Number(isoMatch[1])
+      parsedMonth = Number(isoMatch[2]) - 1
+    } else {
+      const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+      if (slashMatch) {
+        parsedYear = Number(slashMatch[3])
+        parsedMonth = Number(slashMatch[2]) - 1
+      }
+    }
+  }
+
+  if (parsedYear !== refYear || parsedMonth < 0) return false
+  if (targetPeriod === 'Mensual') return parsedMonth === refMonth
+  if (targetPeriod === 'Trimestral') return Math.floor(parsedMonth / 3) === refQuarter
+  return true
+}
 
 interface ExecutiveDashboardProps {
   orders: SalesOrder[]
   quotes: Quote[]
   inventory: InventoryItemLocation[]
   purchaseOrders?: PurchaseOrder[]
+  requisitions?: PurchaseRequisition[]
   shipments?: ShipmentDelivery[]
   onUpdateInventory?: (items: InventoryItemLocation[]) => void
   isStockConfigOpen?: boolean
@@ -106,6 +164,9 @@ interface ExecutiveDashboardProps {
   capabilities?: Set<RoleCapabilityId>
   isAccountActive?: boolean
   onNavigateSales: (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Resumen') => void
+  onNavigatePurchases?: (
+    section: 'Resumen' | 'Requisiciones' | 'Órdenes de compra' | 'Recepciones' | 'Facturas'
+  ) => void
   onNavigateOperations: (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
   onNavigateFinance: (
     section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'
@@ -121,6 +182,7 @@ export function ExecutiveDashboard({
   quotes: _quotes,
   inventory,
   purchaseOrders = [],
+  requisitions = [],
   shipments = [],
   onUpdateInventory,
   isStockConfigOpen,
@@ -139,6 +201,7 @@ export function ExecutiveDashboard({
   capabilities = EMPTY_CAPABILITIES,
   isAccountActive = true,
   onNavigateSales,
+  onNavigatePurchases,
   onNavigateOperations,
   onNavigateFinance,
   onNavigateCrm,
@@ -148,6 +211,7 @@ export function ExecutiveDashboard({
   const { locale, regional, t, formatCurrency } = useI18n()
   const money = (val: number) => formatCurrency(val, undefined, 0)
   const [period, setPeriod] = useState<'Este mes' | 'Este trimestre' | 'Año 2026'>('Este mes')
+  const [purchasesPeriod, setPurchasesPeriod] = useState<PurchasesKpiPeriod>('Mensual')
   const [showAlertHub, setShowAlertHub] = useState(true)
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
 
@@ -563,7 +627,8 @@ export function ExecutiveDashboard({
     canAccessSection('Operaciones', 'Entregas', capabilities, isFullAdmin, isAccountActive)
   const canViewOperationsPurchases =
     hasActiveAccess &&
-    canAccessSection('Operaciones', 'Compras', capabilities, isFullAdmin, isAccountActive)
+    (canAccessModule('Compras', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Operaciones', 'Compras', capabilities, isFullAdmin, isAccountActive))
   const canViewOperationsSummary =
     hasActiveAccess &&
     canAccessSection('Operaciones', 'Resumen', capabilities, isFullAdmin, isAccountActive)
@@ -583,6 +648,25 @@ export function ExecutiveDashboard({
   const canViewFinanceSummary =
     hasActiveAccess &&
     canAccessSection('Finanzas', 'Resumen', capabilities, isFullAdmin, isAccountActive)
+
+  const canViewRequisitionsCol =
+    hasActiveAccess &&
+    canAccessSection('Compras', 'Requisiciones', capabilities, isFullAdmin, isAccountActive)
+  const canViewPoTransitCol =
+    hasActiveAccess &&
+    (canAccessSection('Compras', 'Órdenes de compra', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Compras', 'Recepciones', capabilities, isFullAdmin, isAccountActive) ||
+      canViewOperationsPurchases)
+  const canViewSupplierBillsCol =
+    hasActiveAccess &&
+    (canAccessSection('Compras', 'Facturas', capabilities, isFullAdmin, isAccountActive) ||
+      canViewPayables)
+  const canViewPurchasesExecSummary =
+    canViewRequisitionsCol || canViewPoTransitCol || canViewSupplierBillsCol
+  const visiblePurchasesColsCount =
+    (canViewRequisitionsCol ? 1 : 0) +
+    (canViewPoTransitCol ? 1 : 0) +
+    (canViewSupplierBillsCol ? 1 : 0)
 
   const canViewSalesChart =
     canViewSalesOrders || canViewSalesQuotes || canViewSalesSummary
@@ -687,6 +771,112 @@ export function ExecutiveDashboard({
       (po) => po.status !== 'Recibida' && po.status !== 'Cancelada'
     )
   }, [purchaseOrders])
+
+  const pendingRequisitionsList = useMemo(() => {
+    return [...requisitions]
+      .filter((r) => r.status === 'Pendiente' || r.status === 'Aprobada')
+      .sort((a, b) => (a.status === 'Pendiente' ? -1 : b.status === 'Pendiente' ? 1 : 0))
+  }, [requisitions])
+
+  const pendingRequisitionsTotal = useMemo(() => {
+    return pendingRequisitionsList.reduce((acc, r) => acc + r.estimatedTotal, 0)
+  }, [pendingRequisitionsList])
+
+  const awaitingApprovalReqsCount = useMemo(() => {
+    return pendingRequisitionsList.filter((r) => r.status === 'Pendiente').length
+  }, [pendingRequisitionsList])
+
+  const transitPurchaseOrders = useMemo(() => {
+    return purchaseOrders.filter(
+      (po) => po.status === 'Emitida' || po.status === 'Recepción parcial'
+    )
+  }, [purchaseOrders])
+
+  const transitPurchaseOrdersTotal = useMemo(() => {
+    return transitPurchaseOrders.reduce((acc, po) => acc + po.total, 0)
+  }, [transitPurchaseOrders])
+
+  const transitPendingUnits = useMemo(() => {
+    return transitPurchaseOrders.reduce(
+      (acc, po) =>
+        acc +
+        po.items.reduce(
+          (itemSum, item) => itemSum + Math.max(0, item.quantity - item.receivedQty),
+          0
+        ),
+      0
+    )
+  }, [transitPurchaseOrders])
+
+  const expiringVendorBills = useMemo(() => {
+    return [...payables]
+      .filter((b) => b.balance > 0 && b.status !== 'Pagada')
+      .sort((a, b) => {
+        if (a.status === 'Vencida' && b.status !== 'Vencida') return -1
+        if (b.status === 'Vencida' && a.status !== 'Vencida') return 1
+        return b.balance - a.balance
+      })
+  }, [payables])
+
+  const expiringVendorBillsBalance = useMemo(() => {
+    return expiringVendorBills.reduce((acc, b) => acc + b.balance, 0)
+  }, [expiringVendorBills])
+
+  const overdueVendorBillsCount = useMemo(() => {
+    return expiringVendorBills.filter((b) => b.status === 'Vencida').length
+  }, [expiringVendorBills])
+
+  const purchasesPeriodKpis = useMemo(() => {
+    const now = new Date()
+    const currentQuarter = Math.floor(now.getMonth() / 3) + 1
+    const periodTag =
+      purchasesPeriod === 'Mensual'
+        ? new Intl.DateTimeFormat('es-MX', { month: 'short', year: 'numeric' })
+            .format(now)
+            .replace('.', '')
+        : purchasesPeriod === 'Trimestral'
+        ? `T${currentQuarter} ${now.getFullYear()}`
+        : `Año ${now.getFullYear()}`
+
+    const reqsInPeriod = requisitions.filter((r) =>
+      isDateInPurchasesPeriod(r.date, purchasesPeriod, now)
+    )
+    const reqsTotal = reqsInPeriod.reduce((sum, r) => sum + r.estimatedTotal, 0)
+    const reqsConverted = reqsInPeriod.filter((r) => r.status === 'Convertida a OC').length
+    const reqsPending = reqsInPeriod.filter(
+      (r) => r.status === 'Pendiente' || r.status === 'Aprobada'
+    ).length
+
+    const posInPeriod = purchaseOrders.filter(
+      (po) => po.status !== 'Cancelada' && isDateInPurchasesPeriod(po.date, purchasesPeriod, now)
+    )
+    const posTotal = posInPeriod.reduce((sum, po) => sum + po.total, 0)
+    const posReceived = posInPeriod.filter((po) => po.status === 'Recibida').length
+    const posOpen = posInPeriod.filter((po) => po.status !== 'Recibida').length
+
+    const billsInPeriod = payables.filter((b) =>
+      isDateInPurchasesPeriod(b.issueDate, purchasesPeriod, now)
+    )
+    const billsTotal = billsInPeriod.reduce((sum, b) => sum + b.total, 0)
+    const billsPaid = billsInPeriod.reduce((sum, b) => sum + b.paidAmount, 0)
+    const billsBalance = billsInPeriod.reduce((sum, b) => sum + b.balance, 0)
+
+    return {
+      periodTag,
+      reqsCount: reqsInPeriod.length,
+      reqsTotal,
+      reqsConverted,
+      reqsPending,
+      posCount: posInPeriod.length,
+      posTotal,
+      posReceived,
+      posOpen,
+      billsCount: billsInPeriod.length,
+      billsTotal,
+      billsPaid,
+      billsBalance,
+    }
+  }, [requisitions, purchaseOrders, payables, purchasesPeriod])
 
   const warehouseBreakdown = useMemo(() => {
     const map = new Map<
@@ -854,6 +1044,7 @@ export function ExecutiveDashboard({
     visibleStripCount > 0 ||
     hasLeftMainPanel ||
     hasRightMainPanel ||
+    canViewPurchasesExecSummary ||
     canViewFinanceSummary ||
     canViewCrmOpportunities
 
@@ -1146,7 +1337,11 @@ export function ExecutiveDashboard({
                 <button
                   type="button"
                   className="quick-action-item"
-                  onClick={() => onNavigateOperations('Compras')}
+                  onClick={() =>
+                    onNavigatePurchases
+                      ? onNavigatePurchases('Resumen')
+                      : onNavigateOperations('Compras')
+                  }
                 >
                   <Receipt size={13} /> Compras
                 </button>
@@ -1878,8 +2073,17 @@ export function ExecutiveDashboard({
                     className="kpi-card kpi-card-clickable"
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigateOperations('Compras')}
-                    onKeyDown={(e) => e.key === 'Enter' && onNavigateOperations('Compras')}
+                    onClick={() =>
+                      onNavigatePurchases
+                        ? onNavigatePurchases('Órdenes de compra')
+                        : onNavigateOperations('Compras')
+                    }
+                    onKeyDown={(e) =>
+                      e.key === 'Enter' &&
+                      (onNavigatePurchases
+                        ? onNavigatePurchases('Órdenes de compra')
+                        : onNavigateOperations('Compras'))
+                    }
                     title="Ver órdenes de compra y recepciones"
                   >
                     <div className="kpi-top">
@@ -2334,11 +2538,338 @@ export function ExecutiveDashboard({
                     <button
                       type="button"
                       className="add-activity"
-                      onClick={() => onNavigateOperations('Compras')}
+                      onClick={() =>
+                        onNavigatePurchases
+                          ? onNavigatePurchases('Órdenes de compra')
+                          : onNavigateOperations('Compras')
+                      }
                     >
                       <ArrowRight size={15} /> Revisar órdenes de compra ({activePurchaseOrders.length})
                     </button>
                   )}
+                </article>
+              )}
+
+              {/* Procurement Executive Summary (Compras / Operaciones / Finanzas / Admin) */}
+              {canViewPurchasesExecSummary && (
+                <article
+                  className="panel purchases-exec-panel"
+                  style={{ gridColumn: '1 / -1' }}
+                  aria-label="Resumen ejecutivo de compras"
+                >
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">COMPRAS Y ABASTECIMIENTO</div>
+                      <h2>Resumen ejecutivo de compras</h2>
+                      <p className="panel-subtitle">
+                        Visibilidad en tiempo real de solicitudes internas, órdenes en tránsito hacia almacén y pasivos con proveedores
+                      </p>
+                    </div>
+                    <div className="purchases-exec-heading-actions">
+                      <div className="purchases-period-select-wrap">
+                        <CalendarDays size={13} className="purchases-period-select-icon" aria-hidden="true" />
+                        <select
+                          aria-label="Periodo de visualización de KPIs de compras"
+                          value={purchasesPeriod}
+                          onChange={(e) =>
+                            setPurchasesPeriod(e.target.value as PurchasesKpiPeriod)
+                          }
+                        >
+                          <option value="Mensual">Mensual</option>
+                          <option value="Trimestral">Trimestral</option>
+                          <option value="Anual">Anual</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() =>
+                          onNavigatePurchases
+                            ? onNavigatePurchases('Resumen')
+                            : onNavigateOperations('Compras')
+                        }
+                      >
+                        Ir al módulo de Compras <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Period-Responsive Procurement KPIs */}
+                  <div
+                    className={`purchases-exec-kpi-strip cols-${visiblePurchasesColsCount}`}
+                    aria-label={`KPIs de compras (${purchasesPeriod})`}
+                  >
+                    {canViewRequisitionsCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Requisiciones · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{purchasesPeriodKpis.reqsCount}</strong>
+                          <span>{money(purchasesPeriodKpis.reqsTotal)} est.</span>
+                        </div>
+                        <small className="tabular-nums">
+                          {purchasesPeriodKpis.reqsConverted} convertidas a OC ·{' '}
+                          {purchasesPeriodKpis.reqsPending} en gestión
+                        </small>
+                      </div>
+                    )}
+
+                    {canViewPoTransitCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Órdenes de compra · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{money(purchasesPeriodKpis.posTotal)}</strong>
+                          <span>
+                            {purchasesPeriodKpis.posCount}{' '}
+                            {purchasesPeriodKpis.posCount === 1 ? 'orden' : 'órdenes'}
+                          </span>
+                        </div>
+                        <small className="tabular-nums">
+                          {purchasesPeriodKpis.posReceived} recibidas ·{' '}
+                          {purchasesPeriodKpis.posOpen} abiertas / en tránsito
+                        </small>
+                      </div>
+                    )}
+
+                    {canViewSupplierBillsCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Facturación recibida · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{money(purchasesPeriodKpis.billsTotal)}</strong>
+                          <span>
+                            {purchasesPeriodKpis.billsCount}{' '}
+                            {purchasesPeriodKpis.billsCount === 1 ? 'factura' : 'facturas'}
+                          </span>
+                        </div>
+                        <small className="tabular-nums">
+                          Pagado {money(purchasesPeriodKpis.billsPaid)} · Saldo{' '}
+                          {money(purchasesPeriodKpis.billsBalance)}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`purchases-exec-cols cols-${visiblePurchasesColsCount}`}>
+                    {/* Column 1: Requisiciones pendientes */}
+                    {canViewRequisitionsCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className="purchases-exec-col-card"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Requisiciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Requisiciones pendientes</span>
+                            <ClipboardList size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{pendingRequisitionsList.length}</strong>
+                            <span className="tabular-nums">{money(pendingRequisitionsTotal)} est.</span>
+                          </div>
+                          <small>
+                            {awaitingApprovalReqsCount} por aprobar ·{' '}
+                            {pendingRequisitionsList.length - awaitingApprovalReqsCount} listas para OC
+                          </small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {pendingRequisitionsList.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              Sin requisiciones pendientes de atención.
+                            </div>
+                          ) : (
+                            pendingRequisitionsList.slice(0, 3).map((req) => (
+                              <div key={req.id} className="purchases-exec-item">
+                                <div className="purchases-exec-item-main">
+                                  <strong>
+                                    <span className="tabular-nums">{req.folio}</span> · {req.department}
+                                  </strong>
+                                  <span>
+                                    {req.requestedBy} · {req.status} · Req. {req.neededByDate}
+                                  </span>
+                                </div>
+                                <div className="purchases-exec-item-end tabular-nums">
+                                  <strong>{money(req.estimatedTotal)}</strong>
+                                  <small>{req.priority}</small>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Requisiciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          Gestionar requisiciones <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+
+                    {/* Column 2: Órdenes de compra en tránsito */}
+                    {canViewPoTransitCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className="purchases-exec-col-card"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Órdenes de compra')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Órdenes en tránsito</span>
+                            <ShoppingCart size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{transitPurchaseOrders.length}</strong>
+                            <span className="tabular-nums">{money(transitPurchaseOrdersTotal)}</span>
+                          </div>
+                          <small>{transitPendingUnits} unidades pendientes de ingreso en andén</small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {transitPurchaseOrders.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              Todas las órdenes emitidas han sido recibidas.
+                            </div>
+                          ) : (
+                            transitPurchaseOrders.slice(0, 3).map((po) => {
+                              const pendingU = po.items.reduce(
+                                (sum, it) => sum + Math.max(0, it.quantity - it.receivedQty),
+                                0
+                              )
+                              return (
+                                <div key={po.id} className="purchases-exec-item">
+                                  <div className="purchases-exec-item-main">
+                                    <strong>
+                                      <span className="tabular-nums">{po.folio}</span> · {po.supplierCompany}
+                                    </strong>
+                                    <span>
+                                      {po.warehouseName} · Llega {po.expectedDeliveryDate}
+                                    </span>
+                                  </div>
+                                  <div className="purchases-exec-item-end tabular-nums">
+                                    <strong>{money(po.total)}</strong>
+                                    <small>{pendingU} pzas pend.</small>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Recepciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          Ir a recepciones y órdenes <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+
+                    {/* Column 3: Facturas de proveedor por vencer */}
+                    {canViewSupplierBillsCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className={`purchases-exec-col-card ${
+                            overdueVendorBillsCount > 0 ? 'has-warning' : ''
+                          }`}
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Facturas')
+                              : onNavigateFinance('Pagos')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Facturas de proveedor por vencer</span>
+                            <Receipt size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{expiringVendorBills.length}</strong>
+                            <span className="tabular-nums">{money(expiringVendorBillsBalance)}</span>
+                          </div>
+                          <small>
+                            {overdueVendorBillsCount > 0
+                              ? `${overdueVendorBillsCount} factura(s) vencida(s) requieren atención`
+                              : 'Sin facturas vencidas al día de hoy'}
+                          </small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {expiringVendorBills.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              No existen saldos pendientes con proveedores.
+                            </div>
+                          ) : (
+                            expiringVendorBills.slice(0, 3).map((bill) => (
+                              <div
+                                key={bill.id}
+                                className={`purchases-exec-item ${
+                                  bill.status === 'Vencida' ? 'is-overdue' : ''
+                                }`}
+                              >
+                                <div className="purchases-exec-item-main">
+                                  <strong>
+                                    <span className="tabular-nums">{bill.folio}</span> · {bill.supplierCompany}
+                                  </strong>
+                                  <span>
+                                    {bill.purchaseOrderFolio || 'Factura directa'} · Vence {bill.dueDate}
+                                  </span>
+                                </div>
+                                <div className="purchases-exec-item-end tabular-nums">
+                                  <strong>{money(bill.balance)}</strong>
+                                  <small>{bill.status}</small>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Facturas')
+                              : onNavigateFinance('Pagos')
+                          }
+                        >
+                          Revisar facturas CxP <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+                  </div>
                 </article>
               )}
 

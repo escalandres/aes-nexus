@@ -336,6 +336,7 @@ export const STORAGE_KEYS = {
   notifications: 'aes_nexus_settings_notifications',
   roles: 'aes_nexus_settings_roles',
   roleDefinitions: 'aes_nexus_settings_role_profiles',
+  defaultNewUserRole: 'aes_nexus_settings_default_new_user_role',
   integrations: 'aes_nexus_settings_integrations',
   audit: 'aes_nexus_settings_audit',
   plan: 'aes_nexus_settings_plan',
@@ -362,6 +363,8 @@ export function writeStoredJson<T>(key: string, value: T): void {
 export const ROLES_CHANGED_EVENT = 'aes_nexus_roles_changed'
 export const USERS_CHANGED_EVENT = 'aes_nexus_users_changed'
 export const AUDIT_CHANGED_EVENT = 'aes_nexus_audit_changed'
+export const DEFAULT_NEW_USER_ROLE_CHANGED_EVENT = 'aes_nexus_default_role_changed'
+export const FALLBACK_DEFAULT_NEW_USER_ROLE: RoleKey = 'Operaciones'
 
 export interface WorkspaceUserRecord {
   id: string
@@ -499,6 +502,25 @@ export function loadStoredRoleDefinitions(): RoleDefinition[] {
     // fallback to defaults
   }
   return DEFAULT_ROLE_DEFINITIONS
+}
+
+export function loadDefaultNewUserRole(roles?: RoleDefinition[]): RoleKey {
+  const resolvedRoles = roles && roles.length > 0 ? roles : loadStoredRoleDefinitions()
+  const stored = readStoredJson<RoleKey | null>(STORAGE_KEYS.defaultNewUserRole, null)
+  if (stored && resolvedRoles.some((r) => r.id === stored)) {
+    return stored
+  }
+  const preferredFallback = resolvedRoles.find((r) => r.id === FALLBACK_DEFAULT_NEW_USER_ROLE)
+  if (preferredFallback) return preferredFallback.id
+  const firstNonAdmin = resolvedRoles.find((r) => !isGeneralAdminRole(r))
+  return firstNonAdmin?.id || resolvedRoles[0]?.id || FALLBACK_DEFAULT_NEW_USER_ROLE
+}
+
+export function saveDefaultNewUserRole(roleId: RoleKey): void {
+  writeStoredJson(STORAGE_KEYS.defaultNewUserRole, roleId)
+  window.dispatchEvent(
+    new CustomEvent(DEFAULT_NEW_USER_ROLE_CHANGED_EVENT, { detail: { roleId } })
+  )
 }
 
 export function detectClientDeviceBrowser(): string {

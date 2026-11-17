@@ -303,6 +303,40 @@ export const initialPayables: BillPayable[] = [
     currency: 'MXN',
     paymentMethod: 'Transferencia SPEI',
   },
+  {
+    id: 'cxp_hist_q3_1',
+    folio: 'CXP-2026-Q3-01',
+    purchaseOrderFolio: 'OC-2026-Q3-01',
+    supplierCompany: 'Central de Insumos',
+    supplierContact: 'ventas@centralinsumos.mx',
+    issueDate: '14 ago 2026',
+    dueDate: '29 ago 2026',
+    subtotal: 85000,
+    tax: 13600,
+    total: 98600,
+    paidAmount: 98600,
+    balance: 0,
+    status: 'Pagada',
+    currency: 'MXN',
+    paymentMethod: 'Transferencia SPEI',
+  },
+  {
+    id: 'cxp_hist_q3_2',
+    folio: 'CXP-2026-Q3-02',
+    purchaseOrderFolio: 'OC-2026-Q3-02',
+    supplierCompany: 'Atlas Comercial',
+    supplierContact: 'contacto@atlascomercial.mx',
+    issueDate: '19 sep 2026',
+    dueDate: '04 oct 2026',
+    subtotal: 125000,
+    tax: 20000,
+    total: 145000,
+    paidAmount: 145000,
+    balance: 0,
+    status: 'Pagada',
+    currency: 'MXN',
+    paymentMethod: 'Transferencia SPEI',
+  },
 ]
 
 export const initialExpenses: ExpenseRecord[] = [
@@ -434,6 +468,7 @@ export type AccountType =
   | 'Ingresos'
   | 'Costos'
   | 'Gastos de operación'
+  | 'Otros ingresos'
 
 export interface ChartAccount {
   id: string
@@ -445,6 +480,213 @@ export interface ChartAccount {
   description?: string
   status: 'Activa' | 'Inactiva'
 }
+
+export type AccountNumberPrefix = '1' | '2' | '3' | '4' | '5' | '6' | '8'
+
+export interface AccountNumberingRule {
+  prefix: AccountNumberPrefix
+  rangeLabel: string
+  categoryLabel: string
+  englishLabel: string
+  defaultNature: 'Deudora' | 'Acreedora'
+  accountTypes: AccountType[]
+  exampleCode: string
+}
+
+export const ACCOUNT_NUMBERING_RULES: AccountNumberingRule[] = [
+  {
+    prefix: '1',
+    rangeLabel: '1xxx',
+    categoryLabel: 'Activos',
+    englishLabel: 'Assets',
+    defaultNature: 'Deudora',
+    accountTypes: ['Activo circulante', 'Activo no circulante'],
+    exampleCode: '1006-001',
+  },
+  {
+    prefix: '2',
+    rangeLabel: '2xxx',
+    categoryLabel: 'Pasivos',
+    englishLabel: 'Liabilities',
+    defaultNature: 'Acreedora',
+    accountTypes: ['Pasivo a corto plazo', 'Pasivo a largo plazo'],
+    exampleCode: '2006-001',
+  },
+  {
+    prefix: '3',
+    rangeLabel: '3xxx',
+    categoryLabel: 'Capital / Patrimonio',
+    englishLabel: 'Equity',
+    defaultNature: 'Acreedora',
+    accountTypes: ['Capital contable'],
+    exampleCode: '3003-001',
+  },
+  {
+    prefix: '4',
+    rangeLabel: '4xxx',
+    categoryLabel: 'Ingresos',
+    englishLabel: 'Income',
+    defaultNature: 'Acreedora',
+    accountTypes: ['Ingresos'],
+    exampleCode: '4003-001',
+  },
+  {
+    prefix: '5',
+    rangeLabel: '5xxx',
+    categoryLabel: 'Costos de ventas',
+    englishLabel: 'COGS',
+    defaultNature: 'Deudora',
+    accountTypes: ['Costos'],
+    exampleCode: '5002-001',
+  },
+  {
+    prefix: '6',
+    rangeLabel: '6xxx',
+    categoryLabel: 'Gastos',
+    englishLabel: 'Expenses',
+    defaultNature: 'Deudora',
+    accountTypes: ['Gastos de operación'],
+    exampleCode: '6005-001',
+  },
+  {
+    prefix: '8',
+    rangeLabel: '8xxx',
+    categoryLabel: 'Otros ingresos',
+    englishLabel: 'Other Income',
+    defaultNature: 'Acreedora',
+    accountTypes: ['Otros ingresos'],
+    exampleCode: '8001-001',
+  },
+]
+
+export const ACCOUNT_TYPE_NUMBERING_LABELS: Record<AccountType, string> = {
+  'Activo circulante': '1xxx · Activo circulante (Activos)',
+  'Activo no circulante': '1xxx · Activo no circulante (Activos)',
+  'Pasivo a corto plazo': '2xxx · Pasivo a corto plazo (Pasivos)',
+  'Pasivo a largo plazo': '2xxx · Pasivo a largo plazo (Pasivos)',
+  'Capital contable': '3xxx · Capital / Patrimonio (Equity)',
+  Ingresos: '4xxx · Ingresos (Income)',
+  Costos: '5xxx · Costos de ventas (COGS)',
+  'Gastos de operación': '6xxx · Gastos (Expenses)',
+  'Otros ingresos': '8xxx · Otros ingresos (Other Income)',
+}
+
+export function getAccountNumberingRuleForType(type: AccountType): AccountNumberingRule {
+  return (
+    ACCOUNT_NUMBERING_RULES.find((rule) => rule.accountTypes.includes(type)) ||
+    ACCOUNT_NUMBERING_RULES[0]
+  )
+}
+
+export function getAccountNumberingRuleByCode(code: string): AccountNumberingRule | undefined {
+  const firstChar = code.trim().charAt(0)
+  return ACCOUNT_NUMBERING_RULES.find((rule) => rule.prefix === firstChar)
+}
+
+const SUBTYPE_NUMBER_BOUNDS: Record<AccountType, { min: number; max: number; start: number }> = {
+  'Activo circulante': { min: 1000, max: 1199, start: 1001 },
+  'Activo no circulante': { min: 1200, max: 1999, start: 1201 },
+  'Pasivo a corto plazo': { min: 2000, max: 2099, start: 2001 },
+  'Pasivo a largo plazo': { min: 2100, max: 2999, start: 2101 },
+  'Capital contable': { min: 3000, max: 3999, start: 3001 },
+  Ingresos: { min: 4000, max: 4999, start: 4001 },
+  Costos: { min: 5000, max: 5999, start: 5001 },
+  'Gastos de operación': { min: 6000, max: 6999, start: 6001 },
+  'Otros ingresos': { min: 8000, max: 8999, start: 8001 },
+}
+
+export function suggestNextAccountCode(
+  type: AccountType,
+  existingAccounts: ChartAccount[]
+): string {
+  const bounds = SUBTYPE_NUMBER_BOUNDS[type]
+  const usedCodes = new Set(existingAccounts.map((acc) => acc.code.trim().toLowerCase()))
+
+  let maxMajor = bounds.start - 1
+  existingAccounts.forEach((acc) => {
+    const match = acc.code.trim().match(/^(\d{4})/)
+    if (!match) return
+    const major = Number(match[1])
+    if (major >= bounds.min && major <= bounds.max && major > maxMajor) {
+      maxMajor = major
+    }
+  })
+
+  let candidateMajor = Math.min(bounds.max, maxMajor + 1)
+  let candidateCode = `${candidateMajor}-001`
+  while (usedCodes.has(candidateCode.toLowerCase()) && candidateMajor < bounds.max) {
+    candidateMajor += 1
+    candidateCode = `${candidateMajor}-001`
+  }
+
+  if (usedCodes.has(candidateCode.toLowerCase())) {
+    for (let sub = 2; sub <= 999; sub += 1) {
+      const alt = `${candidateMajor}-${String(sub).padStart(3, '0')}`
+      if (!usedCodes.has(alt.toLowerCase())) return alt
+    }
+  }
+
+  return candidateCode
+}
+
+export interface AccountCodeValidationResult {
+  valid: boolean
+  reason?: string
+  expectedRule: AccountNumberingRule
+  detectedRule?: AccountNumberingRule
+}
+
+export function validateAccountCodeForType(
+  rawCode: string,
+  type: AccountType
+): AccountCodeValidationResult {
+  const trimmed = rawCode.trim()
+  const expectedRule = getAccountNumberingRuleForType(type)
+
+  if (!trimmed) {
+    return {
+      valid: false,
+      expectedRule,
+      reason: `Indica un código en el rango ${expectedRule.rangeLabel} (ej. ${expectedRule.exampleCode}).`,
+    }
+  }
+
+  const detectedRule = getAccountNumberingRuleByCode(trimmed)
+  const validFormat = /^[1234568]\d{3}(?:-\d{1,4})?$/.test(trimmed)
+
+  if (!detectedRule) {
+    return {
+      valid: false,
+      expectedRule,
+      reason: `El prefijo debe pertenecer a los rangos válidos (1xxx, 2xxx, 3xxx, 4xxx, 5xxx, 6xxx u 8xxx). Para ${type} usa ${expectedRule.rangeLabel}.`,
+    }
+  }
+
+  if (!validFormat) {
+    return {
+      valid: false,
+      expectedRule,
+      detectedRule,
+      reason: `Usa 4 dígitos principales y subcuenta opcional (ej. ${expectedRule.exampleCode} o ${expectedRule.prefix}001).`,
+    }
+  }
+
+  if (detectedRule.prefix !== expectedRule.prefix) {
+    return {
+      valid: false,
+      expectedRule,
+      detectedRule,
+      reason: `El código ${trimmed} pertenece a ${detectedRule.rangeLabel} · ${detectedRule.categoryLabel}. Para «${type}» debe iniciar con ${expectedRule.rangeLabel}.`,
+    }
+  }
+
+  return {
+    valid: true,
+    expectedRule,
+    detectedRule,
+  }
+}
+
 
 export const initialChartAccounts: ChartAccount[] = [
   {

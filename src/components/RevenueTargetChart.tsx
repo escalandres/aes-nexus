@@ -15,6 +15,8 @@ import {
 import {
   BarChart3,
   ArrowUpRight,
+  ArrowDownRight,
+  Minus,
   Scale,
   Percent,
   LineChart as LineChartIcon,
@@ -99,6 +101,260 @@ const money = (val: number) =>
     currency: 'MXN',
     maximumFractionDigits: 0,
   }).format(val)
+
+const formatSignedMoney = (val: number) => {
+  if (val > 0) return `+${money(val)}`
+  if (val < 0) return `-${money(Math.abs(val))}`
+  return money(0)
+}
+
+interface MonthlyChartPoint {
+  month: string
+  monthFull: string
+  prevMonth: string | null
+  ventas: number
+  objetivo: number
+  cobros: number
+  gastos: number
+  cumplimiento: number
+  netFlow: number
+  prevVentas: number | null
+  prevObjetivo: number | null
+  prevCobros: number | null
+  prevGastos: number | null
+  prevCumplimiento: number | null
+  ventasDelta: number | null
+  objetivoDelta: number | null
+  cobrosDelta: number | null
+  gastosDelta: number | null
+  netFlowDelta: number | null
+  ventasMoM: number | null
+  objetivoMoM: number | null
+  cobrosMoM: number | null
+  gastosMoM: number | null
+  cumplimientoMoM: number | null
+  netFlowMoM: number | null
+  targetGap: number
+  targetGapPct: number
+}
+
+interface TrendPillProps {
+  pct: number | null | undefined
+  invertSentiment?: boolean
+  suffix?: string
+}
+
+function TooltipTrendIndicator({ pct, invertSentiment = false, suffix = '%' }: TrendPillProps) {
+  if (pct === null || pct === undefined) {
+    return (
+      <span className="exec-tooltip-trend-pill neutral" title="Mes base del periodo">
+        <Minus size={11} />
+        <span>Base</span>
+      </span>
+    )
+  }
+  const isZero = Math.abs(pct) < 0.05
+  const isGrowth = pct > 0
+  const isPositiveTone = isZero ? null : invertSentiment ? pct < 0 : pct > 0
+  const Icon = isZero ? Minus : isGrowth ? ArrowUpRight : ArrowDownRight
+  const sign = pct > 0 ? '+' : ''
+  const toneClass = isPositiveTone === null ? 'neutral' : isPositiveTone ? 'up' : 'down'
+
+  return (
+    <span className={`exec-tooltip-trend-pill ${toneClass}`} title="Variación respecto al mes anterior">
+      <Icon size={12} strokeWidth={2.4} />
+      <span>
+        {sign}
+        {pct.toFixed(1)}
+        {suffix}
+      </span>
+    </span>
+  )
+}
+
+interface CustomRevenueTooltipProps {
+  active?: boolean
+  payload?: Array<{ payload: MonthlyChartPoint }>
+  viewMode: ChartViewMode
+  ventasColor: string
+  objetivoColor: string
+}
+
+function CustomRevenueTooltip({
+  active,
+  payload,
+  viewMode,
+  ventasColor,
+  objetivoColor,
+}: CustomRevenueTooltipProps) {
+  if (!active || !payload || !payload.length) return null
+  const data = payload[0].payload
+  const isNov = data.month === 'Nov'
+
+  if (viewMode === 'flujo-caja') {
+    const netPositive = data.netFlow >= 0
+    return (
+      <div className="exec-chart-tooltip exec-chart-tooltip--enhanced">
+        <div className="exec-tooltip-head">
+          <strong>
+            {data.monthFull}
+            {isNov ? ' · En curso' : ''}
+          </strong>
+          <span className="exec-tooltip-period-ref">
+            {data.prevMonth ? `vs. ${data.prevMonth}` : 'Mes base'}
+          </span>
+        </div>
+
+        <div className="exec-tooltip-metric-block">
+          <div className="exec-tooltip-row">
+            <span className="exec-tooltip-lbl-dot">
+              <i style={{ backgroundColor: ventasColor }} />
+              Cobros recibidos
+            </span>
+            <span className="exec-tooltip-val-trend">
+              <strong style={{ color: ventasColor }}>{money(data.cobros)}</strong>
+              <TooltipTrendIndicator pct={data.cobrosMoM} />
+            </span>
+          </div>
+          {data.prevCobros !== null && data.cobrosDelta !== null && (
+            <div className="exec-tooltip-submeta">
+              <span>Anterior ({data.prevMonth}): {money(data.prevCobros)}</span>
+              <span>{formatSignedMoney(data.cobrosDelta)}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="exec-tooltip-metric-block">
+          <div className="exec-tooltip-row">
+            <span className="exec-tooltip-lbl-dot">
+              <i style={{ backgroundColor: objetivoColor }} />
+              Gastos operativos
+            </span>
+            <span className="exec-tooltip-val-trend">
+              <strong style={{ color: objetivoColor }}>{money(data.gastos)}</strong>
+              <TooltipTrendIndicator pct={data.gastosMoM} invertSentiment />
+            </span>
+          </div>
+          {data.prevGastos !== null && data.gastosDelta !== null && (
+            <div className="exec-tooltip-submeta">
+              <span>Anterior ({data.prevMonth}): {money(data.prevGastos)}</span>
+              <span>{formatSignedMoney(data.gastosDelta)}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="exec-tooltip-divider" />
+
+        <div className="exec-tooltip-row">
+          <span>Flujo neto del mes</span>
+          <span className="exec-tooltip-val-trend">
+            <strong style={{ color: netPositive ? ventasColor : objetivoColor }}>
+              {money(data.netFlow)}
+            </strong>
+            <TooltipTrendIndicator pct={data.netFlowMoM} />
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  const reached = data.targetGap >= 0
+  const TargetGapIcon = reached ? ArrowUpRight : ArrowDownRight
+
+  return (
+    <div className="exec-chart-tooltip exec-chart-tooltip--enhanced">
+      <div className="exec-tooltip-head">
+        <strong>
+          {data.monthFull}
+          {isNov ? ' · En curso' : ''}
+        </strong>
+        <span className="exec-tooltip-period-ref">
+          {data.prevMonth ? `vs. ${data.prevMonth}` : 'Mes base'}
+        </span>
+      </div>
+
+      {viewMode === 'cumplimiento' && (
+        <div className="exec-tooltip-metric-block">
+          <div className="exec-tooltip-row">
+            <span>Cumplimiento de meta</span>
+            <span className="exec-tooltip-val-trend">
+              <strong style={{ color: reached ? ventasColor : objetivoColor }}>
+                {data.cumplimiento.toFixed(1)}%
+              </strong>
+              <TooltipTrendIndicator pct={data.cumplimientoMoM} suffix=" pts" />
+            </span>
+          </div>
+          {data.prevCumplimiento !== null && (
+            <div className="exec-tooltip-submeta">
+              <span>Anterior ({data.prevMonth}): {data.prevCumplimiento.toFixed(1)}%</span>
+              <span>Meta: 100.0%</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="exec-tooltip-metric-block">
+        <div className="exec-tooltip-row">
+          <span className="exec-tooltip-lbl-dot">
+            <i style={{ backgroundColor: ventasColor }} />
+            Ingresos / Ventas
+          </span>
+          <span className="exec-tooltip-val-trend">
+            <strong style={{ color: ventasColor }}>{money(data.ventas)}</strong>
+            <TooltipTrendIndicator pct={data.ventasMoM} />
+          </span>
+        </div>
+        {data.prevVentas !== null && data.ventasDelta !== null && (
+          <div className="exec-tooltip-submeta">
+            <span>Anterior ({data.prevMonth}): {money(data.prevVentas)}</span>
+            <span>{formatSignedMoney(data.ventasDelta)}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="exec-tooltip-metric-block">
+        <div className="exec-tooltip-row">
+          <span className="exec-tooltip-lbl-dot">
+            <i style={{ backgroundColor: objetivoColor }} />
+            Objetivo mensual
+          </span>
+          <span className="exec-tooltip-val-trend">
+            <strong style={{ color: objetivoColor }}>{money(data.objetivo)}</strong>
+            <TooltipTrendIndicator pct={data.objetivoMoM} />
+          </span>
+        </div>
+        {data.prevObjetivo !== null && data.objetivoDelta !== null && (
+          <div className="exec-tooltip-submeta">
+            <span>Anterior ({data.prevMonth}): {money(data.prevObjetivo)}</span>
+            <span>{formatSignedMoney(data.objetivoDelta)}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="exec-tooltip-divider" />
+
+      <div className="exec-tooltip-row">
+        <span>Brecha vs. objetivo</span>
+        <span className={`exec-tooltip-gap ${reached ? 'up' : 'down'}`}>
+          <TargetGapIcon size={12} strokeWidth={2.4} />
+          <strong>
+            {formatSignedMoney(data.targetGap)} ({data.targetGapPct > 0 ? '+' : ''}
+            {data.targetGapPct.toFixed(1)}%)
+          </strong>
+        </span>
+      </div>
+
+      {viewMode !== 'cumplimiento' && (
+        <div className="exec-tooltip-attainment-line">
+          <span>Cumplimiento mensual:</span>
+          <strong style={{ color: reached ? ventasColor : objetivoColor }}>
+            {data.cumplimiento.toFixed(1)}% · {reached ? 'Meta superada' : 'Bajo meta'}
+          </strong>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function RevenueTargetChart({
   orders,
@@ -187,9 +443,9 @@ export function RevenueTargetChart({
     return Math.max(expTotal, 118000)
   }, [expenses])
 
-  // Monthly dataset for the last 6 months
-  const monthlyData = useMemo(() => {
-    return [
+  // Monthly dataset for the last 6 months with MoM trend percentages
+  const monthlyData: MonthlyChartPoint[] = useMemo(() => {
+    const base = [
       {
         month: 'Jun',
         monthFull: 'Junio 2026',
@@ -237,7 +493,7 @@ export function RevenueTargetChart({
       },
       {
         month: 'Nov',
-        monthFull: 'Noviembre 2026 (En curso)',
+        monthFull: 'Noviembre 2026',
         ventas: currentNovSales,
         objetivo: 240000,
         cobros: currentNovCobros,
@@ -245,7 +501,94 @@ export function RevenueTargetChart({
         cumplimiento: Number(((currentNovSales / 240000) * 100).toFixed(1)),
       },
     ]
+
+    const calcMoM = (curr: number, prev: number) =>
+      prev !== 0 ? Number((((curr - prev) / Math.abs(prev)) * 100).toFixed(1)) : 0
+
+    return base.map((item, idx) => {
+      const netFlow = item.cobros - item.gastos
+      const targetGap = item.ventas - item.objetivo
+      const targetGapPct =
+        item.objetivo > 0 ? Number(((targetGap / item.objetivo) * 100).toFixed(1)) : 0
+
+      if (idx === 0) {
+        return {
+          ...item,
+          prevMonth: null,
+          netFlow,
+          prevVentas: null,
+          prevObjetivo: null,
+          prevCobros: null,
+          prevGastos: null,
+          prevCumplimiento: null,
+          ventasDelta: null,
+          objetivoDelta: null,
+          cobrosDelta: null,
+          gastosDelta: null,
+          netFlowDelta: null,
+          ventasMoM: null,
+          objetivoMoM: null,
+          cobrosMoM: null,
+          gastosMoM: null,
+          cumplimientoMoM: null,
+          netFlowMoM: null,
+          targetGap,
+          targetGapPct,
+        }
+      }
+      const prev = base[idx - 1]
+      const prevNetFlow = prev.cobros - prev.gastos
+      return {
+        ...item,
+        prevMonth: prev.month,
+        netFlow,
+        prevVentas: prev.ventas,
+        prevObjetivo: prev.objetivo,
+        prevCobros: prev.cobros,
+        prevGastos: prev.gastos,
+        prevCumplimiento: prev.cumplimiento,
+        ventasDelta: item.ventas - prev.ventas,
+        objetivoDelta: item.objetivo - prev.objetivo,
+        cobrosDelta: item.cobros - prev.cobros,
+        gastosDelta: item.gastos - prev.gastos,
+        netFlowDelta: netFlow - prevNetFlow,
+        ventasMoM: calcMoM(item.ventas, prev.ventas),
+        objetivoMoM: calcMoM(item.objetivo, prev.objetivo),
+        cobrosMoM: calcMoM(item.cobros, prev.cobros),
+        gastosMoM: calcMoM(item.gastos, prev.gastos),
+        cumplimientoMoM: Number((item.cumplimiento - prev.cumplimiento).toFixed(1)),
+        netFlowMoM: calcMoM(netFlow, prevNetFlow),
+        targetGap,
+        targetGapPct,
+      }
+    })
   }, [currentNovSales, currentNovCobros, currentNovGastos])
+
+  const latestMonthData = monthlyData[monthlyData.length - 1]
+
+  const renderMoMBadge = (
+    pct: number | null | undefined,
+    invertSentiment = false,
+    compact = false
+  ) => {
+    if (pct === null || pct === undefined) return null
+    const isZero = Math.abs(pct) < 0.05
+    const isGrowth = pct > 0
+    const isPositiveTone = isZero ? null : invertSentiment ? pct < 0 : pct > 0
+    const sign = pct > 0 ? '+' : ''
+    const Icon = isZero ? Minus : isGrowth ? ArrowUpRight : ArrowDownRight
+    const toneClass = isPositiveTone === null ? 'neutral' : isPositiveTone ? 'up' : 'down'
+    return (
+      <span
+        className={`chart-mom-badge ${toneClass} ${compact ? 'compact' : ''}`}
+        title="Variación respecto al mes anterior"
+      >
+        <Icon size={compact ? 10 : 12} />
+        {sign}
+        {pct.toFixed(1)}%
+      </span>
+    )
+  }
 
   // Summary Metrics
   const totalVentas = useMemo(
@@ -525,16 +868,22 @@ export function RevenueTargetChart({
           <>
             <div className="exec-chart-kpi">
               <span className="exec-chart-kpi-lbl">Cobros recibidos (6 meses)</span>
-              <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
-                {money(totalCobros)}
-              </span>
+              <div className="exec-chart-kpi-val-row">
+                <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
+                  {money(totalCobros)}
+                </span>
+                {renderMoMBadge(latestMonthData.cobrosMoM)}
+              </div>
             </div>
 
             <div className="exec-chart-kpi">
               <span className="exec-chart-kpi-lbl">Gastos operativos (6 meses)</span>
-              <span className="exec-chart-kpi-val" style={{ color: objetivoColor }}>
-                {money(totalGastos)}
-              </span>
+              <div className="exec-chart-kpi-val-row">
+                <span className="exec-chart-kpi-val" style={{ color: objetivoColor }}>
+                  {money(totalGastos)}
+                </span>
+                {renderMoMBadge(latestMonthData.gastosMoM, true)}
+              </div>
             </div>
 
             <div className="exec-chart-kpi">
@@ -558,17 +907,18 @@ export function RevenueTargetChart({
           <>
             <div className="exec-chart-kpi">
               <span className="exec-chart-kpi-lbl">Ventas totales (6 meses)</span>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+              <div className="exec-chart-kpi-val-row">
                 <span className="exec-chart-kpi-val">{money(totalVentas)}</span>
-                <span className="trend trend-up">
-                  <ArrowUpRight size={13} /> +12.4%
-                </span>
+                {renderMoMBadge(latestMonthData.ventasMoM)}
               </div>
             </div>
 
             <div className="exec-chart-kpi">
               <span className="exec-chart-kpi-lbl">Objetivo presupuestado</span>
-              <span className="exec-chart-kpi-val">{money(totalObjetivo)}</span>
+              <div className="exec-chart-kpi-val-row">
+                <span className="exec-chart-kpi-val">{money(totalObjetivo)}</span>
+                {renderMoMBadge(latestMonthData.objetivoMoM)}
+              </div>
             </div>
 
             <div className="exec-chart-kpi">
@@ -714,43 +1064,13 @@ export function RevenueTargetChart({
               />
               <Tooltip
                 cursor={{ fill: 'rgba(139, 150, 143, 0.08)' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null
-                  const data = payload[0].payload
-                  const isNov = data.month === 'Nov'
-                  const diff = data.ventas - data.objetivo
-                  const reached = diff >= 0
-                  return (
-                    <div className="exec-chart-tooltip">
-                      <strong>
-                        {data.monthFull} {isNov && '· En curso'}
-                      </strong>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: ventasColor }} />
-                          Venta real:
-                        </span>
-                        <strong style={{ color: ventasColor }}>{money(data.ventas)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: objetivoColor }} />
-                          Objetivo mensual:
-                        </span>
-                        <strong style={{ color: objetivoColor }}>{money(data.objetivo)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span>Diferencia:</span>
-                        <strong style={{ color: reached ? '#1d7a65' : '#d9534f' }}>
-                          {reached ? `+${money(diff)}` : money(diff)}
-                        </strong>
-                      </div>
-                      <span className={`exec-tooltip-badge ${reached ? 'good' : 'warn'}`}>
-                        {data.cumplimiento}% de la meta mensual
-                      </span>
-                    </div>
-                  )
-                }}
+                content={
+                  <CustomRevenueTooltip
+                    viewMode="comparativo"
+                    ventasColor={ventasColor}
+                    objetivoColor={objetivoColor}
+                  />
+                }
               />
               <Bar
                 name="Ventas reales"
@@ -800,43 +1120,13 @@ export function RevenueTargetChart({
               />
               <Tooltip
                 cursor={{ fill: 'rgba(139, 150, 143, 0.08)' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null
-                  const data = payload[0].payload
-                  const isNov = data.month === 'Nov'
-                  const diff = data.ventas - data.objetivo
-                  const reached = diff >= 0
-                  return (
-                    <div className="exec-chart-tooltip">
-                      <strong>
-                        {data.monthFull} {isNov && '· En curso'}
-                      </strong>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: ventasColor }} />
-                          Ventas reales:
-                        </span>
-                        <strong style={{ color: ventasColor }}>{money(data.ventas)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: objetivoColor }} />
-                          Meta presupuestada:
-                        </span>
-                        <strong style={{ color: objetivoColor }}>{money(data.objetivo)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span>Variación:</span>
-                        <strong style={{ color: reached ? '#1d7a65' : '#d9534f' }}>
-                          {reached ? `+${money(diff)}` : money(diff)}
-                        </strong>
-                      </div>
-                      <span className={`exec-tooltip-badge ${reached ? 'good' : 'warn'}`}>
-                        {data.cumplimiento}% de la meta
-                      </span>
-                    </div>
-                  )
-                }}
+                content={
+                  <CustomRevenueTooltip
+                    viewMode="tendencia"
+                    ventasColor={ventasColor}
+                    objetivoColor={objetivoColor}
+                  />
+                }
               />
               <Bar
                 name="Ventas reales"
@@ -897,28 +1187,13 @@ export function RevenueTargetChart({
               />
               <Tooltip
                 cursor={{ fill: 'rgba(139, 150, 143, 0.08)' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null
-                  const data = payload[0].payload
-                  const reached = data.cumplimiento >= 100
-                  return (
-                    <div className="exec-chart-tooltip">
-                      <strong>{data.monthFull}</strong>
-                      <div className="exec-tooltip-row">
-                        <span>Cumplimiento:</span>
-                        <strong style={{ color: reached ? ventasColor : objetivoColor }}>
-                          {data.cumplimiento}%
-                        </strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span>Ventas vs Meta:</span>
-                        <span>
-                          {money(data.ventas)} / {money(data.objetivo)}
-                        </span>
-                      </div>
-                    </div>
-                  )
-                }}
+                content={
+                  <CustomRevenueTooltip
+                    viewMode="cumplimiento"
+                    ventasColor={ventasColor}
+                    objetivoColor={objetivoColor}
+                  />
+                }
               />
               <Bar name="% Cumplimiento" dataKey="cumplimiento" radius={[5, 5, 0, 0]} maxBarSize={32}>
                 {monthlyData.map((entry) => (
@@ -968,36 +1243,13 @@ export function RevenueTargetChart({
               />
               <Tooltip
                 cursor={{ fill: 'rgba(139, 150, 143, 0.08)' }}
-                content={({ active, payload }) => {
-                  if (!active || !payload || !payload.length) return null
-                  const data = payload[0].payload
-                  const neto = data.cobros - data.gastos
-                  return (
-                    <div className="exec-chart-tooltip">
-                      <strong>{data.monthFull}</strong>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: ventasColor }} />
-                          Cobros recibidos:
-                        </span>
-                        <strong style={{ color: ventasColor }}>{money(data.cobros)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: objetivoColor }} />
-                          Gastos y costos:
-                        </span>
-                        <strong style={{ color: objetivoColor }}>{money(data.gastos)}</strong>
-                      </div>
-                      <div className="exec-tooltip-row">
-                        <span>Margen neto:</span>
-                        <strong style={{ color: neto >= 0 ? ventasColor : objetivoColor }}>
-                          {money(neto)}
-                        </strong>
-                      </div>
-                    </div>
-                  )
-                }}
+                content={
+                  <CustomRevenueTooltip
+                    viewMode="flujo-caja"
+                    ventasColor={ventasColor}
+                    objetivoColor={objetivoColor}
+                  />
+                }
               />
               <Bar
                 name="Cobros (Entradas)"
@@ -1027,12 +1279,16 @@ export function RevenueTargetChart({
             return (
               <div key={d.month} className="history-month-card">
                 <span className="history-month-name">{d.month}</span>
-                <strong className="history-month-sales" style={{ color: ventasColor }}>
-                  {money(d.cobros)}
-                </strong>
+                <div className="history-month-value-row">
+                  <strong className="history-month-sales" style={{ color: ventasColor }}>
+                    {money(d.cobros)}
+                  </strong>
+                  {renderMoMBadge(d.cobrosMoM, false, true)}
+                </div>
                 <span className="history-month-target">
                   <i className="target-mini-dot" style={{ backgroundColor: objetivoColor }} />
-                  Gastos: {money(d.gastos)}
+                  <span>Gastos: {money(d.gastos)}</span>
+                  {renderMoMBadge(d.gastosMoM, true, true)}
                 </span>
                 <span className={`history-month-badge ${isPositive ? 'positive' : 'negative'}`}>
                   Neto: {money(net)}
@@ -1045,12 +1301,16 @@ export function RevenueTargetChart({
           return (
             <div key={d.month} className="history-month-card">
               <span className="history-month-name">{d.month}</span>
-              <strong className="history-month-sales" style={{ color: ventasColor }}>
-                {money(d.ventas)}
-              </strong>
+              <div className="history-month-value-row">
+                <strong className="history-month-sales" style={{ color: ventasColor }}>
+                  {money(d.ventas)}
+                </strong>
+                {renderMoMBadge(d.ventasMoM, false, true)}
+              </div>
               <span className="history-month-target">
                 <i className="target-mini-dot" style={{ backgroundColor: objetivoColor }} />
-                Meta: {money(d.objetivo)}
+                <span>Meta: {money(d.objetivo)}</span>
+                {renderMoMBadge(d.objetivoMoM, false, true)}
               </span>
               <span className={`history-month-badge ${isPositive ? 'positive' : 'negative'}`}>
                 {isPositive ? `+${(d.cumplimiento - 100).toFixed(1)}%` : `${(d.cumplimiento - 100).toFixed(1)}%`} ({d.cumplimiento}%)

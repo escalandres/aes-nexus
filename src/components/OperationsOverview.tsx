@@ -29,6 +29,7 @@ interface OperationsOverviewProps {
   purchaseOrders: PurchaseOrder[]
   shipments: ShipmentDelivery[]
   onNavigateSection: (sec: 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen') => void
+  onNavigatePurchases?: () => void
 }
 
 const money = (val: number) =>
@@ -45,6 +46,7 @@ export function OperationsOverview({
   purchaseOrders,
   shipments,
   onNavigateSection,
+  onNavigatePurchases,
 }: OperationsOverviewProps) {
   // Inventory valuation
   const totalValuation = useMemo(() => {
@@ -236,7 +238,7 @@ export function OperationsOverview({
             </div>
             <button
               className="text-link"
-              onClick={() => onNavigateSection('Compras')}
+              onClick={() => (onNavigatePurchases ? onNavigatePurchases() : onNavigateSection('Compras'))}
             >
               Ir a Compras <ArrowRight size={13} />
             </button>
@@ -267,7 +269,7 @@ export function OperationsOverview({
                     </div>
                     <button
                       className="button button-secondary reorder-btn"
-                      onClick={() => onNavigateSection('Compras')}
+                      onClick={() => (onNavigatePurchases ? onNavigatePurchases() : onNavigateSection('Compras'))}
                       title="Generar orden de reabastecimiento"
                     >
                       <ShoppingBag size={12} /> Comprar
@@ -296,7 +298,7 @@ export function OperationsOverview({
               </button>
               <button
                 className="shortcut-btn"
-                onClick={() => onNavigateSection('Compras')}
+                onClick={() => (onNavigatePurchases ? onNavigatePurchases() : onNavigateSection('Compras'))}
               >
                 <ShoppingBag size={14} /> Nueva orden de compra
               </button>
