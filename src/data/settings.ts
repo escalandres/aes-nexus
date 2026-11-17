@@ -157,7 +157,22 @@ export const DEFAULT_INTEGRATIONS: IntegrationConfig[] = [
   },
 ]
 
-export type AuditCategory = 'settings' | 'users' | 'security' | 'integrations' | 'inventory' | 'sales'
+export type AuditCategory =
+  | 'settings'
+  | 'users'
+  | 'security'
+  | 'session'
+  | 'integrations'
+  | 'inventory'
+  | 'sales'
+  | 'finance'
+  | 'admin'
+
+export interface AuditSessionMeta {
+  roleLabel: string
+  ipAddress: string
+  deviceBrowser: string
+}
 
 export interface AuditEventRecord {
   id: string
@@ -167,9 +182,86 @@ export interface AuditEventRecord {
   user: string
   timestampIso: string
   seedKey?: 'ev1' | 'ev2' | 'ev3' | 'ev4'
+  sessionMeta?: AuditSessionMeta
 }
 
 export const INITIAL_AUDIT_EVENTS: AuditEventRecord[] = [
+  {
+    id: 'aud_seed_login1',
+    category: 'session',
+    action: 'Inicio de sesión en el ambiente',
+    detail: 'Acceso confirmado con perfil Administrador General · IP 189.204.112.44 · MacBook / macOS · Chrome 131',
+    user: 'Andrea Morales Escala',
+    timestampIso: '2026-11-16T14:05:00.000Z',
+    sessionMeta: {
+      roleLabel: 'Administrador General, Finanzas & Contabilidad, Gerencia de Operaciones',
+      ipAddress: '189.204.112.44',
+      deviceBrowser: 'MacBook / macOS · Chrome 131',
+    },
+  },
+  {
+    id: 'aud_seed_inv1',
+    category: 'sales',
+    action: 'Creación de factura de venta',
+    detail: 'Folio FAC-2026-041 · Estudio Nómada · $92,800 MXN',
+    user: 'Sofía Valenzuela Treviño',
+    timestampIso: '2026-11-16T13:15:00.000Z',
+  },
+  {
+    id: 'aud_seed_login2',
+    category: 'session',
+    action: 'Inicio de sesión en el ambiente',
+    detail: 'Acceso confirmado con perfil Equipo Comercial & Ventas · IP 201.141.78.92 · iPhone (iOS) · Safari Mobile',
+    user: 'Sofía Valenzuela Treviño',
+    timestampIso: '2026-11-16T12:48:00.000Z',
+    sessionMeta: {
+      roleLabel: 'Equipo Comercial & Ventas',
+      ipAddress: '201.141.78.92',
+      deviceBrowser: 'iPhone (iOS) · Safari Mobile',
+    },
+  },
+  {
+    id: 'aud_seed_role1',
+    category: 'users',
+    action: 'Actualización de permisos de rol',
+    detail: 'Gerencia de Operaciones · 5 permisos activos (Aprobación de compras habilitada)',
+    user: 'Andrea Morales Escala',
+    timestampIso: '2026-11-16T11:30:00.000Z',
+  },
+  {
+    id: 'aud_seed_login3',
+    category: 'session',
+    action: 'Inicio de sesión en el ambiente',
+    detail: 'Acceso confirmado con perfil Gerencia de Operaciones · IP 187.188.42.18 · Windows PC · Edge 130',
+    user: 'Carlos Mendoza Ríos',
+    timestampIso: '2026-11-16T08:15:00.000Z',
+    sessionMeta: {
+      roleLabel: 'Gerencia de Operaciones',
+      ipAddress: '187.188.42.18',
+      deviceBrowser: 'Windows PC · Edge 130',
+    },
+  },
+  {
+    id: 'aud_seed_fin1',
+    category: 'finance',
+    action: 'Dispersión bancaria aplicada (EBP)',
+    detail: 'Lote EBP-2026-014 aplicado en banco BBVA · $124,500 MXN',
+    user: 'Roberto Garza Hinojosa',
+    timestampIso: '2026-11-15T17:45:00.000Z',
+  },
+  {
+    id: 'aud_seed_login4',
+    category: 'session',
+    action: 'Inicio de sesión en el ambiente',
+    detail: 'Acceso confirmado con perfil Finanzas & Contabilidad · IP 189.156.91.105 · Windows PC · Chrome 131',
+    user: 'Roberto Garza Hinojosa',
+    timestampIso: '2026-11-15T16:20:00.000Z',
+    sessionMeta: {
+      roleLabel: 'Finanzas & Contabilidad',
+      ipAddress: '189.156.91.105',
+      deviceBrowser: 'Windows PC · Chrome 131',
+    },
+  },
   {
     id: 'aud_seed_1',
     category: 'inventory',
@@ -269,15 +361,38 @@ export function writeStoredJson<T>(key: string, value: T): void {
 
 export const ROLES_CHANGED_EVENT = 'aes_nexus_roles_changed'
 export const USERS_CHANGED_EVENT = 'aes_nexus_users_changed'
+export const AUDIT_CHANGED_EVENT = 'aes_nexus_audit_changed'
 
 export interface WorkspaceUserRecord {
   id: string
   name: string
   email: string
   role: RoleKey
+  roles?: RoleKey[]
   status: 'active' | 'suspended'
   lastLogin: string
   avatarInitials: string
+}
+
+export function getWorkspaceUserRoleIds(
+  user: Pick<WorkspaceUserRecord, 'role' | 'roles'>,
+  validRoleIds?: Set<RoleKey>
+): RoleKey[] {
+  const raw =
+    Array.isArray(user.roles) && user.roles.length > 0
+      ? user.roles
+      : user.role
+      ? [user.role]
+      : []
+  const seen = new Set<RoleKey>()
+  const result: RoleKey[] = []
+  for (const id of raw) {
+    if (!id || seen.has(id)) continue
+    if (validRoleIds && !validRoleIds.has(id)) continue
+    seen.add(id)
+    result.push(id)
+  }
+  return result
 }
 
 export const DEFAULT_WORKSPACE_USERS: WorkspaceUserRecord[] = [
@@ -286,6 +401,7 @@ export const DEFAULT_WORKSPACE_USERS: WorkspaceUserRecord[] = [
     name: 'Andrea Morales Escala',
     email: 'andrea.morales@brujulaestudio.mx',
     role: 'Administrador',
+    roles: ['Administrador', 'Finanzas', 'Operaciones'],
     status: 'active',
     lastLogin: 'Hace 5 minutos · Sesión actual',
     avatarInitials: 'AM',
@@ -295,6 +411,7 @@ export const DEFAULT_WORKSPACE_USERS: WorkspaceUserRecord[] = [
     name: 'Carlos Mendoza Ríos',
     email: 'carlos.mendoza@brujulaestudio.mx',
     role: 'Operaciones',
+    roles: ['Operaciones'],
     status: 'active',
     lastLogin: 'Hoy, 08:15 hrs',
     avatarInitials: 'CM',
@@ -304,6 +421,7 @@ export const DEFAULT_WORKSPACE_USERS: WorkspaceUserRecord[] = [
     name: 'Sofía Valenzuela Treviño',
     email: 'sofia.valenzuela@brujulaestudio.mx',
     role: 'Ventas',
+    roles: ['Ventas'],
     status: 'active',
     lastLogin: 'Ayer, 18:40 hrs',
     avatarInitials: 'SV',
@@ -313,6 +431,7 @@ export const DEFAULT_WORKSPACE_USERS: WorkspaceUserRecord[] = [
     name: 'Roberto Garza Hinojosa',
     email: 'roberto.garza@brujulaestudio.mx',
     role: 'Finanzas',
+    roles: ['Finanzas'],
     status: 'active',
     lastLogin: '10 nov 2026',
     avatarInitials: 'RG',
@@ -330,7 +449,16 @@ export function loadStoredWorkspaceUsers(): WorkspaceUserRecord[] {
     const saved = window.localStorage.getItem(STORAGE_KEYS.users)
     if (saved) {
       const parsed = JSON.parse(saved) as WorkspaceUserRecord[]
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((usr) => {
+          if (Array.isArray(usr.roles) && usr.roles.length > 0) return usr
+          const defMatch = DEFAULT_WORKSPACE_USERS.find((d) => d.id === usr.id)
+          if (defMatch && defMatch.role === usr.role && defMatch.roles) {
+            return { ...usr, roles: defMatch.roles }
+          }
+          return usr.role ? { ...usr, roles: [usr.role] } : usr
+        })
+      }
     }
   } catch {
     // fallback
@@ -373,14 +501,78 @@ export function loadStoredRoleDefinitions(): RoleDefinition[] {
   return DEFAULT_ROLE_DEFINITIONS
 }
 
+export function detectClientDeviceBrowser(): string {
+  if (typeof navigator === 'undefined') return 'Navegador web'
+  const ua = navigator.userAgent || ''
+
+  let device = 'Equipo de escritorio'
+  if (/iPhone/i.test(ua)) device = 'iPhone (iOS)'
+  else if (/iPad/i.test(ua)) device = 'iPad (iPadOS)'
+  else if (/Android/i.test(ua)) device = 'Dispositivo Android'
+  else if (/Macintosh|Mac OS X/i.test(ua)) device = 'MacBook / macOS'
+  else if (/Windows/i.test(ua)) device = 'Windows PC'
+  else if (/Linux/i.test(ua)) device = 'Linux Workstation'
+
+  let browser = 'Navegador web'
+  const edgeMatch = ua.match(/Edg\/(\d+)/)
+  const chromeMatch = ua.match(/Chrome\/(\d+)/)
+  const firefoxMatch = ua.match(/Firefox\/(\d+)/)
+  const safariMatch = ua.match(/Version\/(\d+).*Safari/)
+
+  if (edgeMatch) browser = `Edge ${edgeMatch[1]}`
+  else if (chromeMatch && !/Edg\//.test(ua)) browser = `Chrome ${chromeMatch[1]}`
+  else if (firefoxMatch) browser = `Firefox ${firefoxMatch[1]}`
+  else if (safariMatch) browser = `Safari ${safariMatch[1]}`
+  else if (/Safari/i.test(ua)) browser = 'Safari'
+
+  return `${device} · ${browser}`
+}
+
+const SESSION_IP_BY_KEY: Record<string, string> = {
+  'user:usr_1': '189.204.112.44',
+  'user:usr_2': '187.188.42.18',
+  'user:usr_3': '201.141.78.92',
+  'user:usr_4': '189.156.91.105',
+}
+
+export function resolveSessionIpAddress(sessionKey: string): string {
+  if (SESSION_IP_BY_KEY[sessionKey]) return SESSION_IP_BY_KEY[sessionKey]
+  let hash = 0
+  for (let i = 0; i < sessionKey.length; i += 1) {
+    hash = (hash * 31 + sessionKey.charCodeAt(i)) % 65025
+  }
+  const third = 40 + (hash % 180)
+  const fourth = 12 + ((Math.floor(hash / 7) + 19) % 220)
+  return `189.204.${third}.${fourth}`
+}
+
+function hydrateAuditWithSeedSessions(events: AuditEventRecord[]): AuditEventRecord[] {
+  if (events.some((ev) => ev.category === 'session')) return events
+  const sessionSeeds = INITIAL_AUDIT_EVENTS.filter((ev) => ev.category === 'session')
+  const existingIds = new Set(events.map((ev) => ev.id))
+  const toAdd = sessionSeeds.filter((ev) => !existingIds.has(ev.id))
+  if (toAdd.length === 0) return events
+  return [...events, ...toAdd].sort(
+    (a, b) => new Date(b.timestampIso).getTime() - new Date(a.timestampIso).getTime()
+  )
+}
+
+export function loadStoredAuditEvents(): AuditEventRecord[] {
+  const stored = readStoredJson<AuditEventRecord[]>(STORAGE_KEYS.audit, INITIAL_AUDIT_EVENTS)
+  return hydrateAuditWithSeedSessions(stored)
+}
+
 export function appendAuditLog(entry: Omit<AuditEventRecord, 'id' | 'timestampIso'>): AuditEventRecord[] {
-  const current = readStoredJson<AuditEventRecord[]>(STORAGE_KEYS.audit, INITIAL_AUDIT_EVENTS)
+  const current = hydrateAuditWithSeedSessions(
+    readStoredJson<AuditEventRecord[]>(STORAGE_KEYS.audit, INITIAL_AUDIT_EVENTS)
+  )
   const nextItem: AuditEventRecord = {
     ...entry,
     id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     timestampIso: new Date().toISOString(),
   }
-  const updated = [nextItem, ...current].slice(0, 120)
+  const updated = [nextItem, ...current].slice(0, 150)
   writeStoredJson(STORAGE_KEYS.audit, updated)
+  window.dispatchEvent(new CustomEvent(AUDIT_CHANGED_EVENT, { detail: { events: updated } }))
   return updated
 }

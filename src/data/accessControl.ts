@@ -13,7 +13,7 @@ export const MODULE_SECTIONS = {
   Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Resumen'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
   Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
-  Administración: ['Departamentos', 'Ubicaciones', 'Resumen'],
+  Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
   Configuración: [
     'General',
     'Organización',
@@ -67,6 +67,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Departamentos: ['sysConfig', 'manageUsers'],
     Ubicaciones: ['sysConfig', 'manageUsers'],
     Resumen: ['sysConfig', 'manageUsers'],
+    'Historial de Auditoría': ['sysConfig', 'manageUsers', 'fullReports'],
   },
   Configuración: {
     General: ['sysConfig'],

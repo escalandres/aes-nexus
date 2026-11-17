@@ -28,6 +28,8 @@ import {
   Search,
   RotateCcw,
   RefreshCw,
+  ImagePlus,
+  Upload,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -39,15 +41,17 @@ import type { Warehouse } from '../data/operations'
 import type { PhysicalLocationRecord, LocationType } from './AdministrationSection'
 import {
   ALL_CAPABILITIES,
+  AUDIT_CHANGED_EVENT,
   DEFAULT_INTEGRATIONS,
   DEFAULT_PLAN_SETTINGS,
   DEFAULT_ROLE_PERMISSIONS,
-  INITIAL_AUDIT_EVENTS,
   ROLES_CHANGED_EVENT,
   STORAGE_KEYS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
+  getWorkspaceUserRoleIds,
   isGeneralAdminRole,
+  loadStoredAuditEvents,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
   readStoredJson,
@@ -90,6 +94,8 @@ export interface OrganizationSettings {
   fiscalCountry: string
   legalRep: string
   certificateStatus: 'valid' | 'expiring' | 'none'
+  logoDataUrl?: string
+  logoFileName?: string
   branches: Array<{
     id: string
     name: string
@@ -222,6 +228,8 @@ export function SettingsSection({
       fiscalCountry: 'México',
       legalRep: 'Andrea Morales Escala',
       certificateStatus: 'valid',
+      logoDataUrl: '',
+      logoFileName: '',
       branches: [
         {
           id: 'br_1',
@@ -355,10 +363,20 @@ export function SettingsSection({
 
   // 9. AUDIT TRAIL STATE
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>(() =>
-    readStoredJson(STORAGE_KEYS.audit, INITIAL_AUDIT_EVENTS)
+    loadStoredAuditEvents()
   )
   const [auditSearch, setAuditSearch] = useState('')
   const [auditCategoryFilter, setAuditCategoryFilter] = useState<'all' | 'settings' | 'users' | 'security' | 'integrations' | 'ops'>('all')
+
+  useEffect(() => {
+    const syncAudit = () => setAuditEvents(loadStoredAuditEvents())
+    window.addEventListener(AUDIT_CHANGED_EVENT, syncAudit)
+    window.addEventListener('storage', syncAudit)
+    return () => {
+      window.removeEventListener(AUDIT_CHANGED_EVENT, syncAudit)
+      window.removeEventListener('storage', syncAudit)
+    }
+  }, [])
 
   // 10. PLAN & BILLING STATE
   const [planSettings, setPlanSettings] = useState<PlanSubscriptionSettings>(() =>
@@ -374,7 +392,23 @@ export function SettingsSection({
   const [showInviteModal, setShowInviteModal] = useState(false)
   const [inviteName, setInviteName] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<RoleKey>('Operaciones')
+  const [inviteRoles, setInviteRoles] = useState<RoleKey[]>(['Operaciones'])
+  const [hoveredRolesPopover, setHoveredRolesPopover] = useState<{
+    userId: string
+    roles: string[]
+    rect: { top: number; left: number; bottom: number; width: number }
+  } | null>(null)
+
+  useEffect(() => {
+    if (!hoveredRolesPopover) return
+    const handleDismiss = () => setHoveredRolesPopover(null)
+    window.addEventListener('scroll', handleDismiss, true)
+    window.addEventListener('resize', handleDismiss)
+    return () => {
+      window.removeEventListener('scroll', handleDismiss, true)
+      window.removeEventListener('resize', handleDismiss)
+    }
+  }, [hoveredRolesPopover])
 
   // Modal for new branch
   const [showBranchModal, setShowBranchModal] = useState(false)
@@ -518,7 +552,12 @@ export function SettingsSection({
         auditCategoryFilter === 'all'
           ? true
           : auditCategoryFilter === 'ops'
-          ? ev.category === 'inventory' || ev.category === 'sales'
+          ? ev.category === 'inventory' ||
+            ev.category === 'sales' ||
+            ev.category === 'finance' ||
+            ev.category === 'admin'
+          : auditCategoryFilter === 'security'
+          ? ev.category === 'security' || ev.category === 'session'
           : ev.category === auditCategoryFilter
       if (!catMatch) return false
       if (!q) return true
@@ -555,12 +594,55 @@ export function SettingsSection({
     )
   }
 
+  const [logoPreviewError, setLogoPreviewError] = useState(false)
+
+  const persistAndBroadcastOrg = (next: OrganizationSettings) => {
+    localStorage.setItem(STORAGE_KEYS.org, JSON.stringify(next))
+    window.dispatchEvent(new CustomEvent('aes_nexus_org_changed', { detail: next }))
+  }
+
+  const handleOrgLogoFileChange = (file: File | null | undefined) => {
+    if (!file) return
+    const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']
+    if (!allowed.includes(file.type) && !file.type.startsWith('image/')) {
+      toast.warning(t('settings.org.logoInvalidTypeToast'), t('settings.org.logoCardTitle'))
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast.warning(t('settings.org.logoTooLargeToast'), t('settings.org.logoCardTitle'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+      if (!dataUrl) return
+      setLogoPreviewError(false)
+      const next: OrganizationSettings = {
+        ...org,
+        logoDataUrl: dataUrl,
+        logoFileName: file.name,
+      }
+      setOrg(next)
+      persistAndBroadcastOrg(next)
+      toast.success(t('settings.org.logoLoadedToast'), t('settings.org.logoCardTitle'))
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleRemoveOrgLogo = () => {
+    setLogoPreviewError(false)
+    const next: OrganizationSettings = { ...org, logoDataUrl: '', logoFileName: '' }
+    setOrg(next)
+    persistAndBroadcastOrg(next)
+    toast.info(t('settings.org.logoRemovedToast'), t('settings.org.logoCardTitle'))
+  }
+
   const handleSaveOrg = () => {
-    localStorage.setItem(STORAGE_KEYS.org, JSON.stringify(org))
+    persistAndBroadcastOrg(org)
     recordAudit({
       category: 'settings',
       action: t('settings.org.heading'),
-      detail: `${org.legalName} · ${org.rfc}`,
+      detail: `${org.legalName} · ${org.rfc}${org.logoDataUrl ? ' · Logo actualizado' : ''}`,
       user: 'Andrea Morales',
     })
     toast.success(t('settings.org.savedToast'), t('settings.item.Organización'))
@@ -640,6 +722,15 @@ export function SettingsSection({
       toast.warning(t('settings.users.missingFieldsToast'), t('settings.users.missingFieldsTitle'))
       return
     }
+    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+    const selectedRoleIds = inviteRoles.filter((id) => validRoleIds.has(id))
+    if (selectedRoleIds.length === 0) {
+      toast.warning(
+        t('settings.modal.invite.selectAtLeastOneRole'),
+        t('settings.users.missingFieldsTitle')
+      )
+      return
+    }
     const initials = inviteName
       .split(' ')
       .slice(0, 2)
@@ -650,27 +741,34 @@ export function SettingsSection({
       id: `usr_${Date.now()}`,
       name: inviteName.trim(),
       email: inviteEmail.trim().toLowerCase(),
-      role: inviteRole,
+      role: selectedRoleIds[0],
+      roles: selectedRoleIds,
       status: 'active',
       lastLogin: t('settings.users.pendingInviteLogin'),
       avatarInitials: initials,
     }
+
+    const roleSummary = selectedRoleIds
+      .map((rId) => getRoleLabel(rId))
+      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+      .join(', ')
 
     const updated = [...users, newUser]
     persistUsers(updated)
     recordAudit({
       category: 'users',
       action: t('settings.users.invitedTitle'),
-      detail: `${newUser.name} (${newUser.email}) · ${getRoleLabel(newUser.role)}`,
+      detail: `${newUser.name} (${newUser.email}) · ${roleSummary}`,
       user: 'Andrea Morales',
     })
     setInviteName('')
     setInviteEmail('')
+    setInviteRoles([roleDefinitions.find((r) => r.id === 'Operaciones')?.id || roleDefinitions[0]?.id || 'Operaciones'])
     setShowInviteModal(false)
     toast.success(
       t('settings.users.invitedToast', {
         email: newUser.email,
-        role: getRoleLabel(newUser.role),
+        role: roleSummary,
       }),
       t('settings.users.invitedTitle')
     )
@@ -701,23 +799,6 @@ export function SettingsSection({
       return u
     })
     persistUsers(updated)
-  }
-
-  const handleChangeUserRole = (userId: string, nextRole: RoleKey) => {
-    const target = users.find((u) => u.id === userId)
-    if (!target || target.role === nextRole) return
-    const updated = users.map((u) => (u.id === userId ? { ...u, role: nextRole } : u))
-    persistUsers(updated)
-    recordAudit({
-      category: 'users',
-      action: t('settings.users.roleUpdatedTitle'),
-      detail: `${target.name} → ${getRoleLabel(nextRole)}`,
-      user: 'Andrea Morales',
-    })
-    toast.info(
-      t('settings.users.roleUpdatedToast', { name: target.name, role: getRoleLabel(nextRole) }),
-      t('settings.users.roleUpdatedTitle')
-    )
   }
 
   const handleAddBranchSubmit = (e: React.FormEvent) => {
@@ -918,16 +999,25 @@ export function SettingsSection({
     }
     const remaining = roleDefinitions.filter((r) => r.id !== role.id)
     const fallbackRole = remaining[0]
-    const affectedCount = users.filter((u) => u.role === role.id).length
+    const affectedCount = users.filter((u) => getWorkspaceUserRoleIds(u).includes(role.id)).length
     if (affectedCount > 0 && fallbackRole) {
-      const reassignedUsers = users.map((u) =>
-        u.role === role.id ? { ...u, role: fallbackRole.id } : u
-      )
+      const reassignedUsers = users.map((u) => {
+        const currentIds = getWorkspaceUserRoleIds(u)
+        if (!currentIds.includes(role.id)) return u
+        const nextIds = currentIds.filter((id) => id !== role.id)
+        const normalizedIds = nextIds.length > 0 ? nextIds : [fallbackRole.id]
+        return {
+          ...u,
+          role: normalizedIds[0],
+          roles: normalizedIds,
+        }
+      })
       persistUsers(reassignedUsers)
     }
-    if (inviteRole === role.id && fallbackRole) {
-      setInviteRole(fallbackRole.id)
-    }
+    setInviteRoles((prev) => {
+      const filtered = prev.filter((id) => id !== role.id)
+      return filtered.length > 0 ? filtered : fallbackRole ? [fallbackRole.id] : []
+    })
     persistRoleDefinitions(remaining)
     const roleDisplay = getRoleCardTitle(role)
     recordAudit({
@@ -1200,13 +1290,29 @@ export function SettingsSection({
                           />
                         ))}
                       </div>
-                      <div
-                        className="workspace-avatar-preview"
-                        style={{ backgroundColor: general.avatarColor }}
-                        title={t('settings.general.avatarTitle')}
-                      >
-                        {(general.workspaceName.slice(0, 2) || 'BE').toUpperCase()}
-                      </div>
+                      {org.logoDataUrl && !logoPreviewError ? (
+                        <img
+                          className="workspace-avatar-logo-img"
+                          src={org.logoDataUrl}
+                          alt={org.legalName || general.workspaceName || 'Logo de la empresa'}
+                          onError={() => setLogoPreviewError(true)}
+                        />
+                      ) : (
+                        <div
+                          className="workspace-avatar-preview"
+                          style={{ backgroundColor: general.avatarColor }}
+                          title={t('settings.general.avatarTitle')}
+                        >
+                          {(
+                            general.workspaceName
+                              .trim()
+                              .split(/\s+/)
+                              .slice(0, 2)
+                              .map((w) => w[0])
+                              .join('') || 'BE'
+                          ).toUpperCase()}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1371,6 +1477,98 @@ export function SettingsSection({
               </div>
 
               <div className="settings-card-group">
+                {/* Logotipo de la Empresa */}
+                <div className="settings-section-card">
+                  <div className="card-header-row">
+                    <div>
+                      <h3>{t('settings.org.logoCardTitle')}</h3>
+                      <p>{t('settings.org.logoCardDesc')}</p>
+                    </div>
+                    {org.logoDataUrl && (
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={handleRemoveOrgLogo}
+                      >
+                        <Trash2 size={13} /> {t('settings.org.logoRemoveBtn')}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="org-logo-editor">
+                    <div
+                      className={`org-logo-preview-box ${org.logoDataUrl && !logoPreviewError ? 'has-logo' : ''}`}
+                      aria-live="polite"
+                    >
+                      {org.logoDataUrl && !logoPreviewError ? (
+                        <img
+                          src={org.logoDataUrl}
+                          alt={org.legalName || org.tradeName || 'Logo de la empresa'}
+                          onError={() => setLogoPreviewError(true)}
+                        />
+                      ) : (
+                        <div className="org-logo-empty-state">
+                          <ImagePlus size={22} />
+                          <strong>{t('settings.org.logoEmptyTitle')}</strong>
+                          <span>{t('settings.org.logoEmptyHint')}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="org-logo-inputs">
+                      <div className="form-field">
+                        <label htmlFor="org-logo-file-input">{t('settings.org.logoUploadLabel')}</label>
+                        <label
+                          htmlFor="org-logo-file-input"
+                          className="org-logo-dropzone"
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            handleOrgLogoFileChange(e.dataTransfer.files?.[0])
+                          }}
+                        >
+                          <Upload size={15} />
+                          <span className="org-logo-dropzone-text">
+                            {org.logoFileName ? org.logoFileName : t('settings.org.logoUploadLabel')}
+                          </span>
+                          <input
+                            id="org-logo-file-input"
+                            type="file"
+                            accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                            className="org-logo-file-input"
+                            onChange={(e) => {
+                              handleOrgLogoFileChange(e.target.files?.[0])
+                              e.target.value = ''
+                            }}
+                          />
+                        </label>
+                        <small>{t('settings.org.logoUploadHint')}</small>
+                      </div>
+
+                      <div className="form-field">
+                        <label htmlFor="org-logo-url-input">{t('settings.org.logoUrlLabel')}</label>
+                        <input
+                          id="org-logo-url-input"
+                          type="url"
+                          value={org.logoDataUrl?.startsWith('data:') ? '' : org.logoDataUrl || ''}
+                          onChange={(e) => {
+                            const urlVal = e.target.value.trim()
+                            setLogoPreviewError(false)
+                            const next: OrganizationSettings = {
+                              ...org,
+                              logoDataUrl: urlVal,
+                              logoFileName: urlVal ? 'URL externa' : '',
+                            }
+                            setOrg(next)
+                            persistAndBroadcastOrg(next)
+                          }}
+                          placeholder={t('settings.org.logoUrlPlaceholder')}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Entidad Legal & RFC */}
                 <div className="settings-section-card">
                   <div className="card-header-row">
@@ -1955,59 +2153,144 @@ export function SettingsSection({
                       </tr>
                     </thead>
                     <tbody>
-                      {users.map((user) => (
-                        <tr key={user.id}>
-                          <td>
-                            <div className="user-table-cell">
-                              <span className="user-avatar-badge">{user.avatarInitials}</span>
-                              <strong>{user.name}</strong>
-                            </div>
-                          </td>
-                          <td>
-                            <span className="user-email-text">{user.email}</span>
-                          </td>
-                          <td>
-                            <select
-                              aria-label={t('settings.users.colRole')}
-                              className={`user-role-select role-${user.role.toLowerCase()}`}
-                              value={user.role}
-                              onChange={(e) => handleChangeUserRole(user.id, e.target.value as RoleKey)}
-                            >
-                              {roleDefinitions.map((r) => (
-                                <option key={r.id} value={r.id}>
-                                  {getRoleLabel(r.id)}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td>
-                            <span className={`user-status-pill status-${user.status}`}>
-                              <span className="status-dot" />
-                              {user.status === 'active'
-                                ? t('settings.users.statusActive')
-                                : t('settings.users.statusSuspended')}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="user-last-login">{user.lastLogin}</span>
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button
-                              type="button"
-                              className="button button-ghost button-sm"
-                              onClick={() => handleToggleUserStatus(user.id)}
-                            >
-                              {user.status === 'active'
-                                ? t('settings.users.actionSuspend')
-                                : t('settings.users.actionReactivate')}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {users.map((user) => {
+                        const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+                        const userRoleIds = getWorkspaceUserRoleIds(user, validRoleIds)
+                        const sortedRoleNames = userRoleIds
+                          .map((rId) => getRoleLabel(rId))
+                          .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+                        const visibleRoles = sortedRoleNames.slice(0, 2)
+                        const hasExtraRoles = sortedRoleNames.length > 2
+                        const showPopoverFromEl = (el: HTMLElement) => {
+                          const rect = el.getBoundingClientRect()
+                          setHoveredRolesPopover({
+                            userId: user.id,
+                            roles: sortedRoleNames,
+                            rect: {
+                              top: rect.top,
+                              left: rect.left,
+                              bottom: rect.bottom,
+                              width: rect.width,
+                            },
+                          })
+                        }
+                        const hidePopoverForUser = () => {
+                          setHoveredRolesPopover((prev) =>
+                            prev?.userId === user.id ? null : prev
+                          )
+                        }
+                        const isPopoverActive = hoveredRolesPopover?.userId === user.id
+
+                        return (
+                          <tr key={user.id}>
+                            <td>
+                              <div className="user-table-cell">
+                                <span className="user-avatar-badge">{user.avatarInitials}</span>
+                                <strong>{user.name}</strong>
+                              </div>
+                            </td>
+                            <td>
+                              <span className="user-email-text">{user.email}</span>
+                            </td>
+                            <td>
+                              <div className="user-roles-inline-wrap">
+                                {sortedRoleNames.length === 0 ? (
+                                  <span className="emp-no-roles-text">
+                                    {t('settings.users.noRoles')}
+                                  </span>
+                                ) : !hasExtraRoles ? (
+                                  <span className="user-roles-inline-text">
+                                    {visibleRoles.join(' · ')}
+                                  </span>
+                                ) : (
+                                  <>
+                                    <span className="user-roles-inline-text">
+                                      {visibleRoles.join(' · ')}
+                                    </span>
+                                    <span
+                                      tabIndex={0}
+                                      className="user-roles-more-trigger"
+                                      aria-label={`${t('settings.users.allRolesTitle', { count: sortedRoleNames.length })}: ${sortedRoleNames.join(', ')}`}
+                                      aria-describedby={isPopoverActive ? 'user-roles-hover-tooltip' : undefined}
+                                      onMouseEnter={(e) => showPopoverFromEl(e.currentTarget)}
+                                      onMouseLeave={hidePopoverForUser}
+                                      onFocus={(e) => showPopoverFromEl(e.currentTarget)}
+                                      onBlur={hidePopoverForUser}
+                                    >
+                                      ...
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`user-status-pill status-${user.status}`}>
+                                <span className="status-dot" />
+                                {user.status === 'active'
+                                  ? t('settings.users.statusActive')
+                                  : t('settings.users.statusSuspended')}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="user-last-login">{user.lastLogin}</span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={() => handleToggleUserStatus(user.id)}
+                              >
+                                {user.status === 'active'
+                                  ? t('settings.users.actionSuspend')
+                                  : t('settings.users.actionReactivate')}
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {hoveredRolesPopover && (
+                <div
+                  id="user-roles-hover-tooltip"
+                  className="user-roles-hover-popover"
+                  role="tooltip"
+                  style={{
+                    top:
+                      hoveredRolesPopover.rect.top > 130
+                        ? hoveredRolesPopover.rect.top - 8
+                        : hoveredRolesPopover.rect.bottom + 8,
+                    left: Math.max(
+                      12,
+                      Math.min(
+                        hoveredRolesPopover.rect.left + hoveredRolesPopover.rect.width / 2,
+                        typeof window !== 'undefined' ? window.innerWidth - 135 : 900
+                      )
+                    ),
+                    transform:
+                      hoveredRolesPopover.rect.top > 130
+                        ? 'translate(-50%, -100%)'
+                        : 'translate(-50%, 0)',
+                  }}
+                >
+                  <div className="user-roles-hover-header">
+                    {t('settings.users.allRolesTitle', {
+                      count: hoveredRolesPopover.roles.length,
+                    })}
+                  </div>
+                  <ul className="user-roles-hover-list">
+                    {hoveredRolesPopover.roles.map((roleName) => (
+                      <li key={roleName} className="user-roles-hover-item">
+                        <Check size={10} aria-hidden="true" />
+                        <span>{roleName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -2030,7 +2313,9 @@ export function SettingsSection({
 
               <div className="roles-grid">
                 {roleDefinitions.map((role) => {
-                  const usersCount = users.filter((u) => u.role === role.id).length
+                  const usersCount = users.filter((u) =>
+                    getWorkspaceUserRoleIds(u).includes(role.id)
+                  ).length
                   const assignedCaps = role.capabilities || []
                   const roleTitle = getRoleCardTitle(role)
                   const roleDesc = getRoleCardDesc(role)
@@ -2776,15 +3061,12 @@ export function SettingsSection({
               </div>
 
               <div className="form-field">
-                <label htmlFor="invite-role-select">{t('settings.modal.invite.roleLabel')}</label>
-                <select
-                  id="invite-role-select"
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                >
-                  {roleDefinitions.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.id === 'Operaciones'
+                <label>{t('settings.modal.invite.roleLabel')} ({inviteRoles.length})</label>
+                <div className="invite-roles-checklist">
+                  {roleDefinitions.map((r) => {
+                    const checked = inviteRoles.includes(r.id)
+                    const labelText =
+                      r.id === 'Operaciones'
                         ? t('settings.modal.invite.roleOps')
                         : r.id === 'Ventas'
                         ? t('settings.modal.invite.roleSales')
@@ -2792,10 +3074,28 @@ export function SettingsSection({
                         ? t('settings.modal.invite.roleFin')
                         : r.id === 'Administrador'
                         ? t('settings.modal.invite.roleAdmin')
-                        : r.name}
-                    </option>
-                  ))}
-                </select>
+                        : r.name
+                    return (
+                      <label
+                        key={r.id}
+                        className={`invite-role-option ${checked ? 'checked' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setInviteRoles((prev) =>
+                              prev.includes(r.id)
+                                ? prev.filter((id) => id !== r.id)
+                                : [...prev, r.id]
+                            )
+                          }
+                        />
+                        <span>{labelText}</span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
 
               <div className="create-modal-actions">

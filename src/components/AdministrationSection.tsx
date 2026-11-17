@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Building2,
   MapPin,
@@ -11,8 +11,38 @@ import {
   Layers,
   ArrowRight,
   ShieldCheck,
+  History,
+  Download,
+  ArrowDownUp,
+  Clock3,
+  CalendarDays,
+  Laptop,
+  Globe,
+  LogIn,
 } from 'lucide-react'
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Cell,
+} from 'recharts'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
+import {
+  AUDIT_CHANGED_EVENT,
+  USERS_CHANGED_EVENT,
+  appendAuditLog,
+  loadStoredAuditEvents,
+  loadStoredWorkspaceUsers,
+  type AuditCategory,
+  type AuditEventRecord,
+  type WorkspaceUserRecord,
+} from '../data/settings'
+import type { EmployeeRecord } from '../data/employees'
 
 export interface DepartmentRecord {
   id: string
@@ -44,15 +74,20 @@ export interface PhysicalLocationRecord {
   active: boolean
 }
 
+export type AdminSectionTab = 'Departamentos' | 'Ubicaciones' | 'Resumen' | 'Historial de Auditoría'
+
 interface AdministrationSectionProps {
   departments: DepartmentRecord[]
   locations: PhysicalLocationRecord[]
+  employees?: EmployeeRecord[]
   onAddDepartment: (dep: DepartmentRecord) => void
   onAddLocation: (loc: PhysicalLocationRecord) => void
   onUpdateDepartments: (deps: DepartmentRecord[]) => void
   onUpdateLocations: (locs: PhysicalLocationRecord[]) => void
-  adminSection: 'Departamentos' | 'Ubicaciones' | 'Resumen'
-  onNavigateSection: (sec: 'Departamentos' | 'Ubicaciones' | 'Resumen') => void
+  adminSection: AdminSectionTab
+  onNavigateSection: (sec: AdminSectionTab) => void
+  allowedSections?: AdminSectionTab[]
+  currentUserName?: string
 }
 
 const LOCATION_TYPES: LocationType[] = [
@@ -63,22 +98,80 @@ const LOCATION_TYPES: LocationType[] = [
   'Punto de venta',
 ]
 
+type AdminAuditFilter =
+  | 'all'
+  | 'session'
+  | 'sales'
+  | 'users'
+  | 'inventory'
+  | 'finance'
+  | 'admin'
+  | 'system'
+
+const AUDIT_CATEGORY_META: Record<
+  AuditCategory,
+  { label: string; toneClass: string }
+> = {
+  session: { label: 'Inicio de sesión', toneClass: 'cat-session' },
+  sales: { label: 'Facturación y Ventas', toneClass: 'cat-sales' },
+  users: { label: 'Roles y Usuarios', toneClass: 'cat-users' },
+  inventory: { label: 'Inventario', toneClass: 'cat-inventory' },
+  finance: { label: 'Finanzas', toneClass: 'cat-finance' },
+  admin: { label: 'Administración', toneClass: 'cat-admin' },
+  settings: { label: 'Configuración', toneClass: 'cat-system' },
+  security: { label: 'Seguridad', toneClass: 'cat-system' },
+  integrations: { label: 'Integraciones', toneClass: 'cat-system' },
+}
+
 export function AdministrationSection({
   departments,
   locations,
+  employees = [],
   onAddDepartment,
   onAddLocation,
   onUpdateDepartments,
   onUpdateLocations,
   adminSection,
   onNavigateSection,
+  allowedSections,
+  currentUserName = 'Andrea Morales',
 }: AdministrationSectionProps) {
   const toast = useToast()
+  const { t, formatDate, formatTime } = useI18n()
 
   // Search queries
   const [departmentSearch, setDepartmentSearch] = useState('')
   const [locationSearch, setLocationSearch] = useState('')
   const [locationTypeFilter, setLocationTypeFilter] = useState<string>('Todos')
+
+  // Audit history state (synchronized with global audit store & workspace users)
+  const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>(() =>
+    loadStoredAuditEvents()
+  )
+  const [workspaceUsers, setWorkspaceUsers] = useState<WorkspaceUserRecord[]>(() =>
+    loadStoredWorkspaceUsers()
+  )
+  const [auditSearch, setAuditSearch] = useState('')
+  const [auditFilter, setAuditFilter] = useState<AdminAuditFilter>('all')
+  const [auditUserFilter, setAuditUserFilter] = useState<string>('all')
+  const [auditDateFrom, setAuditDateFrom] = useState<string>('')
+  const [auditDateTo, setAuditDateTo] = useState<string>('')
+  const [auditSortOrder, setAuditSortOrder] = useState<'desc' | 'asc'>('desc')
+
+  useEffect(() => {
+    const syncAudit = () => setAuditEvents(loadStoredAuditEvents())
+    const syncUsers = () => setWorkspaceUsers(loadStoredWorkspaceUsers())
+    window.addEventListener(AUDIT_CHANGED_EVENT, syncAudit)
+    window.addEventListener(USERS_CHANGED_EVENT, syncUsers)
+    window.addEventListener('storage', syncAudit)
+    window.addEventListener('storage', syncUsers)
+    return () => {
+      window.removeEventListener(AUDIT_CHANGED_EVENT, syncAudit)
+      window.removeEventListener(USERS_CHANGED_EVENT, syncUsers)
+      window.removeEventListener('storage', syncAudit)
+      window.removeEventListener('storage', syncUsers)
+    }
+  }, [])
 
   // Modals state
   const [isDeptModalOpen, setIsDeptModalOpen] = useState(false)
@@ -131,6 +224,273 @@ export function AdministrationSection({
       return matchType && matchQuery
     })
   }, [locations, locationSearch, locationTypeFilter])
+
+  const resolveEventText = (ev: AuditEventRecord) => ({
+    actionText: ev.seedKey ? t(`settings.audit.${ev.seedKey}.action` as const) : ev.action,
+    detailText: ev.seedKey ? t(`settings.audit.${ev.seedKey}.detail` as const) : ev.detail,
+  })
+
+  const auditUserOptions = useMemo(() => {
+    const countsByNormalized = new Map<string, { name: string; count: number }>()
+    const registerName = (rawName: string, increment: boolean) => {
+      const clean = rawName.trim()
+      if (!clean) return
+      const key = clean.toLowerCase()
+      const existing = countsByNormalized.get(key)
+      if (existing) {
+        if (increment) existing.count += 1
+      } else {
+        countsByNormalized.set(key, { name: clean, count: increment ? 1 : 0 })
+      }
+    }
+
+    auditEvents.forEach((ev) => registerName(ev.user, true))
+    employees.forEach((emp) => registerName(emp.fullName, false))
+    workspaceUsers.forEach((usr) => registerName(usr.name, false))
+
+    return Array.from(countsByNormalized.values()).sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      return a.name.localeCompare(b.name, 'es')
+    })
+  }, [auditEvents, employees, workspaceUsers])
+
+  const toLocalDateKey = (date: Date) => {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+
+  const todayDateKey = toLocalDateKey(new Date())
+  const sevenDaysAgoDateKey = (() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 6)
+    return toLocalDateKey(d)
+  })()
+  const monthStartDateKey = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+  })()
+
+  const activeDatePreset = useMemo(() => {
+    if (!auditDateFrom && !auditDateTo) return 'all'
+    if (auditDateFrom === todayDateKey && auditDateTo === todayDateKey) return 'today'
+    if (auditDateFrom === sevenDaysAgoDateKey && auditDateTo === todayDateKey) return '7d'
+    if (auditDateFrom === monthStartDateKey && auditDateTo === todayDateKey) return 'month'
+    return 'custom'
+  }, [auditDateFrom, auditDateTo, todayDateKey, sevenDaysAgoDateKey, monthStartDateKey])
+
+  const filteredAuditEvents = useMemo(() => {
+    const q = auditSearch.trim().toLowerCase()
+    const userFilterKey = auditUserFilter.trim().toLowerCase()
+    const hasBothDates = Boolean(auditDateFrom && auditDateTo)
+    const rangeStart = hasBothDates && auditDateFrom > auditDateTo ? auditDateTo : auditDateFrom
+    const rangeEnd = hasBothDates && auditDateFrom > auditDateTo ? auditDateFrom : auditDateTo
+
+    const list = auditEvents.filter((ev) => {
+      const userMatch =
+        auditUserFilter === 'all' || ev.user.trim().toLowerCase() === userFilterKey
+      if (!userMatch) return false
+
+      if (rangeStart || rangeEnd) {
+        const evDateKey = toLocalDateKey(new Date(ev.timestampIso))
+        if (rangeStart && evDateKey < rangeStart) return false
+        if (rangeEnd && evDateKey > rangeEnd) return false
+      }
+
+      const catMatch =
+        auditFilter === 'all'
+          ? true
+          : auditFilter === 'system'
+          ? ev.category === 'settings' || ev.category === 'security' || ev.category === 'integrations'
+          : ev.category === auditFilter
+      if (!catMatch) return false
+      if (!q) return true
+      const { actionText, detailText } = resolveEventText(ev)
+      const catLabel = AUDIT_CATEGORY_META[ev.category]?.label || ev.category
+      const metaText = ev.sessionMeta
+        ? `${ev.sessionMeta.roleLabel} ${ev.sessionMeta.ipAddress} ${ev.sessionMeta.deviceBrowser}`.toLowerCase()
+        : ''
+      return (
+        actionText.toLowerCase().includes(q) ||
+        detailText.toLowerCase().includes(q) ||
+        ev.user.toLowerCase().includes(q) ||
+        catLabel.toLowerCase().includes(q) ||
+        metaText.includes(q)
+      )
+    })
+
+    return [...list].sort((a, b) => {
+      const ta = new Date(a.timestampIso).getTime()
+      const tb = new Date(b.timestampIso).getTime()
+      return auditSortOrder === 'desc' ? tb - ta : ta - tb
+    })
+  }, [
+    auditEvents,
+    auditSearch,
+    auditFilter,
+    auditUserFilter,
+    auditDateFrom,
+    auditDateTo,
+    auditSortOrder,
+    t,
+  ])
+
+  const todayAuditCount = useMemo(
+    () => auditEvents.filter((ev) => toLocalDateKey(new Date(ev.timestampIso)) === todayDateKey).length,
+    [auditEvents, todayDateKey]
+  )
+
+  const loginFrequencyChartData = useMemo(() => {
+    const userFilterKey = auditUserFilter.trim().toLowerCase()
+    const sessionEvents = auditEvents.filter((ev) => {
+      if (ev.category !== 'session') return false
+      if (auditUserFilter !== 'all' && ev.user.trim().toLowerCase() !== userFilterKey) {
+        return false
+      }
+      return true
+    })
+
+    const countByDate = new Map<string, { count: number; users: Set<string> }>()
+    let earliestSessionKey = todayDateKey
+    let latestSessionKey = todayDateKey
+
+    sessionEvents.forEach((ev) => {
+      const key = toLocalDateKey(new Date(ev.timestampIso))
+      if (key < earliestSessionKey) earliestSessionKey = key
+      if (key > latestSessionKey) latestSessionKey = key
+      const existing = countByDate.get(key)
+      if (existing) {
+        existing.count += 1
+        existing.users.add(ev.user)
+      } else {
+        countByDate.set(key, { count: 1, users: new Set([ev.user]) })
+      }
+    })
+
+    const hasBoth = Boolean(auditDateFrom && auditDateTo)
+    const rawStart = hasBoth && auditDateFrom > auditDateTo ? auditDateTo : auditDateFrom
+    const rawEnd = hasBoth && auditDateFrom > auditDateTo ? auditDateFrom : auditDateTo
+
+    let startKey = rawStart || (earliestSessionKey < sevenDaysAgoDateKey ? earliestSessionKey : sevenDaysAgoDateKey)
+    let endKey = rawEnd || (latestSessionKey > todayDateKey ? latestSessionKey : todayDateKey)
+
+    if (!rawStart && rawEnd) {
+      startKey = earliestSessionKey < rawEnd ? earliestSessionKey : rawEnd
+    }
+    if (rawStart && !rawEnd) {
+      endKey = latestSessionKey > rawStart ? (latestSessionKey > todayDateKey ? latestSessionKey : todayDateKey) : rawStart
+    }
+    if (startKey > endKey) {
+      const tmp = startKey
+      startKey = endKey
+      endKey = tmp
+    }
+
+    const parseKeyToLocalDate = (key: string) => {
+      const [y, m, d] = key.split('-').map(Number)
+      return new Date(y, (m || 1) - 1, d || 1)
+    }
+
+    const startDate = parseKeyToLocalDate(startKey)
+    const endDate = parseKeyToLocalDate(endKey)
+    const dayDiff = Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000)
+
+    const shortFmt = new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short' })
+    const fullFmt = new Intl.DateTimeFormat('es-MX', {
+      weekday: 'short',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+
+    const points: Array<{
+      dateKey: string
+      label: string
+      fullDateLabel: string
+      logins: number
+      uniqueUsers: number
+    }> = []
+
+    if (dayDiff <= 45) {
+      const cursor = new Date(startDate)
+      while (cursor.getTime() <= endDate.getTime()) {
+        const key = toLocalDateKey(cursor)
+        const entry = countByDate.get(key)
+        points.push({
+          dateKey: key,
+          label: shortFmt.format(cursor),
+          fullDateLabel: fullFmt.format(cursor),
+          logins: entry?.count || 0,
+          uniqueUsers: entry?.users.size || 0,
+        })
+        cursor.setDate(cursor.getDate() + 1)
+      }
+    } else {
+      Array.from(countByDate.entries())
+        .filter(([k]) => k >= startKey && k <= endKey)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .forEach(([key, entry]) => {
+          const dt = parseKeyToLocalDate(key)
+          points.push({
+            dateKey: key,
+            label: shortFmt.format(dt),
+            fullDateLabel: fullFmt.format(dt),
+            logins: entry.count,
+            uniqueUsers: entry.users.size,
+          })
+        })
+    }
+
+    return points
+  }, [auditEvents, auditUserFilter, auditDateFrom, auditDateTo, todayDateKey, sevenDaysAgoDateKey])
+
+  const totalLoginsInChartRange = useMemo(
+    () => loginFrequencyChartData.reduce((acc, d) => acc + d.logins, 0),
+    [loginFrequencyChartData]
+  )
+
+  const handleExportAuditCsv = () => {
+    const header = [
+      'Fecha y hora',
+      'Categoría',
+      'Acción',
+      'Detalle',
+      'Usuario',
+      'Rol',
+      'IP',
+      'Dispositivo / Navegador',
+    ]
+    const rows = filteredAuditEvents.map((ev) => {
+      const { actionText, detailText } = resolveEventText(ev)
+      const dt = new Date(ev.timestampIso)
+      const catLabel = AUDIT_CATEGORY_META[ev.category]?.label || ev.category
+      return [
+        `${formatDate(dt)} ${formatTime(dt)}`,
+        catLabel,
+        actionText,
+        detailText,
+        ev.user,
+        ev.sessionMeta?.roleLabel || '—',
+        ev.sessionMeta?.ipAddress || '—',
+        ev.sessionMeta?.deviceBrowser || '—',
+      ]
+        .map((c) => `"${String(c).replace(/"/g, '""')}"`)
+        .join(',')
+    })
+    const csv = `\uFEFF${header.join(',')}\n${rows.join('\n')}`
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `aes-nexus-auditoria-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    toast.success('Historial de auditoría exportado en CSV.', 'Auditoría exportada')
+  }
+
+  const isTabVisible = (tab: AdminSectionTab) =>
+    !allowedSections || allowedSections.includes(tab)
 
   // Handle department creation
   const handleCreateDepartment = (e: React.FormEvent) => {
@@ -209,6 +569,14 @@ export function AdministrationSection({
     const updated = departments.map((d) => (d.id === id ? { ...d, active: !d.active } : d))
     onUpdateDepartments(updated)
     const dept = departments.find((d) => d.id === id)
+    if (dept) {
+      appendAuditLog({
+        category: 'admin',
+        action: 'Cambio de estado de departamento',
+        detail: `${dept.code} · ${dept.name} → ${dept.active ? 'Inactivo' : 'Activo'}`,
+        user: currentUserName,
+      })
+    }
     toast.info(
       `Departamento ${dept?.name} ahora está ${dept?.active ? 'Inactivo' : 'Activo'}.`,
       'Estado actualizado'
@@ -219,6 +587,14 @@ export function AdministrationSection({
     const updated = locations.map((l) => (l.id === id ? { ...l, active: !l.active } : l))
     onUpdateLocations(updated)
     const loc = locations.find((l) => l.id === id)
+    if (loc) {
+      appendAuditLog({
+        category: 'admin',
+        action: 'Cambio de estado de ubicación física',
+        detail: `${loc.code} · ${loc.name} → ${loc.active ? 'Inactiva' : 'Activa'}`,
+        user: currentUserName,
+      })
+    }
     toast.info(
       `Ubicación ${loc?.name} ahora está ${loc?.active ? 'Inactiva' : 'Activa'}.`,
       'Estado actualizado'
@@ -257,27 +633,42 @@ export function AdministrationSection({
 
       {/* Navigation tabs */}
       <nav className="crm-tabs" aria-label="Secciones de Administración">
-        <button
-          className={adminSection === 'Departamentos' ? 'active' : ''}
-          onClick={() => onNavigateSection('Departamentos')}
-        >
-          <Building2 size={13} />
-          Departamentos <span>{departments.length}</span>
-        </button>
-        <button
-          className={adminSection === 'Ubicaciones' ? 'active' : ''}
-          onClick={() => onNavigateSection('Ubicaciones')}
-        >
-          <MapPin size={13} />
-          Ubicaciones físicas <span>{locations.length}</span>
-        </button>
-        <button
-          className={adminSection === 'Resumen' ? 'active' : ''}
-          onClick={() => onNavigateSection('Resumen')}
-        >
-          <Layers size={13} />
-          Resumen organizacional
-        </button>
+        {isTabVisible('Departamentos') && (
+          <button
+            className={adminSection === 'Departamentos' ? 'active' : ''}
+            onClick={() => onNavigateSection('Departamentos')}
+          >
+            <Building2 size={13} />
+            Departamentos <span>{departments.length}</span>
+          </button>
+        )}
+        {isTabVisible('Ubicaciones') && (
+          <button
+            className={adminSection === 'Ubicaciones' ? 'active' : ''}
+            onClick={() => onNavigateSection('Ubicaciones')}
+          >
+            <MapPin size={13} />
+            Ubicaciones físicas <span>{locations.length}</span>
+          </button>
+        )}
+        {isTabVisible('Resumen') && (
+          <button
+            className={adminSection === 'Resumen' ? 'active' : ''}
+            onClick={() => onNavigateSection('Resumen')}
+          >
+            <Layers size={13} />
+            Resumen organizacional
+          </button>
+        )}
+        {isTabVisible('Historial de Auditoría') && (
+          <button
+            className={adminSection === 'Historial de Auditoría' ? 'active' : ''}
+            onClick={() => onNavigateSection('Historial de Auditoría')}
+          >
+            <History size={13} />
+            Historial de Auditoría <span>{auditEvents.length}</span>
+          </button>
+        )}
       </nav>
 
       {/* Section 1: Departamentos */}
@@ -704,6 +1095,483 @@ export function AdministrationSection({
                 <Plus size={13} /> Agregar ubicación
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Section 4: Historial de Auditoría */}
+      {adminSection === 'Historial de Auditoría' && (
+        <div className="finance-section-container">
+          <div className="ops-header-strip">
+            <div className="ops-header-left">
+              <div className="ops-icon-box fin-icon-box">
+                <History size={20} />
+              </div>
+              <div>
+                <h2>Historial de Auditoría del Sistema</h2>
+                <p>
+                  Registro cronológico de eventos clave e inicios de sesión en el ERP: accesos de usuarios, facturas, cambios en roles, inventario y finanzas.
+                </p>
+              </div>
+            </div>
+
+            <div className="ops-header-right">
+              <div className="ops-stat-item">
+                <span className="ops-stat-label">Eventos registrados</span>
+                <strong className="ops-stat-val tabular-nums">{auditEvents.length}</strong>
+              </div>
+              <div className="ops-stat-item">
+                <span className="ops-stat-label">Actividad de hoy</span>
+                <span className="ops-stat-pill ok tabular-nums">{todayAuditCount} hoy</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="ops-panel-card admin-audit-chart-card">
+            <div className="admin-audit-chart-header">
+              <div>
+                <div className="panel-kicker">FRECUENCIA DE ACCESOS</div>
+                <h3>
+                  Inicios de sesión por día{' '}
+                  <span className="admin-audit-chart-count tabular-nums">
+                    ({totalLoginsInChartRange} en el rango)
+                  </span>
+                </h3>
+              </div>
+              <div className="admin-audit-chart-meta">
+                {auditUserFilter !== 'all' && (
+                  <span className="admin-audit-chart-scope">Usuario: {auditUserFilter}</span>
+                )}
+                <span className="admin-audit-chart-hint">
+                  Haz clic en una barra para filtrar ese día
+                </span>
+              </div>
+            </div>
+
+            {loginFrequencyChartData.length === 0 ? (
+              <div className="admin-audit-chart-empty">
+                <LogIn size={15} />
+                <span>Sin inicios de sesión registrados en el rango seleccionado.</span>
+              </div>
+            ) : (
+              <div className="admin-audit-recharts-wrap">
+                <ResponsiveContainer width="100%" height={148}>
+                  <BarChart
+                    data={loginFrequencyChartData}
+                    margin={{ top: 8, right: 10, left: -20, bottom: 2 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} strokeOpacity={0.35} />
+                    <XAxis
+                      dataKey="label"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 10, fill: '#77857d' }}
+                      minTickGap={14}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 10, fill: '#77857d' }}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(15, 118, 110, 0.08)' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload || payload.length === 0) return null
+                        const row = payload[0].payload as {
+                          fullDateLabel: string
+                          logins: number
+                          uniqueUsers: number
+                        }
+                        return (
+                          <div className="admin-audit-chart-tooltip">
+                            <strong>{row.fullDateLabel}</strong>
+                            <span>
+                              {row.logins} inicio(s) de sesión
+                              {row.uniqueUsers > 0 ? ` · ${row.uniqueUsers} usuario(s)` : ''}
+                            </span>
+                          </div>
+                        )
+                      }}
+                    />
+                    <Bar
+                      dataKey="logins"
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={34}
+                      style={{ cursor: 'pointer' }}
+                      onClick={(barData) => {
+                        const clickedKey = (barData as { dateKey?: string })?.dateKey
+                        if (!clickedKey) return
+                        if (auditDateFrom === clickedKey && auditDateTo === clickedKey) {
+                          setAuditDateFrom('')
+                          setAuditDateTo('')
+                        } else {
+                          setAuditDateFrom(clickedKey)
+                          setAuditDateTo(clickedKey)
+                        }
+                      }}
+                    >
+                      {loginFrequencyChartData.map((entry) => {
+                        const isSelectedDay =
+                          auditDateFrom === entry.dateKey && auditDateTo === entry.dateKey
+                        return (
+                          <Cell
+                            key={entry.dateKey}
+                            fill={
+                              isSelectedDay
+                                ? '#0d5e57'
+                                : entry.logins > 0
+                                ? '#0f766e'
+                                : 'rgba(140, 155, 146, 0.25)'
+                            }
+                          />
+                        )
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="admin-audit-controls">
+            <div className="admin-audit-search-row">
+              <label className="clients-search" style={{ flex: 1, minWidth: '220px' }}>
+                <Search size={15} />
+                <input
+                  type="search"
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                  placeholder="Buscar por acción, usuario, rol, IP, dispositivo o detalle..."
+                  aria-label="Buscar en historial de auditoría"
+                />
+              </label>
+
+              <div className="accounting-select-wrap">
+                <Users size={13} />
+                <label htmlFor="filter-audit-user">Usuario:</label>
+                <select
+                  id="filter-audit-user"
+                  className="accounting-filter-select"
+                  value={auditUserFilter}
+                  onChange={(e) => setAuditUserFilter(e.target.value)}
+                  aria-label="Filtrar historial de auditoría por nombre de usuario"
+                >
+                  <option value="all">Todos los usuarios ({auditUserOptions.length})</option>
+                  {auditUserOptions.map((opt) => (
+                    <option key={opt.name} value={opt.name}>
+                      {opt.name} ({opt.count})
+                    </option>
+                  ))}
+                </select>
+                {auditUserFilter !== 'all' && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => setAuditUserFilter('all')}
+                    title="Limpiar filtro de usuario"
+                    aria-label="Limpiar filtro de usuario"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="admin-audit-actions-right">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() =>
+                    setAuditSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+                  }
+                  title="Cambiar orden cronológico"
+                >
+                  <ArrowDownUp size={13} />
+                  {auditSortOrder === 'desc' ? 'Más recientes' : 'Más antiguos'}
+                </button>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={handleExportAuditCsv}
+                  disabled={filteredAuditEvents.length === 0}
+                >
+                  <Download size={13} /> Exportar CSV
+                </button>
+              </div>
+            </div>
+
+            <div className="admin-audit-date-row">
+              <div className="admin-audit-date-presets" role="group" aria-label="Rangos rápidos de fecha">
+                <button
+                  type="button"
+                  className={`audit-filter-btn ${activeDatePreset === 'all' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAuditDateFrom('')
+                    setAuditDateTo('')
+                  }}
+                >
+                  Todas las fechas
+                </button>
+                <button
+                  type="button"
+                  className={`audit-filter-btn ${activeDatePreset === 'today' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAuditDateFrom(todayDateKey)
+                    setAuditDateTo(todayDateKey)
+                  }}
+                >
+                  Hoy
+                </button>
+                <button
+                  type="button"
+                  className={`audit-filter-btn ${activeDatePreset === '7d' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAuditDateFrom(sevenDaysAgoDateKey)
+                    setAuditDateTo(todayDateKey)
+                  }}
+                >
+                  Últimos 7 días
+                </button>
+                <button
+                  type="button"
+                  className={`audit-filter-btn ${activeDatePreset === 'month' ? 'active' : ''}`}
+                  onClick={() => {
+                    setAuditDateFrom(monthStartDateKey)
+                    setAuditDateTo(todayDateKey)
+                  }}
+                >
+                  Este mes
+                </button>
+              </div>
+
+              <div className="admin-audit-date-inputs">
+                <div className="accounting-select-wrap">
+                  <CalendarDays size={13} />
+                  <label htmlFor="audit-date-from">Desde:</label>
+                  <input
+                    id="audit-date-from"
+                    type="date"
+                    className="admin-audit-date-input"
+                    value={auditDateFrom}
+                    max={auditDateTo || undefined}
+                    onChange={(e) => setAuditDateFrom(e.target.value)}
+                    aria-label="Fecha inicial del historial de auditoría"
+                  />
+                </div>
+
+                <div className="accounting-select-wrap">
+                  <CalendarDays size={13} />
+                  <label htmlFor="audit-date-to">Hasta:</label>
+                  <input
+                    id="audit-date-to"
+                    type="date"
+                    className="admin-audit-date-input"
+                    value={auditDateTo}
+                    min={auditDateFrom || undefined}
+                    onChange={(e) => setAuditDateTo(e.target.value)}
+                    aria-label="Fecha final del historial de auditoría"
+                  />
+                </div>
+
+                {(auditDateFrom || auditDateTo) && (
+                  <button
+                    type="button"
+                    className="search-clear-btn"
+                    onClick={() => {
+                      setAuditDateFrom('')
+                      setAuditDateTo('')
+                    }}
+                    title="Limpiar rango de fechas"
+                    aria-label="Limpiar rango de fechas"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="audit-filter-tabs" role="tablist" aria-label="Filtrar eventos por módulo">
+              {(
+                [
+                  { id: 'all', label: 'Todos' },
+                  { id: 'session', label: 'Inicios de sesión' },
+                  { id: 'sales', label: 'Facturación y Ventas' },
+                  { id: 'users', label: 'Roles y Usuarios' },
+                  { id: 'inventory', label: 'Inventario' },
+                  { id: 'finance', label: 'Finanzas' },
+                  { id: 'admin', label: 'Administración' },
+                  { id: 'system', label: 'Sistema y Seguridad' },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={auditFilter === tab.id}
+                  className={`audit-filter-btn ${auditFilter === tab.id ? 'active' : ''}`}
+                  onClick={() => setAuditFilter(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="ops-panel-card">
+            <div className="ops-panel-header" style={{ marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <div className="panel-kicker">BITÁCORA CRONOLÓGICA</div>
+                <h3>
+                  Mostrando {filteredAuditEvents.length} de {auditEvents.length} evento(s)
+                </h3>
+              </div>
+              <div className="admin-audit-active-pills">
+                {auditUserFilter !== 'all' && (
+                  <button
+                    type="button"
+                    className="admin-audit-user-pill"
+                    onClick={() => setAuditUserFilter('all')}
+                    title="Quitar filtro de usuario"
+                  >
+                    <Users size={12} />
+                    <span>
+                      Usuario: <strong>{auditUserFilter}</strong>
+                    </span>
+                    <X size={12} />
+                  </button>
+                )}
+                {(auditDateFrom || auditDateTo) && (
+                  <button
+                    type="button"
+                    className="admin-audit-user-pill"
+                    onClick={() => {
+                      setAuditDateFrom('')
+                      setAuditDateTo('')
+                    }}
+                    title="Quitar rango de fechas"
+                  >
+                    <CalendarDays size={12} />
+                    <span>
+                      Fechas:{' '}
+                      <strong>
+                        {auditDateFrom || 'Inicio'} — {auditDateTo || 'Hoy'}
+                      </strong>
+                    </span>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {filteredAuditEvents.length === 0 ? (
+              <div className="clients-empty">
+                <History size={20} />
+                <strong>Sin registros para este filtro</strong>
+                <span>
+                  {auditUserFilter !== 'all' || auditDateFrom || auditDateTo
+                    ? 'No hay eventos registrados con la combinación actual de usuario, fechas o categoría.'
+                    : 'Prueba otra categoría o limpia el campo de búsqueda.'}
+                </span>
+                {(auditUserFilter !== 'all' ||
+                  auditDateFrom ||
+                  auditDateTo ||
+                  auditFilter !== 'all' ||
+                  auditSearch.trim()) && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    style={{ marginTop: '8px' }}
+                    onClick={() => {
+                      setAuditSearch('')
+                      setAuditFilter('all')
+                      setAuditUserFilter('all')
+                      setAuditDateFrom('')
+                      setAuditDateTo('')
+                    }}
+                  >
+                    Limpiar filtros
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="admin-audit-timeline">
+                {filteredAuditEvents.map((ev) => {
+                  const { actionText, detailText } = resolveEventText(ev)
+                  const dt = new Date(ev.timestampIso)
+                  const catMeta = AUDIT_CATEGORY_META[ev.category] || {
+                    label: ev.category,
+                    toneClass: 'cat-system',
+                  }
+                  const isUserFiltered =
+                    auditUserFilter !== 'all' &&
+                    auditUserFilter.trim().toLowerCase() === ev.user.trim().toLowerCase()
+                  return (
+                    <article key={ev.id} className="admin-audit-row">
+                      <div className="admin-audit-dot-col">
+                        <span className={`admin-audit-dot ${catMeta.toneClass}`} />
+                      </div>
+                      <div className="admin-audit-main">
+                        <div className="admin-audit-top">
+                          <div className="admin-audit-title-group">
+                            <strong>{actionText}</strong>
+                            <span className={`admin-audit-cat-badge ${catMeta.toneClass}`}>
+                              {ev.category === 'session' && <LogIn size={10} style={{ marginRight: '4px' }} />}
+                              {catMeta.label}
+                            </span>
+                          </div>
+                          <time
+                            className="admin-audit-time tabular-nums"
+                            dateTime={ev.timestampIso}
+                          >
+                            <Clock3 size={11} /> {formatDate(dt)} · {formatTime(dt)}
+                          </time>
+                        </div>
+                        <p className="admin-audit-detail">{detailText}</p>
+                        {ev.sessionMeta && (
+                          <div className="admin-audit-session-meta">
+                            <span>
+                              <ShieldCheck size={11} aria-hidden="true" />
+                              Rol: <strong>{ev.sessionMeta.roleLabel}</strong>
+                            </span>
+                            <span aria-hidden="true" className="admin-audit-meta-sep">·</span>
+                            <span>
+                              <Globe size={11} aria-hidden="true" />
+                              IP: <strong className="tabular-nums font-mono">{ev.sessionMeta.ipAddress}</strong>
+                            </span>
+                            <span aria-hidden="true" className="admin-audit-meta-sep">·</span>
+                            <span>
+                              <Laptop size={11} aria-hidden="true" />
+                              Equipo: <strong>{ev.sessionMeta.deviceBrowser}</strong>
+                            </span>
+                          </div>
+                        )}
+                        <div className="admin-audit-actor">
+                          <span>{ev.category === 'session' ? 'Usuario:' : 'Ejecutado por:'}</span>{' '}
+                          <button
+                            type="button"
+                            className={`admin-audit-actor-btn ${isUserFiltered ? 'active' : ''}`}
+                            onClick={() =>
+                              setAuditUserFilter((prev) =>
+                                prev.trim().toLowerCase() === ev.user.trim().toLowerCase()
+                                  ? 'all'
+                                  : ev.user.trim()
+                              )
+                            }
+                            title={
+                              isUserFiltered
+                                ? 'Quitar filtro por este usuario'
+                                : `Ver solo acciones de ${ev.user}`
+                            }
+                          >
+                            {ev.user}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

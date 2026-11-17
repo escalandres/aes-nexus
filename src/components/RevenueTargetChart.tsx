@@ -30,6 +30,8 @@ interface RevenueTargetChartProps {
   orders: SalesOrder[]
   receivables: InvoiceReceivable[]
   expenses: ExpenseRecord[]
+  allowSalesSeries?: boolean
+  allowFinanceSeries?: boolean
 }
 
 type ChartViewMode = 'comparativo' | 'tendencia' | 'flujo-caja' | 'cumplimiento'
@@ -102,11 +104,25 @@ export function RevenueTargetChart({
   orders,
   receivables,
   expenses,
+  allowSalesSeries = true,
+  allowFinanceSeries = true,
 }: RevenueTargetChartProps) {
-  const [viewMode, setChartViewMode] = useState<ChartViewMode>('comparativo')
+  const [requestedViewMode, setChartViewMode] = useState<ChartViewMode>(() =>
+    !allowSalesSeries && allowFinanceSeries ? 'flujo-caja' : 'comparativo'
+  )
   const [chartColors, setChartColors] = useState(loadSavedColors)
   const [colorMenuOpen, setColorMenuOpen] = useState(false)
   const colorPickerRef = useRef<HTMLDivElement>(null)
+
+  const viewMode: ChartViewMode = useMemo(() => {
+    if (!allowSalesSeries && allowFinanceSeries) return 'flujo-caja'
+    if (allowSalesSeries && !allowFinanceSeries && requestedViewMode === 'flujo-caja') {
+      return 'comparativo'
+    }
+    return requestedViewMode
+  }, [allowSalesSeries, allowFinanceSeries, requestedViewMode])
+
+  const financeOnly = !allowSalesSeries && allowFinanceSeries
 
   const { ventasColor, objetivoColor } = chartColors
 
@@ -244,61 +260,108 @@ export function RevenueTargetChart({
     () => Number(((totalVentas / totalObjetivo) * 100).toFixed(1)),
     [totalVentas, totalObjetivo]
   )
+  const totalCobros = useMemo(
+    () => monthlyData.reduce((acc, d) => acc + d.cobros, 0),
+    [monthlyData]
+  )
+  const totalGastos = useMemo(
+    () => monthlyData.reduce((acc, d) => acc + d.gastos, 0),
+    [monthlyData]
+  )
+  const totalNetFlow = totalCobros - totalGastos
   const bestMonth = useMemo(() => {
     return [...monthlyData].sort((a, b) => b.ventas - a.ventas)[0]
   }, [monthlyData])
+  const bestCashMonth = useMemo(() => {
+    return [...monthlyData].sort((a, b) => b.cobros - b.gastos - (a.cobros - a.gastos))[0]
+  }, [monthlyData])
+
+  const primarySeriesLabel =
+    viewMode === 'flujo-caja'
+      ? 'Cobros (Entradas)'
+      : viewMode === 'cumplimiento'
+      ? 'Meta alcanzada (≥ 100%)'
+      : 'Ventas reales'
+
+  const secondarySeriesLabel =
+    viewMode === 'flujo-caja'
+      ? 'Gastos (Salidas)'
+      : viewMode === 'cumplimiento'
+      ? 'Por debajo de meta (< 100%)'
+      : 'Objetivo mensual'
 
   return (
-    <article className="panel exec-chart-panel" aria-label="Historial de ventas y objetivos">
+    <article
+      className="panel exec-chart-panel"
+      aria-label={
+        financeOnly ? 'Flujo de caja: cobros y gastos' : 'Historial de ventas y objetivos'
+      }
+    >
       {/* Top Header & View Controls */}
       <div className="exec-chart-top-bar">
         <div>
-          <div className="panel-kicker">HISTORIAL COMERCIAL · ÚLTIMOS 6 MESES</div>
-          <h2>Historial de ventas vs. objetivos mensuales</h2>
+          <div className="panel-kicker">
+            {financeOnly
+              ? 'FLUJO DE CAJA · ÚLTIMOS 6 MESES'
+              : 'HISTORIAL COMERCIAL · ÚLTIMOS 6 MESES'}
+          </div>
+          <h2>
+            {financeOnly
+              ? 'Cobros recibidos vs. gastos operativos'
+              : 'Historial de ventas vs. objetivos mensuales'}
+          </h2>
           <p className="panel-subtitle">
-            Gráfico comparativo de la facturación lograda contra la meta presupuestada de cada mes
+            {financeOnly
+              ? 'Evolución mensual de entradas cobradas contra egresos y gastos registrados'
+              : 'Gráfico comparativo de la facturación lograda contra la meta presupuestada de cada mes'}
           </p>
         </div>
 
         {/* View Switcher Tabs + Color Customizer */}
         <div className="exec-chart-controls">
           <div className="exec-chart-tabs" role="tablist" aria-label="Modo de gráfico">
-            <button
-              type="button"
-              className={`exec-chart-tab ${viewMode === 'comparativo' ? 'active' : ''}`}
-              onClick={() => setChartViewMode('comparativo')}
-              title="Gráfico de barras comparativo: Venta lograda vs. Objetivo mensual"
-            >
-              <BarChart3 size={12} />
-              Barras comparativas
-            </button>
-            <button
-              type="button"
-              className={`exec-chart-tab ${viewMode === 'tendencia' ? 'active' : ''}`}
-              onClick={() => setChartViewMode('tendencia')}
-              title="Barras de ventas con línea de objetivo"
-            >
-              <LineChartIcon size={12} />
-              Tendencia mixta
-            </button>
-            <button
-              type="button"
-              className={`exec-chart-tab ${viewMode === 'cumplimiento' ? 'active' : ''}`}
-              onClick={() => setChartViewMode('cumplimiento')}
-              title="Porcentaje de cumplimiento de la meta por mes"
-            >
-              <Percent size={12} />
-              % Cumplimiento
-            </button>
-            <button
-              type="button"
-              className={`exec-chart-tab ${viewMode === 'flujo-caja' ? 'active' : ''}`}
-              onClick={() => setChartViewMode('flujo-caja')}
-              title="Cobros recibidos frente a gastos y egresos"
-            >
-              <Scale size={12} />
-              Cobros vs. Gastos
-            </button>
+            {allowSalesSeries && (
+              <>
+                <button
+                  type="button"
+                  className={`exec-chart-tab ${viewMode === 'comparativo' ? 'active' : ''}`}
+                  onClick={() => setChartViewMode('comparativo')}
+                  title="Gráfico de barras comparativo: Venta lograda vs. Objetivo mensual"
+                >
+                  <BarChart3 size={12} />
+                  Barras comparativas
+                </button>
+                <button
+                  type="button"
+                  className={`exec-chart-tab ${viewMode === 'tendencia' ? 'active' : ''}`}
+                  onClick={() => setChartViewMode('tendencia')}
+                  title="Barras de ventas con línea de objetivo"
+                >
+                  <LineChartIcon size={12} />
+                  Tendencia mixta
+                </button>
+                <button
+                  type="button"
+                  className={`exec-chart-tab ${viewMode === 'cumplimiento' ? 'active' : ''}`}
+                  onClick={() => setChartViewMode('cumplimiento')}
+                  title="Porcentaje de cumplimiento de la meta por mes"
+                >
+                  <Percent size={12} />
+                  % Cumplimiento
+                </button>
+              </>
+            )}
+            {allowFinanceSeries && (
+              <button
+                type="button"
+                className={`exec-chart-tab ${viewMode === 'flujo-caja' ? 'active' : ''}`}
+                onClick={() => setChartViewMode('flujo-caja')}
+                title="Cobros recibidos frente a gastos y egresos"
+              >
+                <Scale size={12} />
+                Cobros vs. Gastos
+              </button>
+            )}
           </div>
 
           <div className="chart-color-picker-anchor" ref={colorPickerRef}>
@@ -308,7 +371,7 @@ export function RevenueTargetChart({
               onClick={() => setColorMenuOpen((prev) => !prev)}
               aria-expanded={colorMenuOpen}
               aria-label="Personalizar colores de la gráfica"
-              title="Personalizar colores de Ventas reales y Objetivo mensual"
+              title={`Personalizar colores de ${primarySeriesLabel} y ${secondarySeriesLabel}`}
             >
               <Palette size={12} />
               <span className="chart-color-dots-preview" aria-hidden="true">
@@ -369,12 +432,12 @@ export function RevenueTargetChart({
                   </div>
                 </div>
 
-                {/* Ventas Reales Color */}
+                {/* Primary Series Color */}
                 <div className="chart-color-section">
                   <div className="chart-color-row-head">
                     <span className="chart-color-series-title">
                       <i className="series-dot" style={{ backgroundColor: ventasColor }} />
-                      Ventas reales
+                      {primarySeriesLabel}
                     </span>
                     <code>{ventasColor.toUpperCase()}</code>
                   </div>
@@ -389,7 +452,7 @@ export function RevenueTargetChart({
                           style={{ backgroundColor: preset.hex }}
                           onClick={() => updateColors({ ventasColor: preset.hex })}
                           title={`${preset.label} (${preset.hex})`}
-                          aria-label={`Ventas reales: ${preset.label}`}
+                          aria-label={`${primarySeriesLabel}: ${preset.label}`}
                         >
                           {selected && <Check size={11} strokeWidth={3} />}
                         </button>
@@ -397,25 +460,25 @@ export function RevenueTargetChart({
                     })}
                     <label
                       className="chart-swatch-custom"
-                      title="Elegir color personalizado para Ventas reales"
+                      title={`Elegir color personalizado para ${primarySeriesLabel}`}
                     >
                       <Pipette size={11} />
                       <input
                         type="color"
                         value={ventasColor}
                         onChange={(e) => updateColors({ ventasColor: e.target.value })}
-                        aria-label="Color personalizado para Ventas reales"
+                        aria-label={`Color personalizado para ${primarySeriesLabel}`}
                       />
                     </label>
                   </div>
                 </div>
 
-                {/* Objetivo Mensual Color */}
+                {/* Secondary Series Color */}
                 <div className="chart-color-section">
                   <div className="chart-color-row-head">
                     <span className="chart-color-series-title">
                       <i className="series-dot" style={{ backgroundColor: objetivoColor }} />
-                      Objetivo mensual
+                      {secondarySeriesLabel}
                     </span>
                     <code>{objetivoColor.toUpperCase()}</code>
                   </div>
@@ -430,7 +493,7 @@ export function RevenueTargetChart({
                           style={{ backgroundColor: preset.hex }}
                           onClick={() => updateColors({ objetivoColor: preset.hex })}
                           title={`${preset.label} (${preset.hex})`}
-                          aria-label={`Objetivo mensual: ${preset.label}`}
+                          aria-label={`${secondarySeriesLabel}: ${preset.label}`}
                         >
                           {selected && <Check size={11} strokeWidth={3} />}
                         </button>
@@ -438,14 +501,14 @@ export function RevenueTargetChart({
                     })}
                     <label
                       className="chart-swatch-custom"
-                      title="Elegir color personalizado para Objetivo mensual"
+                      title={`Elegir color personalizado para ${secondarySeriesLabel}`}
                     >
                       <Pipette size={11} />
                       <input
                         type="color"
                         value={objetivoColor}
                         onChange={(e) => updateColors({ objetivoColor: e.target.value })}
-                        aria-label="Color personalizado para Objetivo mensual"
+                        aria-label={`Color personalizado para ${secondarySeriesLabel}`}
                       />
                     </label>
                   </div>
@@ -458,43 +521,80 @@ export function RevenueTargetChart({
 
       {/* KPI Stats Strip */}
       <div className="exec-chart-kpis-strip">
-        <div className="exec-chart-kpi">
-          <span className="exec-chart-kpi-lbl">Ventas totales (6 meses)</span>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
-            <span className="exec-chart-kpi-val">{money(totalVentas)}</span>
-            <span className="trend trend-up">
-              <ArrowUpRight size={13} /> +12.4%
-            </span>
-          </div>
-        </div>
+        {financeOnly ? (
+          <>
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Cobros recibidos (6 meses)</span>
+              <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
+                {money(totalCobros)}
+              </span>
+            </div>
 
-        <div className="exec-chart-kpi">
-          <span className="exec-chart-kpi-lbl">Objetivo presupuestado</span>
-          <span className="exec-chart-kpi-val">{money(totalObjetivo)}</span>
-        </div>
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Gastos operativos (6 meses)</span>
+              <span className="exec-chart-kpi-val" style={{ color: objetivoColor }}>
+                {money(totalGastos)}
+              </span>
+            </div>
 
-        <div className="exec-chart-kpi">
-          <span className="exec-chart-kpi-lbl">Cumplimiento semestral</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <span className="exec-chart-kpi-val">{globalAttainment}%</span>
-            <span
-              style={{
-                fontSize: '8.5px',
-                fontWeight: 700,
-                color: globalAttainment >= 100 ? ventasColor : objetivoColor,
-              }}
-            >
-              {globalAttainment >= 100 ? 'Meta superada' : 'En rango óptimo'}
-            </span>
-          </div>
-        </div>
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Flujo neto semestral</span>
+              <span
+                className="exec-chart-kpi-val"
+                style={{ color: totalNetFlow >= 0 ? ventasColor : objetivoColor }}
+              >
+                {money(totalNetFlow)}
+              </span>
+            </div>
 
-        <div className="exec-chart-kpi">
-          <span className="exec-chart-kpi-lbl">Mes récord</span>
-          <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
-            {bestMonth.month} ({money(bestMonth.ventas)})
-          </span>
-        </div>
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Mejor mes en flujo neto</span>
+              <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
+                {bestCashMonth.month} ({money(bestCashMonth.cobros - bestCashMonth.gastos)})
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Ventas totales (6 meses)</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                <span className="exec-chart-kpi-val">{money(totalVentas)}</span>
+                <span className="trend trend-up">
+                  <ArrowUpRight size={13} /> +12.4%
+                </span>
+              </div>
+            </div>
+
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Objetivo presupuestado</span>
+              <span className="exec-chart-kpi-val">{money(totalObjetivo)}</span>
+            </div>
+
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Cumplimiento semestral</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span className="exec-chart-kpi-val">{globalAttainment}%</span>
+                <span
+                  style={{
+                    fontSize: '8.5px',
+                    fontWeight: 700,
+                    color: globalAttainment >= 100 ? ventasColor : objetivoColor,
+                  }}
+                >
+                  {globalAttainment >= 100 ? 'Meta superada' : 'En rango óptimo'}
+                </span>
+              </div>
+            </div>
+
+            <div className="exec-chart-kpi">
+              <span className="exec-chart-kpi-lbl">Mes récord</span>
+              <span className="exec-chart-kpi-val" style={{ color: ventasColor }}>
+                {bestMonth.month} ({money(bestMonth.ventas)})
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Active Chart Legend Strip */}
@@ -550,14 +650,24 @@ export function RevenueTargetChart({
 
         {viewMode === 'flujo-caja' && (
           <>
-            <span className="exec-legend-item static">
-              <i className="legend-swatch" style={{ backgroundColor: '#1d7a65' }} />
+            <button
+              type="button"
+              className="exec-legend-item"
+              onClick={() => setColorMenuOpen(true)}
+              title="Cambiar color de Cobros (Entradas)"
+            >
+              <i className="legend-swatch" style={{ backgroundColor: ventasColor }} />
               <span>Cobros (Entradas)</span>
-            </span>
-            <span className="exec-legend-item static">
-              <i className="legend-swatch" style={{ backgroundColor: '#d9534f' }} />
+            </button>
+            <button
+              type="button"
+              className="exec-legend-item"
+              onClick={() => setColorMenuOpen(true)}
+              title="Cambiar color de Gastos (Salidas)"
+            >
+              <i className="legend-swatch" style={{ backgroundColor: objetivoColor }} />
               <span>Gastos (Salidas)</span>
-            </span>
+            </button>
           </>
         )}
       </div>
@@ -829,12 +939,12 @@ export function RevenueTargetChart({
             >
               <defs>
                 <linearGradient id="cobrosBarGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#1d7a65" stopOpacity={1} />
-                  <stop offset="100%" stopColor="#1d7a65" stopOpacity={0.76} />
+                  <stop offset="0%" stopColor={ventasColor} stopOpacity={1} />
+                  <stop offset="100%" stopColor={ventasColor} stopOpacity={0.76} />
                 </linearGradient>
                 <linearGradient id="gastosBarGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#d9534f" stopOpacity={0.95} />
-                  <stop offset="100%" stopColor="#d9534f" stopOpacity={0.72} />
+                  <stop offset="0%" stopColor={objetivoColor} stopOpacity={0.95} />
+                  <stop offset="100%" stopColor={objetivoColor} stopOpacity={0.72} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -867,21 +977,21 @@ export function RevenueTargetChart({
                       <strong>{data.monthFull}</strong>
                       <div className="exec-tooltip-row">
                         <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: '#1d7a65' }} />
+                          <i style={{ backgroundColor: ventasColor }} />
                           Cobros recibidos:
                         </span>
-                        <strong style={{ color: '#1d7a65' }}>{money(data.cobros)}</strong>
+                        <strong style={{ color: ventasColor }}>{money(data.cobros)}</strong>
                       </div>
                       <div className="exec-tooltip-row">
                         <span className="exec-tooltip-lbl-dot">
-                          <i style={{ backgroundColor: '#d9534f' }} />
+                          <i style={{ backgroundColor: objetivoColor }} />
                           Gastos y costos:
                         </span>
-                        <strong style={{ color: '#d9534f' }}>{money(data.gastos)}</strong>
+                        <strong style={{ color: objetivoColor }}>{money(data.gastos)}</strong>
                       </div>
                       <div className="exec-tooltip-row">
                         <span>Margen neto:</span>
-                        <strong style={{ color: neto >= 0 ? '#1d7a65' : '#d9534f' }}>
+                        <strong style={{ color: neto >= 0 ? ventasColor : objetivoColor }}>
                           {money(neto)}
                         </strong>
                       </div>
@@ -911,6 +1021,25 @@ export function RevenueTargetChart({
       {/* Historial mensual: Desglose comparativo de los 6 meses */}
       <div className="history-months-strip" aria-label="Historial comparativo de los últimos 6 meses">
         {monthlyData.map((d) => {
+          if (financeOnly || viewMode === 'flujo-caja') {
+            const net = d.cobros - d.gastos
+            const isPositive = net >= 0
+            return (
+              <div key={d.month} className="history-month-card">
+                <span className="history-month-name">{d.month}</span>
+                <strong className="history-month-sales" style={{ color: ventasColor }}>
+                  {money(d.cobros)}
+                </strong>
+                <span className="history-month-target">
+                  <i className="target-mini-dot" style={{ backgroundColor: objetivoColor }} />
+                  Gastos: {money(d.gastos)}
+                </span>
+                <span className={`history-month-badge ${isPositive ? 'positive' : 'negative'}`}>
+                  Neto: {money(net)}
+                </span>
+              </div>
+            )
+          }
           const diff = d.ventas - d.objetivo
           const isPositive = diff >= 0
           return (

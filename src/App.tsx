@@ -6,7 +6,7 @@ import {
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
-  LockKeyhole, ShieldAlert, UserCheck,
+  LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
 } from 'lucide-react'
 import { activities, opportunities } from './data/dashboard'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
@@ -24,8 +24,12 @@ import { initialEmployees, type EmployeeRecord } from './data/employees'
 import {
   ROLES_CHANGED_EVENT,
   USERS_CHANGED_EVENT,
+  appendAuditLog,
+  detectClientDeviceBrowser,
+  getWorkspaceUserRoleIds,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
+  resolveSessionIpAddress,
   type RoleDefinition,
   type RoleKey,
   type WorkspaceUserRecord,
@@ -83,6 +87,7 @@ import {
 } from './data/ebp'
 import {
   AdministrationSection,
+  type AdminSectionTab,
   type DepartmentRecord,
   type PhysicalLocationRecord,
 } from './components/AdministrationSection'
@@ -117,7 +122,7 @@ const moduleDetails = {
   Ventas: { icon: ShoppingBag, phase: 'H2 · Piloto comercial', description: 'Acompaña el proceso desde una cotización y pedido hasta la factura de venta sincronizada con Finanzas.', areas: ['Catálogo de productos y servicios', 'Cotizaciones y aprobaciones', 'Pedidos de venta', 'Facturas de venta y CxC'] },
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
-  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas y centros de costos.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos'] },
+  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos', 'Historial de auditoría'] },
 } as const
 
 type DirectoryRecord = {
@@ -258,11 +263,13 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Resumen'
     : 'Cobros'
 
-const adminSectionFromPath = (pathname: string) =>
+const adminSectionFromPath = (pathname: string): AdminSectionTab =>
   pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
     ? 'Ubicaciones'
     : pathname === '/admin/summary' || pathname === '/admin/resumen' || pathname === '/administracion/resumen'
     ? 'Resumen'
+    : pathname === '/admin/audit' || pathname === '/admin/auditoria' || pathname === '/administracion/auditoria'
+    ? 'Historial de Auditoría'
     : 'Departamentos'
 
 function AppContent() {
@@ -273,7 +280,7 @@ function AppContent() {
   const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
   const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
-  const [adminSection, setAdminSection] = useState<'Departamentos' | 'Ubicaciones' | 'Resumen'>(() => adminSectionFromPath(window.location.pathname))
+  const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
   const [presetOrderToInvoice, setPresetOrderToInvoice] = useState<SalesOrder | null>(null)
@@ -400,6 +407,243 @@ function AppContent() {
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
   const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
   const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
+
+  // Centro de Notificaciones: Avisos dinámicos conectados a Operaciones, Finanzas y Ventas + estado leído/descartado
+  const [notifPrefState, setNotifPrefState] = useState<{
+    read: Record<string, string>
+    dismissed: Record<string, string>
+  }>(() => {
+    try {
+      const saved = window.localStorage.getItem('aes_nexus_notif_status_v1')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        return {
+          read: parsed?.read && typeof parsed.read === 'object' ? parsed.read : {},
+          dismissed: parsed?.dismissed && typeof parsed.dismissed === 'object' ? parsed.dismissed : {},
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return { read: {}, dismissed: {} }
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('aes_nexus_notif_status_v1', JSON.stringify(notifPrefState))
+    } catch {
+      // ignore storage errors
+    }
+  }, [notifPrefState])
+
+  type SystemNotice = {
+    id: string
+    fingerprint: string
+    tone: 'blue' | 'amber' | 'green'
+    title: string
+    desc: string
+    meta: string
+    targetModule: 'Operaciones' | 'Finanzas' | 'Ventas'
+    targetSection: string
+    actionLabel: string
+  }
+
+  const liveSystemNotifications = useMemo<SystemNotice[]>(() => {
+    const items: SystemNotice[] = []
+
+    const pendingShipments = shipments.filter(
+      (s) => s.status === 'Preparando' || s.status === 'En ruta'
+    )
+    if (pendingShipments.length > 0) {
+      items.push({
+        id: 'ops_shipments',
+        fingerprint: `${pendingShipments.length}:${pendingShipments.map((s) => `${s.id}-${s.status}`).join(',')}`,
+        tone: 'blue',
+        title: `${pendingShipments.length} envío${pendingShipments.length > 1 ? 's' : ''} por completar entrega`,
+        desc: `${pendingShipments
+          .slice(0, 2)
+          .map((s) => `${s.folio} (${s.clientCompany})`)
+          .join(', ')}${pendingShipments.length > 2 ? ` y ${pendingShipments.length - 2} más` : ''} en estado ${pendingShipments[0].status.toLowerCase()}.`,
+        meta: 'Operaciones · Entregas',
+        targetModule: 'Operaciones',
+        targetSection: 'Entregas',
+        actionLabel: 'Ir a Entregas',
+      })
+    }
+
+    const pendingPurchaseOrders = purchaseOrders.filter(
+      (po) => po.status === 'Emitida' || po.status === 'Recepción parcial'
+    )
+    if (pendingPurchaseOrders.length > 0) {
+      items.push({
+        id: 'ops_purchases',
+        fingerprint: `${pendingPurchaseOrders.length}:${pendingPurchaseOrders.map((p) => `${p.id}-${p.status}`).join(',')}`,
+        tone: 'blue',
+        title: `${pendingPurchaseOrders.length} orden${pendingPurchaseOrders.length > 1 ? 'es' : ''} de compra por recibir`,
+        desc: `${pendingPurchaseOrders
+          .slice(0, 2)
+          .map((p) => `${p.folio} (${p.supplierCompany})`)
+          .join(', ')}${pendingPurchaseOrders.length > 2 ? ` y ${pendingPurchaseOrders.length - 2} más` : ''} esperando recepción en almacén.`,
+        meta: 'Operaciones · Compras',
+        targetModule: 'Operaciones',
+        targetSection: 'Compras',
+        actionLabel: 'Ir a Compras',
+      })
+    }
+
+    const pendingReceivables = receivables.filter(
+      (inv) => inv.balance > 0 && inv.status !== 'Pagada'
+    )
+    if (pendingReceivables.length > 0) {
+      const overdueCount = pendingReceivables.filter((inv) => inv.status === 'Vencida').length
+      const pendingTotal = pendingReceivables.reduce((sum, inv) => sum + inv.balance, 0)
+      items.push({
+        id: 'fin_receivables',
+        fingerprint: `${pendingReceivables.length}:${overdueCount}:${pendingTotal}:${pendingReceivables.map((r) => r.id).join(',')}`,
+        tone: 'amber',
+        title:
+          overdueCount > 0
+            ? `${pendingReceivables.length} factura${pendingReceivables.length > 1 ? 's' : ''} por cobrar (${overdueCount} vencida${overdueCount > 1 ? 's' : ''})`
+            : `${pendingReceivables.length} factura${pendingReceivables.length > 1 ? 's' : ''} pendiente${pendingReceivables.length > 1 ? 's' : ''} de cobro`,
+        desc: `Saldo pendiente de ${money(pendingTotal)} (${pendingReceivables
+          .slice(0, 2)
+          .map((r) => r.folio)
+          .join(', ')}${pendingReceivables.length > 2 ? '…' : ''}).`,
+        meta: 'Finanzas · Cobros',
+        targetModule: 'Finanzas',
+        targetSection: 'Cobros',
+        actionLabel: 'Ir a Cobros',
+      })
+    }
+
+    const pendingPayables = payables.filter((b) => b.balance > 0 && b.status !== 'Pagada')
+    if (pendingPayables.length > 0) {
+      const payablesTotal = pendingPayables.reduce((sum, b) => sum + b.balance, 0)
+      items.push({
+        id: 'fin_payables',
+        fingerprint: `${pendingPayables.length}:${payablesTotal}:${pendingPayables.map((b) => b.id).join(',')}`,
+        tone: 'amber',
+        title: `${pendingPayables.length} cuenta${pendingPayables.length > 1 ? 's' : ''} por pagar a proveedores`,
+        desc: `Saldo comprometido por ${money(payablesTotal)} (${pendingPayables
+          .slice(0, 2)
+          .map((b) => b.folio)
+          .join(', ')}${pendingPayables.length > 2 ? '…' : ''}).`,
+        meta: 'Finanzas · Pagos',
+        targetModule: 'Finanzas',
+        targetSection: 'Pagos',
+        actionLabel: 'Ir a Pagos',
+      })
+    }
+
+    const unbilledOrders = orders.filter(
+      (o) => o.status !== 'Cancelado' && !(o.invoiceIds && o.invoiceIds.length > 0)
+    )
+    if (unbilledOrders.length > 0) {
+      items.push({
+        id: 'sales_unbilled_orders',
+        fingerprint: `${unbilledOrders.length}:${unbilledOrders.map((o) => o.id).join(',')}`,
+        tone: 'green',
+        title: `${unbilledOrders.length} pedido${unbilledOrders.length > 1 ? 's' : ''} confirmado${unbilledOrders.length > 1 ? 's' : ''} sin facturar`,
+        desc: `${unbilledOrders
+          .slice(0, 2)
+          .map((o) => `${o.folio} (${o.clientCompany})`)
+          .join(', ')}${unbilledOrders.length > 2 ? ` y ${unbilledOrders.length - 2} más` : ''} listo para facturación.`,
+        meta: 'Ventas · Facturas',
+        targetModule: 'Ventas',
+        targetSection: 'Facturas',
+        actionLabel: 'Ir a Facturas',
+      })
+    }
+
+    const openQuotes = quotes.filter(
+      (q) => (q.status === 'Enviada' || q.status === 'Borrador') && !q.convertedToOrderId
+    )
+    if (openQuotes.length > 0) {
+      items.push({
+        id: 'sales_open_quotes',
+        fingerprint: `${openQuotes.length}:${openQuotes.map((q) => `${q.id}-${q.status}`).join(',')}`,
+        tone: 'green',
+        title: `${openQuotes.length} cotización${openQuotes.length > 1 ? 'es' : ''} abierta${openQuotes.length > 1 ? 's' : ''} en seguimiento`,
+        desc: `${openQuotes
+          .slice(0, 2)
+          .map((q) => `${q.folio} (${q.clientCompany})`)
+          .join(', ')}${openQuotes.length > 2 ? ` y ${openQuotes.length - 2} más` : ''} por aprobar o convertir a pedido.`,
+        meta: 'Ventas · Cotizaciones',
+        targetModule: 'Ventas',
+        targetSection: 'Cotizaciones',
+        actionLabel: 'Ir a Cotizaciones',
+      })
+    }
+
+    return items
+  }, [shipments, purchaseOrders, receivables, payables, orders, quotes])
+
+  const activeSystemNotifications = useMemo(
+    () =>
+      liveSystemNotifications.filter(
+        (n) => notifPrefState.dismissed[n.id] !== n.fingerprint
+      ),
+    [liveSystemNotifications, notifPrefState.dismissed]
+  )
+
+  const unreadSystemNotifsCount = useMemo(
+    () =>
+      activeSystemNotifications.filter((n) => notifPrefState.read[n.id] !== n.fingerprint)
+        .length,
+    [activeSystemNotifications, notifPrefState.read]
+  )
+
+  const readSystemNotifsCount = activeSystemNotifications.length - unreadSystemNotifsCount
+  const dismissedSystemNotifsCount =
+    liveSystemNotifications.length - activeSystemNotifications.length
+
+  const markSystemNotifRead = (id: string, fingerprint: string, read = true) => {
+    setNotifPrefState((prev) => {
+      const nextRead = { ...prev.read }
+      if (read) {
+        nextRead[id] = fingerprint
+      } else {
+        delete nextRead[id]
+      }
+      return { ...prev, read: nextRead }
+    })
+  }
+
+  const dismissSystemNotif = (id: string, fingerprint: string) => {
+    setNotifPrefState((prev) => ({
+      read: { ...prev.read, [id]: fingerprint },
+      dismissed: { ...prev.dismissed, [id]: fingerprint },
+    }))
+  }
+
+  const markAllSystemNotifsRead = () => {
+    setNotifPrefState((prev) => {
+      const nextRead = { ...prev.read }
+      activeSystemNotifications.forEach((n) => {
+        nextRead[n.id] = n.fingerprint
+      })
+      return { ...prev, read: nextRead }
+    })
+  }
+
+  const clearReadSystemNotifs = () => {
+    setNotifPrefState((prev) => {
+      const nextDismissed = { ...prev.dismissed }
+      activeSystemNotifications.forEach((n) => {
+        if (prev.read[n.id] === n.fingerprint) {
+          nextDismissed[n.id] = n.fingerprint
+        }
+      })
+      return { ...prev, dismissed: nextDismissed }
+    })
+  }
+
+  const restoreDismissedSystemNotifs = () => {
+    setNotifPrefState((prev) => ({
+      ...prev,
+      dismissed: {},
+    }))
+  }
   const [employees, setEmployees] = useState<EmployeeRecord[]>(() => {
     try {
       const saved = window.localStorage.getItem('aes_nexus_employees_v1')
@@ -539,16 +783,20 @@ function AppContent() {
     }
     const userId = activeSessionId.startsWith('user:') ? activeSessionId.slice(5) : activeSessionId
     const user = workspaceUsers.find((u) => u.id === userId) || workspaceUsers[0]
+    const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+    const userRoles = getWorkspaceUserRoleIds(user, validRoleIds)
     const isActive = user.status === 'active'
+    const rolesText =
+      userRoles.length > 0 ? userRoles.map(getRoleDisplayName).join(', ') : 'Sin rol asignado'
     return {
       key: `user:${user.id}`,
       kind: 'user' as const,
       name: user.name,
       initials: user.avatarInitials,
-      roles: [user.role],
+      roles: userRoles,
       isActive,
       statusLabel: isActive ? 'Activo' : 'Suspendido',
-      subtitle: !isActive ? 'Suspendido' : getRoleDisplayName(user.role),
+      subtitle: !isActive ? 'Suspendido' : rolesText,
     }
   }, [activeSessionId, employees, workspaceUsers, roleDefinitions])
 
@@ -562,9 +810,58 @@ function AppContent() {
     [activeSessionProfile, roleDefinitions]
   )
 
+  const initialLoginLoggedRef = useRef(false)
+
+  useEffect(() => {
+    if (initialLoginLoggedRef.current) return
+    initialLoginLoggedRef.current = true
+    try {
+      const storageKey = 'aes_nexus_initial_login_logged_v1'
+      if (window.sessionStorage.getItem(storageKey)) return
+      window.sessionStorage.setItem(storageKey, activeSessionProfile.key)
+    } catch {
+      // ignore sessionStorage access errors
+    }
+    const deviceBrowser = detectClientDeviceBrowser()
+    const ipAddress = resolveSessionIpAddress(activeSessionProfile.key)
+    const roleLabel = activeSessionProfile.subtitle
+    appendAuditLog({
+      category: 'session',
+      action: 'Inicio de sesión en el ambiente',
+      detail: `Acceso confirmado · Rol: ${roleLabel} · IP ${ipAddress} · ${deviceBrowser}`,
+      user: activeSessionProfile.name,
+      sessionMeta: {
+        roleLabel,
+        ipAddress,
+        deviceBrowser,
+      },
+    })
+  }, [activeSessionProfile.key, activeSessionProfile.name, activeSessionProfile.subtitle])
+
   const handleSelectSessionProfile = (sessionKey: string, label: string, subtitle: string) => {
+    const isSwitching = sessionKey !== activeSessionProfile.key
     setActiveSessionId(sessionKey)
     setIsProfileMenuOpen(false)
+    if (isSwitching) {
+      const deviceBrowser = detectClientDeviceBrowser()
+      const ipAddress = resolveSessionIpAddress(sessionKey)
+      appendAuditLog({
+        category: 'session',
+        action: 'Inicio de sesión en el ambiente',
+        detail: `Acceso confirmado · Rol: ${subtitle} · IP ${ipAddress} · ${deviceBrowser}`,
+        user: label,
+        sessionMeta: {
+          roleLabel: subtitle,
+          ipAddress,
+          deviceBrowser,
+        },
+      })
+      try {
+        window.sessionStorage.setItem('aes_nexus_initial_login_logged_v1', sessionKey)
+      } catch {
+        // ignore sessionStorage access errors
+      }
+    }
     toast.info(`Sesión activa: ${label} (${subtitle})`, 'Cambio de perfil')
   }
   const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
@@ -821,6 +1118,12 @@ function AppContent() {
       `Lote ${batch.folio} aplicado en Finanzas (${money(batch.totalAmount)} debitados de ${bankAcc.bankName} y póliza actualizada).`,
       'Dispersión bancaria aplicada'
     )
+    appendAuditLog({
+      category: 'finance',
+      action: 'Dispersión bancaria aplicada (EBP)',
+      detail: `Lote ${batch.folio} aplicado en banco ${bankAcc.bankName} · ${money(batch.totalAmount)} (${batch.operationsCount} operaciones)`,
+      user: activeSessionProfile.name,
+    })
   }
 
   const openEbpWizardForPayrollRun = (run: PayrollRunRecord) => {
@@ -880,6 +1183,13 @@ function AppContent() {
 
   const handleAddMovement = (mov: StockMovement) => {
     setMovements((prev) => [mov, ...prev])
+    const whLabel = mov.targetWarehouse || mov.sourceWarehouse || 'Almacén'
+    appendAuditLog({
+      category: 'inventory',
+      action: `Movimiento de inventario (${mov.type})`,
+      detail: `${mov.productName} (${mov.sku}) · ${mov.quantity > 0 ? `+${mov.quantity}` : mov.quantity} u. en ${whLabel}`,
+      user: activeSessionProfile.name,
+    })
   }
 
   const handleAddTransaction = (txn: PaymentTransaction) => {
@@ -888,14 +1198,32 @@ function AppContent() {
 
   const handleAddExpense = (exp: ExpenseRecord) => {
     setExpenses((prev) => [exp, ...prev])
+    appendAuditLog({
+      category: 'finance',
+      action: 'Registro de gasto operativo',
+      detail: `${exp.folio} · ${exp.description} · ${money(exp.total)}`,
+      user: activeSessionProfile.name,
+    })
   }
 
   const handleAddDepartment = (dep: DepartmentRecord) => {
     setDepartments((prev) => [dep, ...prev])
+    appendAuditLog({
+      category: 'admin',
+      action: 'Creación de departamento',
+      detail: `${dep.code} · ${dep.name} (Líder: ${dep.leader})`,
+      user: activeSessionProfile.name,
+    })
   }
 
   const handleAddLocation = (loc: PhysicalLocationRecord) => {
     setLocations((prev) => [loc, ...prev])
+    appendAuditLog({
+      category: 'admin',
+      action: 'Alta de ubicación física',
+      detail: `${loc.code} · ${loc.name} (${loc.city}, ${loc.state})`,
+      user: activeSessionProfile.name,
+    })
     setWarehouses((prev) => {
       const exists = prev.some(
         (w) =>
@@ -1010,6 +1338,12 @@ function AppContent() {
     setOrders((prevOrders) => [newOrder, ...prevOrders])
     setSalesSection('Pedidos')
     toast.success(`La cotización ${quote.folio} se convirtió en el pedido ${folio}.`, 'Pedido de venta generado')
+    appendAuditLog({
+      category: 'sales',
+      action: 'Generación de pedido de venta',
+      detail: `Folio ${folio} desde cotización ${quote.folio} · ${quote.clientCompany} · ${money(quote.total)}`,
+      user: activeSessionProfile.name,
+    })
   }
 
   const handleCreateSalesInvoice = (invoice: InvoiceReceivable) => {
@@ -1037,6 +1371,12 @@ function AppContent() {
         return acc
       })
     )
+    appendAuditLog({
+      category: 'sales',
+      action: 'Creación de factura de venta',
+      detail: `Folio ${invoice.folio} · ${invoice.clientCompany} · ${money(invoice.total)}`,
+      user: activeSessionProfile.name,
+    })
   }
   const [clientQuery, setClientQuery] = useState('')
   const [clientStatus, setClientStatus] = useState('Todos')
@@ -1113,6 +1453,51 @@ function AppContent() {
     }
     return { workspaceName: 'Brújula Estudio', avatarColor: '#456a61' }
   })
+  const [orgLogoUrl, setOrgLogoUrl] = useState<string>(() => {
+    try {
+      const saved = window.localStorage.getItem('aes_nexus_settings_org')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        return typeof parsed.logoDataUrl === 'string' ? parsed.logoDataUrl : ''
+      }
+    } catch {
+      // fallback
+    }
+    return ''
+  })
+
+  const [orgLogoError, setOrgLogoError] = useState(false)
+
+  useEffect(() => {
+    const syncOrgLogo = (e?: Event) => {
+      try {
+        const customDetail = (e as CustomEvent<{ logoDataUrl?: string }> | undefined)?.detail
+        if (customDetail && typeof customDetail.logoDataUrl === 'string') {
+          setOrgLogoError(false)
+          setOrgLogoUrl(customDetail.logoDataUrl)
+          return
+        }
+        const saved = window.localStorage.getItem('aes_nexus_settings_org')
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          setOrgLogoError(false)
+          setOrgLogoUrl(typeof parsed.logoDataUrl === 'string' ? parsed.logoDataUrl : '')
+        } else {
+          setOrgLogoError(false)
+          setOrgLogoUrl('')
+        }
+      } catch {
+        setOrgLogoError(false)
+        setOrgLogoUrl('')
+      }
+    }
+    window.addEventListener('aes_nexus_org_changed', syncOrgLogo)
+    window.addEventListener('storage', syncOrgLogo)
+    return () => {
+      window.removeEventListener('aes_nexus_org_changed', syncOrgLogo)
+      window.removeEventListener('storage', syncOrgLogo)
+    }
+  }, [])
   const [accentTheme, setAccentTheme] = useState<AccentTheme>(() => {
     const savedTheme = window.localStorage.getItem('aes-nexus-accent')
     return accentOptions.some((option) => option.id === savedTheme) ? savedTheme as AccentTheme : 'green'
@@ -1218,7 +1603,7 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToAdminSection = (section: 'Departamentos' | 'Ubicaciones' | 'Resumen') => {
+  const navigateToAdminSection = (section: AdminSectionTab) => {
     if (
       !canAccessSection(
         'Administración',
@@ -1238,6 +1623,8 @@ function AppContent() {
         ? '/admin/locations'
         : section === 'Resumen'
         ? '/admin/summary'
+        : section === 'Historial de Auditoría'
+        ? '/admin/audit'
         : '/admin'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
@@ -1628,12 +2015,28 @@ function AppContent() {
             setMenuOpen(false)
           }}
         >
-          <span
-            className="workspace-avatar"
-            style={{ backgroundColor: workspaceMeta.avatarColor }}
-          >
-            {(workspaceMeta.workspaceName.trim()[0] || 'B').toUpperCase()}
-          </span>
+          {orgLogoUrl && !orgLogoError ? (
+            <img
+              className="workspace-logo-img"
+              src={orgLogoUrl}
+              alt={workspaceMeta.workspaceName || 'Logo de la empresa'}
+              onError={() => setOrgLogoError(true)}
+            />
+          ) : (
+            <span
+              className="workspace-avatar"
+              style={{ backgroundColor: workspaceMeta.avatarColor, color: '#ffffff' }}
+            >
+              {(
+                workspaceMeta.workspaceName
+                  .trim()
+                  .split(/\s+/)
+                  .slice(0, 2)
+                  .map((w) => w[0])
+                  .join('') || 'BE'
+              ).toUpperCase()}
+            </span>
+          )}
           <span className="workspace-copy">
             <strong>{workspaceMeta.workspaceName || 'Brújula Estudio'}</strong>
             <small>{t('nav.planInitial')}</small>
@@ -1708,7 +2111,12 @@ function AppContent() {
                 {workspaceUsers.map((usr) => {
                   const key = `user:${usr.id}`
                   const isCurrent = activeSessionProfile.key === key
-                  const roleLabel = getRoleDisplayName(usr.role)
+                  const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+                  const userRoles = getWorkspaceUserRoleIds(usr, validRoleIds)
+                  const roleLabel =
+                    userRoles.length > 0
+                      ? userRoles.map(getRoleDisplayName).join(', ')
+                      : 'Sin rol asignado'
                   return (
                     <button
                       key={key}
@@ -1801,23 +2209,26 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
             <div className="notification-center-anchor" ref={notificationCenterRef}>
               <button
                 type="button"
-                className={`icon-button notification-button ${isNotificationCenterOpen ? 'active' : ''} ${lowStockItems.length > 0 && pushEnabled ? 'has-critical-alert' : ''}`}
-                aria-label={`${t('topbar.notifTitle')}: ${lowStockItems.length}`}
+                className={`icon-button notification-button ${isNotificationCenterOpen ? 'active' : ''} ${lowStockItems.length > 0 && pushEnabled ? 'has-critical-alert' : unreadSystemNotifsCount > 0 && pushEnabled ? 'has-system-unread' : ''}`}
+                aria-label={`${t('topbar.notifTitle')}: ${lowStockItems.length + unreadSystemNotifsCount}`}
                 aria-expanded={isNotificationCenterOpen}
                 onClick={() => setIsNotificationCenterOpen((prev) => !prev)}
                 title={t('topbar.notifTitle')}
               >
                 <Bell size={18} />
-                {lowStockItems.length > 0 && pushEnabled ? (
-                  <span className="notification-count-badge" title={`${lowStockItems.length} alertas críticas de stock`}>
-                    {lowStockItems.length}
+                {(lowStockItems.length > 0 || unreadSystemNotifsCount > 0) && pushEnabled ? (
+                  <span
+                    className={`notification-count-badge ${lowStockItems.length === 0 ? 'badge-info' : ''}`}
+                    title={`${lowStockItems.length} alertas de stock · ${unreadSystemNotifsCount} avisos sin leer`}
+                  >
+                    {lowStockItems.length + unreadSystemNotifsCount}
                   </span>
                 ) : (
                   <i />
@@ -1938,35 +2349,154 @@ function AppContent() {
                       </div>
                     )}
 
-                    {/* Otras Notificaciones Operativas del ERP */}
-                    <div className="notif-section-label">Avisos del Sistema</div>
-
-                    <div className="notif-general-item">
-                      <div className="notif-general-icon blue">📦</div>
-                      <div className="notif-general-content">
-                        <div className="notif-general-title">4 pedidos listos para despacho</div>
-                        <div className="notif-general-desc">Pedidos de almacén Vallejo con empaque terminado pendientes de asignación de guía.</div>
-                        <span className="notif-general-time">Hace 25 min · Operaciones</span>
+                    {/* Avisos del Sistema conectados en tiempo real a Operaciones, Finanzas y Ventas */}
+                    <div className="notif-section-header-row">
+                      <span className="notif-section-label">
+                        Avisos del Sistema ({activeSystemNotifications.length})
+                      </span>
+                      <div className="notif-section-bulk-actions">
+                        {unreadSystemNotifsCount > 0 && (
+                          <button
+                            type="button"
+                            className="notif-bulk-action-btn"
+                            onClick={markAllSystemNotifsRead}
+                            title="Marcar todos los avisos visibles como leídos"
+                          >
+                            <CheckCheck size={12} /> Marcar leídas
+                          </button>
+                        )}
+                        {readSystemNotifsCount > 0 && (
+                          <button
+                            type="button"
+                            className="notif-bulk-action-btn clear"
+                            onClick={clearReadSystemNotifs}
+                            title="Ocultar y limpiar todas las notificaciones leídas"
+                          >
+                            <X size={11} /> Limpiar leídas ({readSystemNotifsCount})
+                          </button>
+                        )}
+                        {dismissedSystemNotifsCount > 0 && readSystemNotifsCount === 0 && (
+                          <button
+                            type="button"
+                            className="notif-bulk-action-btn"
+                            onClick={restoreDismissedSystemNotifs}
+                            title="Mostrar avisos descartados que aún siguen pendientes"
+                          >
+                            <RotateCcw size={11} /> Restaurar ({dismissedSystemNotifsCount})
+                          </button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="notif-general-item">
-                      <div className="notif-general-icon amber">💳</div>
-                      <div className="notif-general-content">
-                        <div className="notif-general-title">2 facturas por vencer en 5 días</div>
-                        <div className="notif-general-desc">Documentos comerciales pendientes de cobro con clientes mayoristas.</div>
-                        <span className="notif-general-time">Hace 1 h · Finanzas</span>
+                    {activeSystemNotifications.length === 0 ? (
+                      <div className="notif-system-empty">
+                        <CheckCircle2 size={15} />
+                        <div>
+                          <strong>
+                            {liveSystemNotifications.length === 0
+                              ? 'Sin alertas operativas pendientes'
+                              : 'Avisos limpios'}
+                          </strong>
+                          <p>
+                            {liveSystemNotifications.length === 0
+                              ? 'Todos los envíos, facturas y pedidos están resueltos al día.'
+                              : `Todos los avisos resueltos o leídos fueron limpiados.`}
+                          </p>
+                        </div>
+                        {dismissedSystemNotifsCount > 0 && (
+                          <button
+                            type="button"
+                            className="notif-bulk-action-btn"
+                            onClick={restoreDismissedSystemNotifs}
+                          >
+                            <RotateCcw size={11} /> Ver ({dismissedSystemNotifsCount})
+                          </button>
+                        )}
                       </div>
-                    </div>
+                    ) : (
+                      activeSystemNotifications.map((notice) => {
+                        const isRead = notifPrefState.read[notice.id] === notice.fingerprint
+                        const IconComp =
+                          notice.targetModule === 'Operaciones'
+                            ? notice.targetSection === 'Entregas'
+                              ? Truck
+                              : Package
+                            : notice.targetModule === 'Finanzas'
+                            ? Receipt
+                            : FileText
+                        const handleOpenNoticeTarget = () => {
+                          markSystemNotifRead(notice.id, notice.fingerprint, true)
+                          setIsNotificationCenterOpen(false)
+                          if (notice.targetModule === 'Operaciones') {
+                            navigateToOperationsSection(
+                              notice.targetSection as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
+                            )
+                          } else if (notice.targetModule === 'Finanzas') {
+                            navigateToFinanceSection(
+                              notice.targetSection as 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'
+                            )
+                          } else {
+                            navigateToSalesSection(
+                              notice.targetSection as 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'
+                            )
+                          }
+                        }
 
-                    <div className="notif-general-item">
-                      <div className="notif-general-icon green">🤝</div>
-                      <div className="notif-general-content">
-                        <div className="notif-general-title">Cotización corporativa aprobada</div>
-                        <div className="notif-general-desc">Cliente Grupo Financiero del Centro confirmó cotización de equipo industrial.</div>
-                        <span className="notif-general-time">Hoy, 09:15 · CRM</span>
-                      </div>
-                    </div>
+                        return (
+                          <div
+                            key={notice.id}
+                            className={`notif-general-item ${isRead ? 'is-read' : 'is-unread'}`}
+                          >
+                            <div className={`notif-general-icon ${notice.tone}`}>
+                              <IconComp size={14} />
+                            </div>
+                            <div className="notif-general-content">
+                              <div className="notif-general-title-row">
+                                <span className="notif-general-title">
+                                  {!isRead && <span className="notif-unread-dot" aria-label="No leída" />}
+                                  {notice.title}
+                                </span>
+                                <div className="notif-item-controls">
+                                  <button
+                                    type="button"
+                                    className={`notif-item-mini-btn ${isRead ? 'active' : ''}`}
+                                    onClick={() =>
+                                      markSystemNotifRead(notice.id, notice.fingerprint, !isRead)
+                                    }
+                                    title={isRead ? 'Marcar como no leída' : 'Marcar como leída'}
+                                    aria-label={isRead ? 'Marcar como no leída' : 'Marcar como leída'}
+                                  >
+                                    <Check size={11} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="notif-item-mini-btn dismiss"
+                                    onClick={() =>
+                                      dismissSystemNotif(notice.id, notice.fingerprint)
+                                    }
+                                    title="Descartar aviso"
+                                    aria-label="Descartar aviso"
+                                  >
+                                    <X size={11} />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="notif-general-desc">{notice.desc}</div>
+                              <div className="notif-general-meta-row">
+                                <span className="notif-general-time">{notice.meta}</span>
+                                <button
+                                  type="button"
+                                  className="notif-inline-nav-link"
+                                  onClick={handleOpenNoticeTarget}
+                                >
+                                  {notice.actionLabel} &rarr;
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
 
                   <div className="notif-dropdown-footer">
@@ -2177,10 +2707,24 @@ function AppContent() {
                   departments={departments}
                   locations={locations}
                   installedPacks={ebpPacks}
-                  onAddEmployee={(emp) => setEmployees((prev) => [emp, ...prev])}
-                  onUpdateEmployee={(updated) =>
+                  onAddEmployee={(emp) => {
+                    setEmployees((prev) => [emp, ...prev])
+                    appendAuditLog({
+                      category: 'users',
+                      action: 'Alta de empleado',
+                      detail: `${emp.fullName} (${emp.employeeCode}) · Roles: ${(emp.roles || []).join(', ') || 'Sin rol'}`,
+                      user: activeSessionProfile.name,
+                    })
+                  }}
+                  onUpdateEmployee={(updated) => {
                     setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
-                  }
+                    appendAuditLog({
+                      category: 'users',
+                      action: 'Actualización de empleado y roles',
+                      detail: `${updated.fullName} (${updated.employeeCode}) · Roles asignados: ${(updated.roles || []).join(', ') || 'Sin rol'}`,
+                      user: activeSessionProfile.name,
+                    })
+                  }}
                   onNavigateSettingsRoles={
                     canAccessSection(
                       'Configuración',
@@ -2794,18 +3338,32 @@ function AppContent() {
             <AdministrationSection
               departments={departments}
               locations={locations}
+              employees={employees}
               onAddDepartment={handleAddDepartment}
               onAddLocation={handleAddLocation}
               onUpdateDepartments={setDepartments}
               onUpdateLocations={handleUpdateLocations}
               adminSection={adminSection}
               onNavigateSection={navigateToAdminSection}
+              allowedSections={(['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'] as AdminSectionTab[]).filter(
+                (sec) =>
+                  canAccessSection(
+                    'Administración',
+                    sec,
+                    activeCapabilities,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+              )}
+              currentUserName={activeSessionProfile.name}
             />
           ) : activePage === 'Inicio' ? (
             <ExecutiveDashboard
               orders={orders}
               quotes={quotes}
               inventory={inventory}
+              purchaseOrders={purchaseOrders}
+              shipments={shipments}
               onUpdateInventory={setInventory}
               isStockConfigOpen={isStockConfigOpen}
               onCloseStockConfig={() => setIsStockConfigOpen(false)}
@@ -2817,6 +3375,11 @@ function AppContent() {
               chartAccounts={chartAccounts}
               opportunities={opportunityRecords}
               activities={activityRecords}
+              activeUserName={activeSessionProfile.name}
+              activeUserRolesSummary={activeSessionProfile.subtitle}
+              isFullAdmin={isFullAdmin}
+              capabilities={activeCapabilities}
+              isAccountActive={activeSessionProfile.isActive}
               onNavigateSales={navigateToSalesSection}
               onNavigateOperations={navigateToOperationsSection}
               onNavigateFinance={navigateToFinanceSection}

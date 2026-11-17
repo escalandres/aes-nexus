@@ -81,6 +81,7 @@ export const translations = {
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Ubicaciones',
     'tabs.admin.summary': 'Resumen organizacional',
+    'tabs.admin.audit': 'Historial de Auditoría',
 
     // Settings Shell & Navigation
     'settings.eyebrow': 'AES NEXUS · CONFIGURACIÓN Y GOBERNANZA',
@@ -260,6 +261,7 @@ export const translations = {
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Ubicaciones',
     'tabs.admin.summary': 'Resumen organizativo',
+    'tabs.admin.audit': 'Historial de Auditoría',
 
     'settings.eyebrow': 'AES NEXUS · CONFIGURACIÓN Y GOBERNANZA',
     'settings.title': 'Configuración del Sistema',
@@ -432,6 +434,7 @@ export const translations = {
     'tabs.admin.departments': 'Departments',
     'tabs.admin.locations': 'Locations',
     'tabs.admin.summary': 'Organization Summary',
+    'tabs.admin.audit': 'Audit History',
 
     'settings.eyebrow': 'AES NEXUS · SETTINGS & GOVERNANCE',
     'settings.title': 'System Settings',
@@ -604,6 +607,7 @@ export const translations = {
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Unidades e locais',
     'tabs.admin.summary': 'Resumo organizacional',
+    'tabs.admin.audit': 'Histórico de Auditoria',
 
     'settings.eyebrow': 'AES NEXUS · CONFIGURAÇÕES E GOVERNANÇA',
     'settings.title': 'Configurações do Sistema',
