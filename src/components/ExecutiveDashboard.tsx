@@ -37,7 +37,22 @@ import {
   Search,
   Minus,
   Info,
+  LockKeyhole,
+  Warehouse as WarehouseIcon,
+  WalletCards,
+  Receipt,
+  ClipboardList,
+  ShoppingCart,
 } from 'lucide-react'
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from 'recharts'
 import { Skeleton } from 'boneyard-js/react'
 import {
   executiveKpiBones,
@@ -45,7 +60,12 @@ import {
   executiveAlertHubBones,
 } from '../bones/registry'
 import type { SalesOrder, Quote } from '../data/sales'
-import type { InventoryItemLocation } from '../data/operations'
+import type {
+  InventoryItemLocation,
+  PurchaseOrder,
+  ShipmentDelivery,
+} from '../data/operations'
+import type { PurchaseRequisition } from '../data/purchases'
 import type {
   InvoiceReceivable,
   BillPayable,
@@ -54,13 +74,73 @@ import type {
   ChartAccount,
 } from '../data/finance'
 import type { Opportunity } from '../data/dashboard'
+import type { RoleCapabilityId } from '../data/settings'
+import { canAccessModule, canAccessSection } from '../data/accessControl'
 import { RevenueTargetChart } from './RevenueTargetChart'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
+
+type PurchasesKpiPeriod = 'Mensual' | 'Trimestral' | 'Anual'
+
+const SPANISH_MONTH_INDEX: Record<string, number> = {
+  ene: 0, enero: 0,
+  feb: 1, febrero: 1,
+  mar: 2, marzo: 2,
+  abr: 3, abril: 3,
+  may: 4, mayo: 4,
+  jun: 5, junio: 5,
+  jul: 6, julio: 6,
+  ago: 7, agosto: 7,
+  sep: 8, sept: 8, septiembre: 8,
+  oct: 9, octubre: 9,
+  nov: 10, noviembre: 10,
+  dic: 11, diciembre: 11,
+}
+
+const isDateInPurchasesPeriod = (
+  rawDate: string,
+  targetPeriod: PurchasesKpiPeriod,
+  reference: Date
+): boolean => {
+  const refMonth = reference.getMonth()
+  const refQuarter = Math.floor(refMonth / 3)
+  const refYear = reference.getFullYear()
+  const trimmed = rawDate.trim().toLowerCase()
+
+  let parsedMonth = -1
+  let parsedYear = -1
+
+  const spanishMatch = trimmed.match(/^(\d{1,2})\s+([a-záéíóú]+)\.?\s+(\d{4})$/i)
+  if (spanishMatch) {
+    parsedMonth = SPANISH_MONTH_INDEX[spanishMatch[2]] ?? -1
+    parsedYear = Number(spanishMatch[3])
+  } else {
+    const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+    if (isoMatch) {
+      parsedYear = Number(isoMatch[1])
+      parsedMonth = Number(isoMatch[2]) - 1
+    } else {
+      const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+      if (slashMatch) {
+        parsedYear = Number(slashMatch[3])
+        parsedMonth = Number(slashMatch[2]) - 1
+      }
+    }
+  }
+
+  if (parsedYear !== refYear || parsedMonth < 0) return false
+  if (targetPeriod === 'Mensual') return parsedMonth === refMonth
+  if (targetPeriod === 'Trimestral') return Math.floor(parsedMonth / 3) === refQuarter
+  return true
+}
 
 interface ExecutiveDashboardProps {
   orders: SalesOrder[]
   quotes: Quote[]
   inventory: InventoryItemLocation[]
+  purchaseOrders?: PurchaseOrder[]
+  requisitions?: PurchaseRequisition[]
+  shipments?: ShipmentDelivery[]
   onUpdateInventory?: (items: InventoryItemLocation[]) => void
   isStockConfigOpen?: boolean
   onCloseStockConfig?: () => void
@@ -78,7 +158,15 @@ interface ExecutiveDashboardProps {
     icon: string
     tone: string
   }>
+  activeUserName?: string
+  activeUserRolesSummary?: string
+  isFullAdmin?: boolean
+  capabilities?: Set<RoleCapabilityId>
+  isAccountActive?: boolean
   onNavigateSales: (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Resumen') => void
+  onNavigatePurchases?: (
+    section: 'Resumen' | 'Requisiciones' | 'Órdenes de compra' | 'Recepciones' | 'Facturas'
+  ) => void
   onNavigateOperations: (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
   onNavigateFinance: (
     section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'
@@ -87,17 +175,15 @@ interface ExecutiveDashboardProps {
   onOpenCreateOpportunity: () => void
 }
 
-const money = (val: number) =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits: 0,
-  }).format(val)
+const EMPTY_CAPABILITIES = new Set<RoleCapabilityId>()
 
 export function ExecutiveDashboard({
   orders,
   quotes: _quotes,
   inventory,
+  purchaseOrders = [],
+  requisitions = [],
+  shipments = [],
   onUpdateInventory,
   isStockConfigOpen,
   onCloseStockConfig,
@@ -109,14 +195,23 @@ export function ExecutiveDashboard({
   chartAccounts: _chartAccounts,
   opportunities,
   activities,
+  activeUserName = 'Andrea Morales',
+  activeUserRolesSummary = 'Administrador General',
+  isFullAdmin = true,
+  capabilities = EMPTY_CAPABILITIES,
+  isAccountActive = true,
   onNavigateSales,
+  onNavigatePurchases,
   onNavigateOperations,
   onNavigateFinance,
   onNavigateCrm,
   onOpenCreateOpportunity,
 }: ExecutiveDashboardProps) {
   const toast = useToast()
+  const { locale, regional, t, formatCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, undefined, 0)
   const [period, setPeriod] = useState<'Este mes' | 'Este trimestre' | 'Año 2026'>('Este mes')
+  const [purchasesPeriod, setPurchasesPeriod] = useState<PurchasesKpiPeriod>('Mensual')
   const [showAlertHub, setShowAlertHub] = useState(true)
   const [isLoadingDashboard, setIsLoadingDashboard] = useState(false)
 
@@ -367,10 +462,13 @@ export function ExecutiveDashboard({
     const next = { ...pushConfig, enabled: nextEnabled }
     setPushConfig(next)
     localStorage.setItem('nexus_stock_push_alerts_config', JSON.stringify(next))
+    window.dispatchEvent(
+      new CustomEvent('nexus_push_config_changed', { detail: { enabled: nextEnabled } })
+    )
     if (nextEnabled) {
       toast.success(
-        'Notificaciones push de stock activadas. Recibirás alertas automáticas cuando un SKU caiga bajo su umbral.',
-        'Push activado'
+        'Notificaciones push activadas. Se mostrará una alerta persistente en el centro de notificaciones superior si un producto cae bajo su umbral.',
+        'Push activado · Alerta persistente'
       )
       if (pushConfig.sound) playNotificationChime()
     } else {
@@ -496,13 +594,103 @@ export function ExecutiveDashboard({
     setShowStockConfigModal(false)
   }
 
-  // Dynamic Greeting & Localized Date in Spanish
+  // Granular Role / Capability Permissions for Dashboard Sections
+  const hasActiveAccess = isAccountActive && (isFullAdmin || capabilities.size > 0)
+
+  const canViewSalesQuotes =
+    hasActiveAccess &&
+    canAccessSection('Ventas', 'Cotizaciones', capabilities, isFullAdmin, isAccountActive)
+  const canViewSalesOrders =
+    hasActiveAccess &&
+    canAccessSection('Ventas', 'Pedidos', capabilities, isFullAdmin, isAccountActive)
+  const canViewSalesSummary =
+    hasActiveAccess &&
+    canAccessSection('Ventas', 'Resumen', capabilities, isFullAdmin, isAccountActive)
+
+  const canViewCrmClients =
+    hasActiveAccess &&
+    canAccessSection('CRM', 'Clientes', capabilities, isFullAdmin, isAccountActive)
+  const canViewCrmOpportunities =
+    hasActiveAccess &&
+    canAccessSection('CRM', 'Oportunidades', capabilities, isFullAdmin, isAccountActive)
+  const canViewCrmActivities =
+    hasActiveAccess &&
+    canAccessSection('CRM', 'Actividades', capabilities, isFullAdmin, isAccountActive)
+
+  const canViewInventory =
+    hasActiveAccess &&
+    canAccessSection('Operaciones', 'Inventario', capabilities, isFullAdmin, isAccountActive)
+  const canAdjustThresholds =
+    hasActiveAccess && (isFullAdmin || capabilities.has('adjustThresholds'))
+  const canViewOperationsDeliveries =
+    hasActiveAccess &&
+    canAccessSection('Operaciones', 'Entregas', capabilities, isFullAdmin, isAccountActive)
+  const canViewOperationsPurchases =
+    hasActiveAccess &&
+    (canAccessModule('Compras', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Operaciones', 'Compras', capabilities, isFullAdmin, isAccountActive))
+  const canViewOperationsSummary =
+    hasActiveAccess &&
+    canAccessSection('Operaciones', 'Resumen', capabilities, isFullAdmin, isAccountActive)
+
+  const canViewReceivables =
+    hasActiveAccess &&
+    canAccessSection('Finanzas', 'Cobros', capabilities, isFullAdmin, isAccountActive)
+  const canViewPayables =
+    hasActiveAccess &&
+    canAccessSection('Finanzas', 'Pagos', capabilities, isFullAdmin, isAccountActive)
+  const canViewExpenses =
+    hasActiveAccess &&
+    canAccessSection('Finanzas', 'Gastos', capabilities, isFullAdmin, isAccountActive)
+  const canViewChartAccounts =
+    hasActiveAccess &&
+    canAccessSection('Finanzas', 'Cuentas contables', capabilities, isFullAdmin, isAccountActive)
+  const canViewFinanceSummary =
+    hasActiveAccess &&
+    canAccessSection('Finanzas', 'Resumen', capabilities, isFullAdmin, isAccountActive)
+
+  const canViewRequisitionsCol =
+    hasActiveAccess &&
+    canAccessSection('Compras', 'Requisiciones', capabilities, isFullAdmin, isAccountActive)
+  const canViewPoTransitCol =
+    hasActiveAccess &&
+    (canAccessSection('Compras', 'Órdenes de compra', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Compras', 'Recepciones', capabilities, isFullAdmin, isAccountActive) ||
+      canViewOperationsPurchases)
+  const canViewSupplierBillsCol =
+    hasActiveAccess &&
+    (canAccessSection('Compras', 'Facturas', capabilities, isFullAdmin, isAccountActive) ||
+      canViewPayables)
+  const canViewPurchasesExecSummary =
+    canViewRequisitionsCol || canViewPoTransitCol || canViewSupplierBillsCol
+  const visiblePurchasesColsCount =
+    (canViewRequisitionsCol ? 1 : 0) +
+    (canViewPoTransitCol ? 1 : 0) +
+    (canViewSupplierBillsCol ? 1 : 0)
+
+  const canViewSalesChart =
+    canViewSalesOrders || canViewSalesQuotes || canViewSalesSummary
+  const canViewFinanceChart =
+    canViewReceivables || canViewExpenses || canViewFinanceSummary
+
+  const activeFirstName = useMemo(() => {
+    const trimmed = (activeUserName || '').trim()
+    if (!trimmed) return 'Usuario'
+    return trimmed.split(/\s+/)[0]
+  }, [activeUserName])
+
+  // Dynamic Greeting & Localized Date aware of selected language, user and corporate timezone
   const greeting = useMemo(() => {
-    const hour = new Date().getHours()
-    if (hour < 12) return 'Buenos días, Andrea'
-    if (hour < 19) return 'Buenas tardes, Andrea'
-    return 'Buenas noches, Andrea'
-  }, [])
+    const hourStr = new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      hour12: false,
+      timeZone: regional.timezone,
+    }).format(new Date())
+    const hour = Number(hourStr) || new Date().getHours()
+    if (hour < 12) return t('dashboard.greetingMorning', { name: activeFirstName })
+    if (hour < 19) return t('dashboard.greetingAfternoon', { name: activeFirstName })
+    return t('dashboard.greetingEvening', { name: activeFirstName })
+  }, [regional.timezone, t, activeFirstName])
 
   const formattedDate = useMemo(() => {
     const now = new Date()
@@ -511,10 +699,29 @@ export function ExecutiveDashboard({
       day: 'numeric',
       month: 'long',
       year: 'numeric',
+      timeZone: regional.timezone,
     }
-    const str = new Intl.DateTimeFormat('es-MX', options).format(now)
-    return str.toUpperCase()
-  }, [])
+    try {
+      const str = new Intl.DateTimeFormat(locale, options).format(now)
+      return str.toUpperCase()
+    } catch {
+      return new Intl.DateTimeFormat('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+        .format(now)
+        .toUpperCase()
+    }
+  }, [locale, regional.timezone])
+
+  const periodDisplayLabel =
+    period === 'Este mes'
+      ? t('dashboard.period.month')
+      : period === 'Este trimestre'
+      ? t('dashboard.period.quarter')
+      : t('dashboard.period.year')
 
   // Top Sales KPIs (Ventas, Margen, Clientes, Oportunidades)
   const monthlySales = useMemo(() => {
@@ -533,24 +740,182 @@ export function ExecutiveDashboard({
   const wonOpportunitiesCount = 8
   const wonOpportunitiesValue = 194200
 
-  // KPI 2: Cuentas por Cobrar Pendientes
+  // Finance KPIs
   const totalReceivableBalance = useMemo(() => {
     return receivables.reduce((acc, r) => acc + (r.balance || 0), 0)
   }, [receivables])
 
-  // KPI 3: Disponibilidad en Bancos (Tesorería)
   const totalCashInBanks = useMemo(() => {
     return bankAccounts.reduce((acc, b) => acc + b.balance, 0)
   }, [bankAccounts])
 
-  // KPI 4: Valoración de Inventario en Almacén
+  const monthlyExpensesTotal = useMemo(() => {
+    return expenses.reduce((acc, e) => acc + (e.total || 0), 0)
+  }, [expenses])
+
+  // Operations KPIs
   const totalInventoryValue = useMemo(() => {
     return inventory.reduce((acc, item) => acc + item.stock * item.cost, 0)
   }, [inventory])
 
-  // Operational Alerts ("Semáforo Ejecutivo")
   const lowStockItems = useMemo(() => {
     return inventory.filter((item) => item.stock <= item.minStock)
+  }, [inventory])
+
+  const activeShipments = useMemo(() => {
+    return shipments.filter((s) => s.status === 'Preparando' || s.status === 'En ruta')
+  }, [shipments])
+
+  const activePurchaseOrders = useMemo(() => {
+    return purchaseOrders.filter(
+      (po) => po.status !== 'Recibida' && po.status !== 'Cancelada'
+    )
+  }, [purchaseOrders])
+
+  const pendingRequisitionsList = useMemo(() => {
+    return [...requisitions]
+      .filter((r) => r.status === 'Pendiente' || r.status === 'Aprobada')
+      .sort((a, b) => (a.status === 'Pendiente' ? -1 : b.status === 'Pendiente' ? 1 : 0))
+  }, [requisitions])
+
+  const pendingRequisitionsTotal = useMemo(() => {
+    return pendingRequisitionsList.reduce((acc, r) => acc + r.estimatedTotal, 0)
+  }, [pendingRequisitionsList])
+
+  const awaitingApprovalReqsCount = useMemo(() => {
+    return pendingRequisitionsList.filter((r) => r.status === 'Pendiente').length
+  }, [pendingRequisitionsList])
+
+  const transitPurchaseOrders = useMemo(() => {
+    return purchaseOrders.filter(
+      (po) => po.status === 'Emitida' || po.status === 'Recepción parcial'
+    )
+  }, [purchaseOrders])
+
+  const transitPurchaseOrdersTotal = useMemo(() => {
+    return transitPurchaseOrders.reduce((acc, po) => acc + po.total, 0)
+  }, [transitPurchaseOrders])
+
+  const transitPendingUnits = useMemo(() => {
+    return transitPurchaseOrders.reduce(
+      (acc, po) =>
+        acc +
+        po.items.reduce(
+          (itemSum, item) => itemSum + Math.max(0, item.quantity - item.receivedQty),
+          0
+        ),
+      0
+    )
+  }, [transitPurchaseOrders])
+
+  const expiringVendorBills = useMemo(() => {
+    return [...payables]
+      .filter((b) => b.balance > 0 && b.status !== 'Pagada')
+      .sort((a, b) => {
+        if (a.status === 'Vencida' && b.status !== 'Vencida') return -1
+        if (b.status === 'Vencida' && a.status !== 'Vencida') return 1
+        return b.balance - a.balance
+      })
+  }, [payables])
+
+  const expiringVendorBillsBalance = useMemo(() => {
+    return expiringVendorBills.reduce((acc, b) => acc + b.balance, 0)
+  }, [expiringVendorBills])
+
+  const overdueVendorBillsCount = useMemo(() => {
+    return expiringVendorBills.filter((b) => b.status === 'Vencida').length
+  }, [expiringVendorBills])
+
+  const purchasesPeriodKpis = useMemo(() => {
+    const now = new Date()
+    const currentQuarter = Math.floor(now.getMonth() / 3) + 1
+    const periodTag =
+      purchasesPeriod === 'Mensual'
+        ? new Intl.DateTimeFormat('es-MX', { month: 'short', year: 'numeric' })
+            .format(now)
+            .replace('.', '')
+        : purchasesPeriod === 'Trimestral'
+        ? `T${currentQuarter} ${now.getFullYear()}`
+        : `Año ${now.getFullYear()}`
+
+    const reqsInPeriod = requisitions.filter((r) =>
+      isDateInPurchasesPeriod(r.date, purchasesPeriod, now)
+    )
+    const reqsTotal = reqsInPeriod.reduce((sum, r) => sum + r.estimatedTotal, 0)
+    const reqsConverted = reqsInPeriod.filter((r) => r.status === 'Convertida a OC').length
+    const reqsPending = reqsInPeriod.filter(
+      (r) => r.status === 'Pendiente' || r.status === 'Aprobada'
+    ).length
+
+    const posInPeriod = purchaseOrders.filter(
+      (po) => po.status !== 'Cancelada' && isDateInPurchasesPeriod(po.date, purchasesPeriod, now)
+    )
+    const posTotal = posInPeriod.reduce((sum, po) => sum + po.total, 0)
+    const posReceived = posInPeriod.filter((po) => po.status === 'Recibida').length
+    const posOpen = posInPeriod.filter((po) => po.status !== 'Recibida').length
+
+    const billsInPeriod = payables.filter((b) =>
+      isDateInPurchasesPeriod(b.issueDate, purchasesPeriod, now)
+    )
+    const billsTotal = billsInPeriod.reduce((sum, b) => sum + b.total, 0)
+    const billsPaid = billsInPeriod.reduce((sum, b) => sum + b.paidAmount, 0)
+    const billsBalance = billsInPeriod.reduce((sum, b) => sum + b.balance, 0)
+
+    return {
+      periodTag,
+      reqsCount: reqsInPeriod.length,
+      reqsTotal,
+      reqsConverted,
+      reqsPending,
+      posCount: posInPeriod.length,
+      posTotal,
+      posReceived,
+      posOpen,
+      billsCount: billsInPeriod.length,
+      billsTotal,
+      billsPaid,
+      billsBalance,
+    }
+  }, [requisitions, purchaseOrders, payables, purchasesPeriod])
+
+  const warehouseBreakdown = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        warehouseName: string
+        skus: number
+        units: number
+        critical: number
+        value: number
+      }
+    >()
+    for (const item of inventory) {
+      const current = map.get(item.warehouseName) || {
+        warehouseName: item.warehouseName,
+        skus: 0,
+        units: 0,
+        critical: 0,
+        value: 0,
+      }
+      current.skus += 1
+      current.units += item.stock
+      if (item.stock <= item.minStock) current.critical += 1
+      current.value += item.stock * item.cost
+      map.set(item.warehouseName, current)
+    }
+    return Array.from(map.values())
+  }, [inventory])
+
+  const inventoryChartData = useMemo(() => {
+    return [...inventory]
+      .sort((a, b) => (a.stock - a.minStock) - (b.stock - b.minStock))
+      .slice(0, 7)
+      .map((item) => ({
+        sku: item.sku,
+        name: item.name,
+        stock: item.stock,
+        minStock: item.minStock,
+      }))
   }, [inventory])
 
   const overdueInvoices = useMemo(() => {
@@ -567,11 +932,121 @@ export function ExecutiveDashboard({
     return payables.filter((p) => p.status === 'Pendiente' || p.status === 'Vencida')
   }, [payables])
 
+  const totalPayablesBalance = useMemo(() => {
+    return pendingPayablesCount.reduce((s, p) => s + p.balance, 0)
+  }, [pendingPayablesCount])
+
+  // Alert Cards visible to active role
+  const showAlertReceivables = canViewReceivables
+  const showAlertStock = canViewInventory || canAdjustThresholds
+  const showAlertDeliveries = canViewSalesOrders || canViewOperationsDeliveries
+  const showAlertPayables = canViewPayables
+
+  const visibleAlertCardsCount =
+    (showAlertReceivables ? 1 : 0) +
+    (showAlertStock ? 1 : 0) +
+    (showAlertDeliveries ? 1 : 0) +
+    (showAlertPayables ? 1 : 0)
+
   const totalAlertsCount =
-    (lowStockItems.length > 0 ? 1 : 0) +
-    (overdueInvoices.length > 0 ? 1 : 0) +
-    (pendingDeliveries.length > 0 ? 1 : 0) +
-    (pendingPayablesCount.length > 0 ? 1 : 0)
+    (showAlertStock && lowStockItems.length > 0 ? 1 : 0) +
+    (showAlertReceivables && overdueInvoices.length > 0 ? 1 : 0) +
+    (showAlertDeliveries &&
+    (canViewSalesOrders ? pendingDeliveries.length > 0 : activeShipments.length > 0)
+      ? 1
+      : 0) +
+    (showAlertPayables && pendingPayablesCount.length > 0 ? 1 : 0)
+
+  // Quick actions visible to active role
+  const quickActionCount =
+    (canViewSalesQuotes ? 1 : 0) +
+    (canViewSalesOrders ? 1 : 0) +
+    (canViewReceivables ? 1 : 0) +
+    (canViewExpenses ? 1 : 0) +
+    (canViewPayables && !canViewSalesQuotes ? 1 : 0) +
+    (canViewInventory ? 1 : 0) +
+    (canViewOperationsDeliveries && !canViewSalesOrders ? 1 : 0) +
+    (canViewOperationsPurchases ? 1 : 0) +
+    (canViewChartAccounts ? 1 : 0) +
+    (canAdjustThresholds ? 1 : 0)
+
+  // Determine which top KPI cards render based on role permissions
+  const salesKpiSlots =
+    (canViewSalesOrders || canViewSalesSummary ? 1 : 0) +
+    (canViewSalesSummary ? 1 : 0) +
+    (canViewCrmClients ? 1 : 0) +
+    (canViewCrmOpportunities ? 1 : 0)
+
+  const showSalesKpiSales = canViewSalesOrders || canViewSalesSummary
+  const showSalesKpiMargin = canViewSalesSummary
+  const showSalesKpiClients = canViewCrmClients
+  const showSalesKpiOpps = canViewCrmOpportunities
+
+  const fillSecondaryKpisIntoTopRow = salesKpiSlots < 4
+  const showTopFinReceivables = fillSecondaryKpisIntoTopRow && canViewReceivables
+  const showTopFinBanks = fillSecondaryKpisIntoTopRow && canViewFinanceSummary
+  const showTopFinPayables = fillSecondaryKpisIntoTopRow && canViewPayables
+  const showTopFinExpenses = fillSecondaryKpisIntoTopRow && canViewExpenses
+
+  const showTopOpsInventoryVal = fillSecondaryKpisIntoTopRow && canViewInventory
+  const showTopOpsCritical =
+    fillSecondaryKpisIntoTopRow && (canViewInventory || canAdjustThresholds)
+  const showTopOpsDeliveries =
+    fillSecondaryKpisIntoTopRow && canViewOperationsDeliveries
+  const showTopOpsPurchases =
+    fillSecondaryKpisIntoTopRow && canViewOperationsPurchases
+
+  const visibleTopKpiCount =
+    (showSalesKpiSales ? 1 : 0) +
+    (showSalesKpiMargin ? 1 : 0) +
+    (showSalesKpiClients ? 1 : 0) +
+    (showSalesKpiOpps ? 1 : 0) +
+    (showTopFinReceivables ? 1 : 0) +
+    (showTopFinBanks ? 1 : 0) +
+    (showTopFinPayables ? 1 : 0) +
+    (showTopFinExpenses ? 1 : 0) +
+    (showTopOpsInventoryVal ? 1 : 0) +
+    (showTopOpsCritical ? 1 : 0) +
+    (showTopOpsDeliveries ? 1 : 0) +
+    (showTopOpsPurchases ? 1 : 0)
+
+  // Secondary strip avoids duplicating KPIs already elevated into the top row
+  const showStripReceivables = canViewReceivables && !showTopFinReceivables
+  const showStripBanks = canViewFinanceSummary && !showTopFinBanks
+  const showStripInventory = canViewInventory && !showTopOpsInventoryVal
+  const visibleStripCount =
+    (showStripReceivables ? 1 : 0) +
+    (showStripBanks ? 1 : 0) +
+    (showStripInventory ? 1 : 0)
+
+  // Main Grid Left & Right panels
+  const showMainRevenueChart = canViewSalesChart || canViewFinanceChart
+  const showMainOperationsChart =
+    !showMainRevenueChart && (canViewInventory || canViewOperationsSummary)
+
+  const showRightCrmActivities = canViewCrmActivities
+  const showRightFinancePanel =
+    !showRightCrmActivities &&
+    (canViewReceivables || canViewPayables || canViewFinanceSummary)
+  const showRightOperationsPanel =
+    !showRightCrmActivities &&
+    !showRightFinancePanel &&
+    (canViewInventory || canViewOperationsDeliveries || canViewOperationsPurchases)
+
+  const hasLeftMainPanel = showMainRevenueChart || showMainOperationsChart
+  const hasRightMainPanel =
+    showRightCrmActivities || showRightFinancePanel || showRightOperationsPanel
+  const isSingleColumnDashboardGrid =
+    (hasLeftMainPanel && !hasRightMainPanel) || (!hasLeftMainPanel && hasRightMainPanel)
+  const hasAnyDashboardSection =
+    visibleAlertCardsCount > 0 ||
+    visibleTopKpiCount > 0 ||
+    visibleStripCount > 0 ||
+    hasLeftMainPanel ||
+    hasRightMainPanel ||
+    canViewPurchasesExecSummary ||
+    canViewFinanceSummary ||
+    canViewCrmOpportunities
 
   return (
     <div className="executive-dashboard-container">
@@ -586,780 +1061,1941 @@ export function ExecutiveDashboard({
             <span className="wave">✳</span>
           </h1>
           <p className="welcome-subtitle">
-            Aquí tienes el pulso ejecutivo de tu negocio en tiempo real. <span>Todo en orden.</span>
+            {!isAccountActive ? (
+              <>
+                Tu cuenta se encuentra suspendida temporalmente.{' '}
+                <span>Contacta a un administrador para restablecer tu acceso.</span>
+              </>
+            ) : !hasActiveAccess ? (
+              <>
+                Tu perfil aún no tiene permisos operativos asignados.{' '}
+                <span>Solicita acceso a tu administrador.</span>
+              </>
+            ) : (
+              <>
+                Vista adaptada a tu perfil ({activeUserRolesSummary}).{' '}
+                <span>{t('dashboard.welcomeAllGood')}</span>
+              </>
+            )}
           </p>
         </div>
 
-        <div className="header-actions">
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={handleRefreshDashboard}
-            title="Sincronizar métricas con el ERP (simula carga skeleton boneyard-js)"
-            disabled={isLoadingDashboard}
-          >
-            <RefreshCw size={14} className={isLoadingDashboard ? 'animate-spin' : ''} />
-            {isLoadingDashboard ? 'Cargando...' : 'Actualizar'}
-          </button>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => {
-              setStockConfigTab('thresholds')
-              setShowStockConfigModal(true)
-            }}
-            title="Panel de configuración: definir umbrales mínimos de stock por producto y notificaciones push / correo"
-          >
-            <SlidersHorizontal size={14} />
-            Umbrales y Alertas
-            {lowStockItems.length > 0 ? (
-              <span className="mini-alert-dot" title={`${lowStockItems.length} SKUs bajo umbral mínimo`}>
-                {lowStockItems.length}
-              </span>
-            ) : (
-              (pushConfig.enabled || emailConfig.enabled) && (
-                <span className="mini-active-dot" title="Notificaciones activas" />
-              )
-            )}
-          </button>
-          <button
-            type="button"
-            className="button button-secondary"
-            disabled={isLoadingDashboard}
-            onClick={() => {
-              const next =
-                period === 'Este mes'
-                  ? 'Este trimestre'
-                  : period === 'Este trimestre'
-                  ? 'Año 2026'
-                  : 'Este mes'
-              handlePeriodChange(next)
-            }}
-          >
-            <CalendarDays size={15} />
-            {period}
-            <ChevronDown size={14} />
-          </button>
-          <button
-            type="button"
-            className="button button-primary"
-            onClick={onOpenCreateOpportunity}
-          >
-            <Plus size={16} /> Nueva oportunidad
-          </button>
-        </div>
-      </section>
-
-      {/* Alerta Visual Prioritaria: Stock por debajo del Umbral Mínimo */}
-      {lowStockItems.length > 0 && (
-        <aside className="executive-stock-alert-banner" role="alert">
-          <div className="stock-alert-banner-left">
-            <div className="stock-alert-icon-pulse">
-              <AlertTriangle size={18} />
-            </div>
-            <div className="stock-alert-text-block">
-              <div className="stock-alert-banner-header">
-                <span className="stock-alert-tag-kicker">Alerta Visual · Control de Stock</span>
-                <strong className="stock-alert-banner-title">
-                  {lowStockItems.length === 1
-                    ? '1 producto ha caído en o por debajo de su umbral mínimo configurado'
-                    : `${lowStockItems.length} productos han caído en o por debajo de su umbral mínimo configurado`}
-                </strong>
-                <span className="stock-alert-pill-count">{lowStockItems.length} en nivel crítico</span>
-              </div>
-              <p className="stock-alert-banner-desc">
-                La cantidad física disponible alcanzó o cayó por debajo del umbral mínimo de seguridad configurado en Operaciones.
-                Se requiere reorden o compra para prevenir roturas de inventario.
-              </p>
-              <div className="stock-alert-items-list">
-                {lowStockItems.map((item) => (
-                  <div key={item.id} className="stock-alert-chip">
-                    <span className="sku-tag">{item.sku}</span>
-                    <span className="item-name">{item.name}</span>
-                    <span className="wh-tag">({item.warehouseName})</span>
-                    <span className="stock-badge-critical">
-                      <strong>{item.stock} {item.unitOfMeasure}</strong> disp. / Umbral mín. <strong>{item.minStock}</strong>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="stock-alert-banner-actions">
+        {hasActiveAccess && (
+          <div className="header-actions">
             <button
               type="button"
-              className="button button-secondary stock-banner-notify-btn"
-              onClick={() => {
-                setStockConfigTab('thresholds')
-                setShowStockConfigModal(true)
-              }}
-              title="Configurar umbrales mínimos por producto y alertas push o por correo"
+              className="button button-secondary"
+              onClick={handleRefreshDashboard}
+              title="Sincronizar métricas con el ERP en tiempo real"
+              disabled={isLoadingDashboard}
             >
-              <SlidersHorizontal size={13} /> Configurar umbrales y alertas
+              <RefreshCw size={14} className={isLoadingDashboard ? 'animate-spin' : ''} />
+              {isLoadingDashboard ? t('dashboard.loading') : t('dashboard.refresh')}
             </button>
-            <button
-              type="button"
-              className="button button-primary stock-banner-action-btn"
-              onClick={() => onNavigateOperations('Inventario')}
-            >
-              <Package size={14} /> Gestionar en Inventario &rarr;
-            </button>
-          </div>
-        </aside>
-      )}
-
-      {/* Executive Quick Actions Bar */}
-      <section className="quick-actions-strip" aria-label="Acciones rápidas del negocio">
-        <span className="quick-actions-label">Accesos rápidos:</span>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateSales('Cotizaciones')}
-        >
-          <FileText size={13} /> Nueva cotización
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateSales('Pedidos')}
-        >
-          <Truck size={13} /> Nuevo pedido
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateFinance('Cobros')}
-        >
-          <CreditCard size={13} /> Registrar cobro
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateFinance('Gastos')}
-        >
-          <Scale size={13} /> Registrar gasto
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateOperations('Inventario')}
-        >
-          <Package size={13} /> Ajustar inventario
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => onNavigateFinance('Cuentas contables')}
-        >
-          <FileSpreadsheet size={13} /> Catálogo de cuentas
-        </button>
-        <button
-          type="button"
-          className="quick-action-item"
-          onClick={() => {
-            setStockConfigTab('thresholds')
-            setShowStockConfigModal(true)
-          }}
-          title="Panel de configuración: definir umbrales mínimos de stock por producto y habilitar alertas push o correo"
-        >
-          <SlidersHorizontal size={13} /> Umbrales y alertas de stock{' '}
-          {lowStockItems.length > 0 ? (
-            <span className="mini-alert-pill-count">{lowStockItems.length} críticos</span>
-          ) : (
-            (pushConfig.enabled || emailConfig.enabled) && (
-              <span className="mini-active-dot" title="Notificaciones activas" />
-            )
-          )}
-        </button>
-      </section>
-
-      {/* Operational Alert Hub ("Semáforo Ejecutivo") */}
-      {showAlertHub && (
-        <Skeleton
-          name="executive-alerts"
-          loading={isLoadingDashboard}
-          initialBones={executiveAlertHubBones}
-          className="alerts-skeleton-container"
-        >
-          <section className="executive-alert-hub" aria-label="Semáforo operativo">
-          <div className="alert-hub-header">
-            <span className="alert-hub-title">
-              <ShieldAlert size={14} style={{ color: totalAlertsCount > 0 ? '#ba4836' : '#3c7d5c' }} />
-              Semáforo Operativo y Financiero ({totalAlertsCount} avisos prioritarios)
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {(canAdjustThresholds || canViewInventory) && (
               <button
                 type="button"
-                className="email-hub-tag-btn"
+                className="button button-secondary"
                 onClick={() => {
                   setStockConfigTab('thresholds')
                   setShowStockConfigModal(true)
                 }}
-                title="Configurar umbrales mínimos de stock y notificaciones push o correo"
+                title="Panel de configuración: definir umbrales mínimos de stock por producto y notificaciones push / correo"
               >
-                <SlidersHorizontal size={11} /> Umbrales: <strong className={lowStockItems.length > 0 ? 'text-alert' : 'text-positive'}>{lowStockItems.length > 0 ? `${lowStockItems.length} críticos` : 'Óptimos'}</strong>
-                <span className="hub-sep">·</span>
-                <Bell size={11} /> <strong className={pushConfig.enabled ? 'text-positive' : 'text-muted'}>{pushConfig.enabled ? 'Push On' : 'Push Off'}</strong>
-                <span className="hub-sep">·</span>
-                <Mail size={11} /> <strong className={emailConfig.enabled ? 'text-positive' : 'text-muted'}>{emailConfig.enabled ? `${emailConfig.recipients.length} suscritos` : 'Correo Off'}</strong>
-              </button>
-              <button
-                type="button"
-                className="text-link"
-                style={{ fontSize: '8.5px' }}
-                onClick={() => setShowAlertHub(false)}
-              >
-                Ocultar alertas
-              </button>
-            </div>
-          </div>
-
-          <div className="alert-hub-grid">
-            {/* Alert 1: Cobranza Vencida */}
-            <article className="executive-alert-card">
-              <div>
-                <div className="alert-card-top">
+                <SlidersHorizontal size={14} />
+                {t('dashboard.thresholdsBtn')}
+                {lowStockItems.length > 0 ? (
                   <span
-                    className={`alert-status-badge ${
-                      overdueInvoices.length > 0 ? 'alert' : 'ok'
-                    }`}
+                    className="mini-alert-dot"
+                    title={`${lowStockItems.length} SKUs bajo umbral mínimo`}
                   >
-                    {overdueInvoices.length > 0 ? (
-                      <>
-                        <AlertTriangle size={11} /> Cobranza en riesgo
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 size={11} /> Al día
-                      </>
-                    )}
+                    {lowStockItems.length}
                   </span>
-                  <span style={{ fontSize: '8px', color: '#88958c' }}>Finanzas</span>
-                </div>
-                <div className="alert-card-copy">
-                  <strong>
-                    {overdueInvoices.length > 0
-                      ? `${overdueInvoices.length} facturas vencidas`
-                      : 'Sin facturas vencidas'}
-                  </strong>
-                  <span>
-                    {overdueInvoices.length > 0
-                      ? `${money(
-                          overdueInvoices.reduce((sum, r) => sum + r.balance, 0)
-                        )} requieren gestión inmediata.`
-                      : 'Todos los clientes mantienen sus pagos al corriente.'}
-                  </span>
-                </div>
-              </div>
+                ) : (
+                  (pushConfig.enabled || emailConfig.enabled) && (
+                    <span className="mini-active-dot" title="Notificaciones activas" />
+                  )
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              className="button button-secondary"
+              disabled={isLoadingDashboard}
+              onClick={() => {
+                const next =
+                  period === 'Este mes'
+                    ? 'Este trimestre'
+                    : period === 'Este trimestre'
+                    ? 'Año 2026'
+                    : 'Este mes'
+                handlePeriodChange(next)
+              }}
+            >
+              <CalendarDays size={15} />
+              {periodDisplayLabel}
+              <ChevronDown size={14} />
+            </button>
+            {canViewCrmOpportunities ? (
               <button
                 type="button"
-                className="alert-action-btn"
+                className="button button-primary"
+                onClick={onOpenCreateOpportunity}
+              >
+                <Plus size={16} /> {t('dashboard.newOpportunity')}
+              </button>
+            ) : canViewInventory ? (
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => onNavigateOperations('Inventario')}
+              >
+                <Package size={15} /> Ir a inventario
+              </button>
+            ) : canViewReceivables ? (
+              <button
+                type="button"
+                className="button button-primary"
                 onClick={() => onNavigateFinance('Cobros')}
               >
-                Ver módulo de cobros <ArrowRight size={11} />
+                <CreditCard size={15} /> Gestionar cobros
               </button>
-            </article>
+            ) : canViewPayables ? (
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={() => onNavigateFinance('Pagos')}
+              >
+                <WalletCards size={15} /> Programar pagos
+              </button>
+            ) : null}
+          </div>
+        )}
+      </section>
 
-            {/* Alert 2: Stock Crítico */}
-            <article className={`executive-alert-card ${lowStockItems.length > 0 ? 'card-alert-critical' : ''}`}>
-              <div>
-                <div className="alert-card-top">
-                  <span
-                    className={`alert-status-badge ${
-                      lowStockItems.length > 0 ? 'alert' : 'ok'
-                    }`}
-                  >
-                    {lowStockItems.length > 0 ? (
-                      <>
-                        <AlertTriangle size={11} /> Reorden requerido
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 size={11} /> Stock óptimo
-                      </>
-                    )}
-                  </span>
-                  <span style={{ fontSize: '8px', color: '#88958c' }}>Almacén</span>
+      {!hasActiveAccess ? (
+        <section className="panel dashboard-restricted-panel" aria-label="Acceso restringido">
+          <div className="dashboard-restricted-icon">
+            <LockKeyhole size={22} />
+          </div>
+          <div>
+            <h2>
+              {!isAccountActive
+                ? 'Cuenta suspendida en el espacio de trabajo'
+                : 'Sin módulos operativos asignados'}
+            </h2>
+            <p>
+              {!isAccountActive
+                ? 'Las métricas, alertas y acciones rápidas del tablero están ocultas mientras la cuenta permanezca suspendida.'
+                : 'El contenido del tablero se ajusta automáticamente a los permisos de cada rol. Actualmente tu rol no incluye secciones operativas activas.'}
+            </p>
+          </div>
+        </section>
+      ) : (
+        <>
+          {/* Alerta Visual Prioritaria: Stock por debajo del Umbral Mínimo */}
+          {(canViewInventory || canAdjustThresholds) && lowStockItems.length > 0 && (
+            <aside className="executive-stock-alert-banner" role="alert">
+              <div className="stock-alert-banner-left">
+                <div className="stock-alert-icon-pulse">
+                  <AlertTriangle size={18} />
                 </div>
-                <div className="alert-card-copy">
-                  <strong>
-                    {lowStockItems.length > 0
-                      ? `${lowStockItems.length} producto${lowStockItems.length > 1 ? 's' : ''} bajo umbral mínimo`
-                      : 'Inventario en niveles normales'}
-                  </strong>
-                  <span>
-                    {lowStockItems.length > 0
-                      ? `${lowStockItems.map((i) => `${i.sku} (${i.stock}/${i.minStock} mín.)`).slice(0, 2).join(', ')}${
-                          lowStockItems.length > 2 ? ` y ${lowStockItems.length - 2} más` : ''
-                        } por debajo del umbral mínimo.`
-                      : 'Todos los productos superan su umbral mínimo de seguridad.'}
-                  </span>
+                <div className="stock-alert-text-block">
+                  <div className="stock-alert-banner-header">
+                    <span className="stock-alert-tag-kicker">
+                      Alerta Visual · Control de Stock
+                    </span>
+                    <strong className="stock-alert-banner-title">
+                      {lowStockItems.length === 1
+                        ? '1 producto ha caído en o por debajo de su umbral mínimo configurado'
+                        : `${lowStockItems.length} productos han caído en o por debajo de su umbral mínimo configurado`}
+                    </strong>
+                    <span className="stock-alert-pill-count">
+                      {lowStockItems.length} en nivel crítico
+                    </span>
+                  </div>
+                  <p className="stock-alert-banner-desc">
+                    La cantidad física disponible alcanzó o cayó por debajo del umbral mínimo de
+                    seguridad configurado en Operaciones. Se requiere reorden o compra para prevenir
+                    roturas de inventario.
+                  </p>
+                  <div className="stock-alert-items-list">
+                    {lowStockItems.map((item) => (
+                      <div key={item.id} className="stock-alert-chip">
+                        <span className="sku-tag">{item.sku}</span>
+                        <span className="item-name">{item.name}</span>
+                        <span className="wh-tag">({item.warehouseName})</span>
+                        <span className="stock-badge-critical">
+                          <strong>
+                            {item.stock} {item.unitOfMeasure}
+                          </strong>{' '}
+                          disp. / Umbral mín. <strong>{item.minStock}</strong>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <div className="alert-card-footer-btns">
+              <div className="stock-alert-banner-actions">
+                {canAdjustThresholds && (
+                  <button
+                    type="button"
+                    className="button button-secondary stock-banner-notify-btn"
+                    onClick={() => {
+                      setStockConfigTab('thresholds')
+                      setShowStockConfigModal(true)
+                    }}
+                    title="Configurar umbrales mínimos por producto y alertas push o por correo"
+                  >
+                    <SlidersHorizontal size={13} /> Configurar umbrales y alertas
+                  </button>
+                )}
+                {canViewInventory && (
+                  <button
+                    type="button"
+                    className="button button-primary stock-banner-action-btn"
+                    onClick={() => onNavigateOperations('Inventario')}
+                  >
+                    <Package size={14} /> Gestionar en Inventario &rarr;
+                  </button>
+                )}
+              </div>
+            </aside>
+          )}
+
+          {/* Executive Quick Actions Bar */}
+          {quickActionCount > 0 && (
+            <section
+              className="quick-actions-strip"
+              aria-label={t('dashboard.quickActionsLabel')}
+            >
+              <span className="quick-actions-label">{t('dashboard.quickActionsLabel')}</span>
+              {canViewSalesQuotes && (
                 <button
                   type="button"
-                  className="alert-action-btn"
+                  className="quick-action-item"
+                  onClick={() => onNavigateSales('Cotizaciones')}
+                >
+                  <FileText size={13} /> {t('dashboard.quickQuote')}
+                </button>
+              )}
+              {canViewSalesOrders && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() => onNavigateSales('Pedidos')}
+                >
+                  <Truck size={13} /> {t('dashboard.quickOrder')}
+                </button>
+              )}
+              {canViewReceivables && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() => onNavigateFinance('Cobros')}
+                >
+                  <CreditCard size={13} /> {t('dashboard.quickPayment')}
+                </button>
+              )}
+              {canViewPayables && !canViewSalesQuotes && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() => onNavigateFinance('Pagos')}
+                >
+                  <WalletCards size={13} /> Pagos a proveedores
+                </button>
+              )}
+              {canViewExpenses && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() => onNavigateFinance('Gastos')}
+                >
+                  <Scale size={13} /> {t('dashboard.quickExpense')}
+                </button>
+              )}
+              {canViewInventory && (
+                <button
+                  type="button"
+                  className="quick-action-item"
                   onClick={() => onNavigateOperations('Inventario')}
                 >
-                  Ver inventario <ArrowRight size={11} />
+                  <Package size={13} /> {t('dashboard.quickInventory')}
                 </button>
+              )}
+              {canViewOperationsDeliveries && !canViewSalesOrders && (
                 <button
                   type="button"
-                  className="alert-sub-btn"
+                  className="quick-action-item"
+                  onClick={() => onNavigateOperations('Entregas')}
+                >
+                  <Truck size={13} /> Entregas y envíos
+                </button>
+              )}
+              {canViewOperationsPurchases && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() =>
+                    onNavigatePurchases
+                      ? onNavigatePurchases('Resumen')
+                      : onNavigateOperations('Compras')
+                  }
+                >
+                  <Receipt size={13} /> Compras
+                </button>
+              )}
+              {canViewChartAccounts && (
+                <button
+                  type="button"
+                  className="quick-action-item"
+                  onClick={() => onNavigateFinance('Cuentas contables')}
+                >
+                  <FileSpreadsheet size={13} /> {t('dashboard.quickChartAccounts')}
+                </button>
+              )}
+              {canAdjustThresholds && (
+                <button
+                  type="button"
+                  className="quick-action-item"
                   onClick={() => {
                     setStockConfigTab('thresholds')
                     setShowStockConfigModal(true)
                   }}
-                  title="Configurar umbrales de stock mínimo y alertas"
+                  title="Panel de configuración: definir umbrales mínimos de stock por producto y habilitar alertas push o correo"
                 >
-                  <SlidersHorizontal size={10} /> Umbrales y alertas
-                </button>
-              </div>
-            </article>
-
-            {/* Alert 3: Pedidos en preparación */}
-            <article className="executive-alert-card">
-              <div>
-                <div className="alert-card-top">
-                  <span
-                    className={`alert-status-badge ${
-                      pendingDeliveries.length > 0 ? 'info' : 'ok'
-                    }`}
-                  >
-                    <Truck size={11} />
-                    {pendingDeliveries.length > 0 ? 'Por despachar' : 'Al día'}
-                  </span>
-                  <span style={{ fontSize: '8px', color: '#88958c' }}>Ventas</span>
-                </div>
-                <div className="alert-card-copy">
-                  <strong>{pendingDeliveries.length} pedidos en preparación</strong>
-                  <span>
-                    Compromisos de entrega activos con clientes confirmados.
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="alert-action-btn"
-                onClick={() => onNavigateSales('Pedidos')}
-              >
-                Ver pedidos de venta <ArrowRight size={11} />
-              </button>
-            </article>
-
-            {/* Alert 4: Pagos a Proveedores */}
-            <article className="executive-alert-card">
-              <div>
-                <div className="alert-card-top">
-                  <span
-                    className={`alert-status-badge ${
-                      pendingPayablesCount.length > 0 ? 'warning' : 'ok'
-                    }`}
-                  >
-                    <CreditCard size={11} />
-                    {pendingPayablesCount.length > 0 ? 'Por liquidar' : 'Sin pendientes'}
-                  </span>
-                  <span style={{ fontSize: '8px', color: '#88958c' }}>Tesorería</span>
-                </div>
-                <div className="alert-card-copy">
-                  <strong>
-                    {pendingPayablesCount.length} facturas de proveedores
-                  </strong>
-                  <span>
-                    Saldo total a liquidar:{' '}
-                    {money(pendingPayablesCount.reduce((s, p) => s + p.balance, 0))}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="alert-action-btn"
-                onClick={() => onNavigateFinance('Pagos')}
-              >
-                Ver cuentas por pagar <ArrowRight size={11} />
-              </button>
-            </article>
-          </div>
-        </section>
-        </Skeleton>
-      )}
-
-      {/* Fila Superior de KPIs Clave para Ventas */}
-      <Skeleton
-        name="executive-kpis"
-        loading={isLoadingDashboard}
-        initialBones={executiveKpiBones}
-        className="kpi-skeleton-container"
-      >
-        <section className="kpi-grid sales-kpi-grid" aria-label="KPIs clave para ventas">
-        {/* KPI 1: Ventas Totales del Mes */}
-        <article
-          className="kpi-card kpi-featured kpi-card-clickable"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateSales('Pedidos')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateSales('Pedidos')}
-          title="Ver pedidos de venta del mes"
-        >
-          <div className="kpi-top">
-            <span>Ventas Totales del Mes</span>
-            <span className="kpi-icon">
-              <TrendingUp size={16} />
-            </span>
-          </div>
-          <div className="kpi-value">
-            {money(monthlySales)}
-            <span className="kpi-currency"> MXN</span>
-          </div>
-          <p className="kpi-subtext">{orders.length} pedidos confirmados este mes</p>
-          <div className="kpi-foot">
-            <span className="trend trend-up">
-              <ArrowUpRight size={13} /> +12.8%
-            </span>
-            <span>vs. mes anterior</span>
-            <span className="kpi-click-hint">
-              Ver pedidos <ArrowRight size={11} />
-            </span>
-          </div>
-        </article>
-
-        {/* KPI 2: Margen Bruto */}
-        <article
-          className="kpi-card kpi-card-clickable"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateSales('Resumen')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateSales('Resumen')}
-          title="Ver análisis de rentabilidad y margen comercial"
-        >
-          <div className="kpi-top">
-            <span>Margen Bruto</span>
-            <span className="kpi-icon icon-green">
-              <Percent size={16} />
-            </span>
-          </div>
-          <div className="kpi-value">
-            {grossMarginPercent}%
-            <span className="kpi-currency"> ({money(grossMarginValue)})</span>
-          </div>
-          <p className="kpi-subtext">Utilidad bruta sobre facturación comercial</p>
-          <div className="kpi-foot">
-            <span className="trend trend-up">
-              <ArrowUpRight size={13} /> +2.1 pts
-            </span>
-            <span>vs. mes anterior</span>
-            <span className="kpi-click-hint">
-              Ver margen <ArrowRight size={11} />
-            </span>
-          </div>
-        </article>
-
-        {/* KPI 3: Nuevos Clientes */}
-        <article
-          className="kpi-card kpi-card-clickable"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateCrm('Clientes')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateCrm('Clientes')}
-          title="Ver directorio de nuevos clientes"
-        >
-          <div className="kpi-top">
-            <span>Nuevos Clientes</span>
-            <span className="kpi-icon icon-lilac">
-              <UserPlus size={16} />
-            </span>
-          </div>
-          <div className="kpi-value">
-            {newClientsCount}
-            <span className="kpi-currency"> nuevos</span>
-          </div>
-          <p className="kpi-subtext">{totalClientsActive} clientes activos en cartera</p>
-          <div className="kpi-foot">
-            <span className="trend trend-up">
-              <ArrowUpRight size={13} /> +3 cuentas
-            </span>
-            <span>vs. mes anterior</span>
-            <span className="kpi-click-hint">
-              Ver clientes <ArrowRight size={11} />
-            </span>
-          </div>
-        </article>
-
-        {/* KPI 4: Oportunidades Ganadas */}
-        <article
-          className="kpi-card kpi-card-clickable"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateCrm('Oportunidades')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateCrm('Oportunidades')}
-          title="Ver oportunidades comerciales ganadas"
-        >
-          <div className="kpi-top">
-            <span>Oportunidades Ganadas</span>
-            <span className="kpi-icon icon-sand">
-              <Trophy size={16} />
-            </span>
-          </div>
-          <div className="kpi-value">
-            {wonOpportunitiesCount}
-            <span className="kpi-currency"> ({money(wonOpportunitiesValue)})</span>
-          </div>
-          <p className="kpi-subtext">Tasa de conversión del pipeline: 34.2%</p>
-          <div className="kpi-foot">
-            <span className="trend trend-up">
-              <ArrowUpRight size={13} /> +18.5%
-            </span>
-            <span>vs. mes anterior</span>
-            <span className="kpi-click-hint">
-              Ver pipeline <ArrowRight size={11} />
-            </span>
-          </div>
-        </article>
-      </section>
-      </Skeleton>
-
-      {/* Tira Secundaria de Resumen Operativo y Financiero */}
-      <section className="ops-summary-strip" aria-label="Balance operativo y financiero">
-        <div
-          className="ops-summary-item"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateFinance('Cobros')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Cobros')}
-          title="Ver cuentas por cobrar"
-        >
-          <div className="ops-summary-item-left">
-            <CreditCard size={15} style={{ color: '#356fa6' }} />
-            <div>
-              <span>Cuentas por cobrar:</span>
-              <strong>{money(totalReceivableBalance)}</strong>
-            </div>
-          </div>
-          <span className="text-link" style={{ fontSize: '8.5px' }}>
-            {receivables.filter((r) => r.balance > 0).length} pendientes <ArrowRight size={10} />
-          </span>
-        </div>
-
-        <div
-          className="ops-summary-item"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateFinance('Resumen')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Resumen')}
-          title="Ver tesorería y cuentas bancarias"
-        >
-          <div className="ops-summary-item-left">
-            <Landmark size={15} style={{ color: '#a08362' }} />
-            <div>
-              <span>Disponibilidad en bancos:</span>
-              <strong>{money(totalCashInBanks)}</strong>
-            </div>
-          </div>
-          <span className="text-link" style={{ fontSize: '8.5px' }}>
-            {bankAccounts.length} cuentas <ArrowRight size={10} />
-          </span>
-        </div>
-
-        <div
-          className="ops-summary-item"
-          role="button"
-          tabIndex={0}
-          onClick={() => onNavigateOperations('Inventario')}
-          onKeyDown={(e) => e.key === 'Enter' && onNavigateOperations('Inventario')}
-          title="Ver inventario valorado"
-        >
-          <div className="ops-summary-item-left">
-            <Package size={15} style={{ color: lowStockItems.length > 0 ? '#ba4836' : '#3c7d5c' }} />
-            <div>
-              <span>Inventario valorado:</span>
-              <strong>{money(totalInventoryValue)}</strong>
-            </div>
-          </div>
-          <span
-            className={`text-link ${lowStockItems.length > 0 ? 'text-alert' : ''}`}
-            style={{ fontSize: '8.5px', fontWeight: lowStockItems.length > 0 ? 700 : 500 }}
-          >
-            {lowStockItems.length > 0
-              ? `⚠️ ${lowStockItems.length} bajo umbral mín.`
-              : `${inventory.length} referencias`} <ArrowRight size={10} />
-          </span>
-        </div>
-      </section>
-
-      {/* Main Grid: Revenue & Target Recharts Chart + Activities + CRM Opportunities */}
-      <section className="dashboard-grid">
-        {/* Enhanced Recharts Revenue Chart */}
-        <Skeleton
-          name="executive-chart"
-          loading={isLoadingDashboard}
-          initialBones={executiveChartBones}
-          className="chart-skeleton-container"
-        >
-          <RevenueTargetChart
-            orders={orders}
-            receivables={receivables}
-            expenses={expenses}
-          />
-        </Skeleton>
-
-        {/* Agenda / Next Follow-ups */}
-        <article className="panel activity-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-kicker">EN TU AGENDA</div>
-              <h2>Lo que sigue</h2>
-            </div>
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => onNavigateCrm('Actividades')}
-            >
-              Ver agenda <ArrowRight size={14} />
-            </button>
-          </div>
-          <div className="today-label">
-            <span>HOY</span>
-            <span>{new Date().toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }).toUpperCase()}</span>
-          </div>
-          <div className="activity-list">
-            {activities.map((activity) => (
-              <div className="activity-row" key={activity.title}>
-                <div className={`activity-icon tone-${activity.tone}`}>
-                  {activity.icon === 'send' ? (
-                    <ArrowRight size={15} />
-                  ) : activity.icon === 'phone' ? (
-                    <Clock3 size={15} />
+                  <SlidersHorizontal size={13} /> Umbrales y alertas de stock{' '}
+                  {lowStockItems.length > 0 ? (
+                    <span className="mini-alert-pill-count">
+                      {lowStockItems.length} críticos
+                    </span>
                   ) : (
-                    <Users size={15} />
+                    (pushConfig.enabled || emailConfig.enabled) && (
+                      <span className="mini-active-dot" title="Notificaciones activas" />
+                    )
                   )}
-                </div>
-                <div className="activity-copy">
-                  <strong>{activity.title}</strong>
-                  <span>{activity.company}</span>
-                </div>
-                <time>{activity.time}</time>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="add-activity"
-            onClick={() => {
-              toast.info(
-                'Puedes programar nuevas actividades en el módulo CRM > Actividades.',
-                'Agenda comercial'
-              )
-              onNavigateCrm('Actividades')
-            }}
-          >
-            <Plus size={15} /> Agregar actividad comercial
-          </button>
-          <div className="activity-note">
-            <span className="note-spark">
-              <Sparkles size={14} />
-            </span>
-            <p>
-              Un seguimiento a tiempo con tus cuentas clave puede aumentar la conversión hasta en 35%.
-            </p>
-          </div>
-        </article>
+                </button>
+              )}
+            </section>
+          )}
 
-        {/* Bank Accounts Mini Summary */}
-        <div style={{ gridColumn: '1 / -1' }} className="bank-summary-card">
-          <div className="bank-summary-header">
-            <h3>Disponibilidad en Cuentas Bancarias</h3>
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => onNavigateFinance('Resumen')}
+          {/* Operational Alert Hub ("Semáforo Ejecutivo") */}
+          {showAlertHub && visibleAlertCardsCount > 0 && (
+            <Skeleton
+              name="executive-alerts"
+              loading={isLoadingDashboard}
+              initialBones={executiveAlertHubBones}
+              className="alerts-skeleton-container"
             >
-              Gestionar tesorería <ArrowRight size={12} />
-            </button>
-          </div>
-          <div className="bank-accounts-list">
-            {bankAccounts.map((acc) => (
-              <div key={acc.id} className="bank-mini-item">
-                <span className="bank-mini-name">{acc.bankName} · {acc.accountNumber}</span>
-                <span className="bank-mini-balance">{money(acc.balance)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent CRM Opportunities */}
-        <article className="panel opportunities-panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-kicker">SEGUIMIENTO COMERCIAL</div>
-              <h2>Oportunidades recientes</h2>
-              <p className="panel-subtitle">Las conversaciones más activas de tu equipo</p>
-            </div>
-            <button
-              type="button"
-              className="text-link"
-              onClick={() => onNavigateCrm('Oportunidades')}
-            >
-              Ver todas <ArrowRight size={14} />
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>EMPRESA</th>
-                  <th>ETAPA</th>
-                  <th>VALOR ESTIMADO</th>
-                  <th>ACTUALIZACIÓN</th>
-                  <th style={{ textAlign: 'right' }}>ACCIÓN</th>
-                </tr>
-              </thead>
-              <tbody>
-                {opportunities.map((opportunity) => (
-                  <tr key={opportunity.company}>
-                    <td>
-                      <div className="company-cell">
-                        <div className={`company-avatar ${opportunity.color}`}>
-                          {opportunity.initials}
-                        </div>
-                        <div>
-                          <strong>{opportunity.company}</strong>
-                          <span>{opportunity.person}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={`stage-badge stage-${opportunity.stageTone}`}>
-                        <i />
-                        {opportunity.stage}
-                      </span>
-                    </td>
-                    <td className="money-cell">{money(opportunity.value)}</td>
-                    <td className="date-cell">{opportunity.date}</td>
-                    <td style={{ textAlign: 'right' }}>
+              <section className="executive-alert-hub" aria-label="Semáforo operativo">
+                <div className="alert-hub-header">
+                  <span className="alert-hub-title">
+                    <ShieldAlert
+                      size={14}
+                      style={{ color: totalAlertsCount > 0 ? '#ba4836' : '#3c7d5c' }}
+                    />
+                    Semáforo Operativo y Financiero ({totalAlertsCount} avisos prioritarios)
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {(canAdjustThresholds || canViewInventory) && (
                       <button
                         type="button"
-                        className="button button-secondary"
-                        style={{ minHeight: '26px', padding: '0 8px', fontSize: '8.5px' }}
-                        onClick={() => onNavigateCrm('Oportunidades')}
+                        className="email-hub-tag-btn"
+                        onClick={() => {
+                          setStockConfigTab('thresholds')
+                          setShowStockConfigModal(true)
+                        }}
+                        title="Configurar umbrales mínimos de stock y notificaciones push o correo"
                       >
-                        Ver en CRM
+                        <SlidersHorizontal size={11} /> Umbrales:{' '}
+                        <strong
+                          className={lowStockItems.length > 0 ? 'text-alert' : 'text-positive'}
+                        >
+                          {lowStockItems.length > 0
+                            ? `${lowStockItems.length} críticos`
+                            : 'Óptimos'}
+                        </strong>
+                        <span className="hub-sep">·</span>
+                        <Bell size={11} />{' '}
+                        <strong className={pushConfig.enabled ? 'text-positive' : 'text-muted'}>
+                          {pushConfig.enabled ? 'Push On' : 'Push Off'}
+                        </strong>
+                        <span className="hub-sep">·</span>
+                        <Mail size={11} />{' '}
+                        <strong className={emailConfig.enabled ? 'text-positive' : 'text-muted'}>
+                          {emailConfig.enabled
+                            ? `${emailConfig.recipients.length} suscritos`
+                            : 'Correo Off'}
+                        </strong>
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button
-            type="button"
-            className="table-footer"
-            onClick={() => onNavigateCrm('Oportunidades')}
-          >
-            Ver pipeline completo en CRM <ArrowRight size={14} />
-          </button>
-        </article>
-      </section>
+                    )}
+                    <button
+                      type="button"
+                      className="text-link"
+                      style={{ fontSize: '8.5px' }}
+                      onClick={() => setShowAlertHub(false)}
+                    >
+                      Ocultar alertas
+                    </button>
+                  </div>
+                </div>
+
+                <div className={`alert-hub-grid alert-hub-grid--cols-${visibleAlertCardsCount}`}>
+                  {/* Alert 1: Cobranza Vencida */}
+                  {showAlertReceivables && (
+                    <article className="executive-alert-card">
+                      <div>
+                        <div className="alert-card-top">
+                          <span
+                            className={`alert-status-badge ${
+                              overdueInvoices.length > 0 ? 'alert' : 'ok'
+                            }`}
+                          >
+                            {overdueInvoices.length > 0 ? (
+                              <>
+                                <AlertTriangle size={11} /> Cobranza en riesgo
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={11} /> Al día
+                              </>
+                            )}
+                          </span>
+                          <span style={{ fontSize: '8px', color: '#88958c' }}>Finanzas</span>
+                        </div>
+                        <div className="alert-card-copy">
+                          <strong>
+                            {overdueInvoices.length > 0
+                              ? `${overdueInvoices.length} facturas vencidas`
+                              : 'Sin facturas vencidas'}
+                          </strong>
+                          <span>
+                            {overdueInvoices.length > 0
+                              ? `${money(
+                                  overdueInvoices.reduce((sum, r) => sum + r.balance, 0)
+                                )} requieren gestión inmediata.`
+                              : 'Todos los clientes mantienen sus pagos al corriente.'}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="alert-action-btn"
+                        onClick={() => onNavigateFinance('Cobros')}
+                      >
+                        Ver módulo de cobros <ArrowRight size={11} />
+                      </button>
+                    </article>
+                  )}
+
+                  {/* Alert 2: Stock Crítico */}
+                  {showAlertStock && (
+                    <article
+                      className={`executive-alert-card ${
+                        lowStockItems.length > 0 ? 'card-alert-critical' : ''
+                      }`}
+                    >
+                      <div>
+                        <div className="alert-card-top">
+                          <span
+                            className={`alert-status-badge ${
+                              lowStockItems.length > 0 ? 'alert' : 'ok'
+                            }`}
+                          >
+                            {lowStockItems.length > 0 ? (
+                              <>
+                                <AlertTriangle size={11} /> Reorden requerido
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 size={11} /> Stock óptimo
+                              </>
+                            )}
+                          </span>
+                          <span style={{ fontSize: '8px', color: '#88958c' }}>Almacén</span>
+                        </div>
+                        <div className="alert-card-copy">
+                          <strong>
+                            {lowStockItems.length > 0
+                              ? `${lowStockItems.length} producto${
+                                  lowStockItems.length > 1 ? 's' : ''
+                                } bajo umbral mínimo`
+                              : 'Inventario en niveles normales'}
+                          </strong>
+                          <span>
+                            {lowStockItems.length > 0
+                              ? `${lowStockItems
+                                  .map((i) => `${i.sku} (${i.stock}/${i.minStock} mín.)`)
+                                  .slice(0, 2)
+                                  .join(', ')}${
+                                  lowStockItems.length > 2
+                                    ? ` y ${lowStockItems.length - 2} más`
+                                    : ''
+                                } por debajo del umbral mínimo.`
+                              : 'Todos los productos superan su umbral mínimo de seguridad.'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="alert-card-footer-btns">
+                        {canViewInventory && (
+                          <button
+                            type="button"
+                            className="alert-action-btn"
+                            onClick={() => onNavigateOperations('Inventario')}
+                          >
+                            Ver inventario <ArrowRight size={11} />
+                          </button>
+                        )}
+                        {canAdjustThresholds && (
+                          <button
+                            type="button"
+                            className="alert-sub-btn"
+                            onClick={() => {
+                              setStockConfigTab('thresholds')
+                              setShowStockConfigModal(true)
+                            }}
+                            title="Configurar umbrales de stock mínimo y alertas"
+                          >
+                            <SlidersHorizontal size={10} /> Umbrales y alertas
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  )}
+
+                  {/* Alert 3: Pedidos en preparación / Entregas */}
+                  {showAlertDeliveries && (
+                    <article className="executive-alert-card">
+                      <div>
+                        <div className="alert-card-top">
+                          <span
+                            className={`alert-status-badge ${
+                              (canViewSalesOrders
+                                ? pendingDeliveries.length
+                                : activeShipments.length) > 0
+                                ? 'info'
+                                : 'ok'
+                            }`}
+                          >
+                            <Truck size={11} />
+                            {(canViewSalesOrders
+                              ? pendingDeliveries.length
+                              : activeShipments.length) > 0
+                              ? 'Por despachar'
+                              : 'Al día'}
+                          </span>
+                          <span style={{ fontSize: '8px', color: '#88958c' }}>
+                            {canViewSalesOrders ? 'Ventas' : 'Entregas'}
+                          </span>
+                        </div>
+                        <div className="alert-card-copy">
+                          <strong>
+                            {canViewSalesOrders
+                              ? `${pendingDeliveries.length} pedidos en preparación`
+                              : `${activeShipments.length} envíos activos en logística`}
+                          </strong>
+                          <span>
+                            {canViewSalesOrders
+                              ? 'Compromisos de entrega activos con clientes confirmados.'
+                              : 'Guías en preparación o ruta hacia clientes.'}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="alert-action-btn"
+                        onClick={() =>
+                          canViewSalesOrders
+                            ? onNavigateSales('Pedidos')
+                            : onNavigateOperations('Entregas')
+                        }
+                      >
+                        {canViewSalesOrders ? 'Ver pedidos de venta' : 'Ver entregas'}{' '}
+                        <ArrowRight size={11} />
+                      </button>
+                    </article>
+                  )}
+
+                  {/* Alert 4: Pagos a Proveedores */}
+                  {showAlertPayables && (
+                    <article className="executive-alert-card">
+                      <div>
+                        <div className="alert-card-top">
+                          <span
+                            className={`alert-status-badge ${
+                              pendingPayablesCount.length > 0 ? 'warning' : 'ok'
+                            }`}
+                          >
+                            <CreditCard size={11} />
+                            {pendingPayablesCount.length > 0 ? 'Por liquidar' : 'Sin pendientes'}
+                          </span>
+                          <span style={{ fontSize: '8px', color: '#88958c' }}>Tesorería</span>
+                        </div>
+                        <div className="alert-card-copy">
+                          <strong>{pendingPayablesCount.length} facturas de proveedores</strong>
+                          <span>Saldo total a liquidar: {money(totalPayablesBalance)}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="alert-action-btn"
+                        onClick={() => onNavigateFinance('Pagos')}
+                      >
+                        Ver cuentas por pagar <ArrowRight size={11} />
+                      </button>
+                    </article>
+                  )}
+                </div>
+              </section>
+            </Skeleton>
+          )}
+
+          {/* Fila Superior de KPIs Adaptados por Rol */}
+          {visibleTopKpiCount > 0 && (
+            <Skeleton
+              name="executive-kpis"
+              loading={isLoadingDashboard}
+              initialBones={executiveKpiBones}
+              className="kpi-skeleton-container"
+            >
+              <section
+                className={`kpi-grid sales-kpi-grid kpi-grid--cols-${Math.min(
+                  visibleTopKpiCount,
+                  4
+                )}`}
+                aria-label="Indicadores clave del rol"
+              >
+                {/* Sales KPI 1: Ventas Totales del Mes */}
+                {showSalesKpiSales && (
+                  <article
+                    className="kpi-card kpi-featured kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      onNavigateSales(canViewSalesOrders ? 'Pedidos' : 'Resumen')
+                    }
+                    onKeyDown={(e) =>
+                      e.key === 'Enter' &&
+                      onNavigateSales(canViewSalesOrders ? 'Pedidos' : 'Resumen')
+                    }
+                    title="Ver pedidos de venta del mes"
+                  >
+                    <div className="kpi-top">
+                      <span>Ventas Totales del Mes</span>
+                      <span className="kpi-icon">
+                        <TrendingUp size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(monthlySales)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">{orders.length} pedidos confirmados este mes</p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">
+                        <ArrowUpRight size={13} /> +12.8%
+                      </span>
+                      <span>vs. mes anterior</span>
+                      <span className="kpi-click-hint">
+                        Ver pedidos <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Sales KPI 2: Margen Bruto */}
+                {showSalesKpiMargin && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateSales('Resumen')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateSales('Resumen')}
+                    title="Ver análisis de rentabilidad y margen comercial"
+                  >
+                    <div className="kpi-top">
+                      <span>Margen Bruto</span>
+                      <span className="kpi-icon icon-green">
+                        <Percent size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {grossMarginPercent}%
+                      <span className="kpi-currency"> ({money(grossMarginValue)})</span>
+                    </div>
+                    <p className="kpi-subtext">Utilidad bruta sobre facturación comercial</p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">
+                        <ArrowUpRight size={13} /> +2.1 pts
+                      </span>
+                      <span>vs. mes anterior</span>
+                      <span className="kpi-click-hint">
+                        Ver margen <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Sales KPI 3: Nuevos Clientes */}
+                {showSalesKpiClients && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateCrm('Clientes')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateCrm('Clientes')}
+                    title="Ver directorio de nuevos clientes"
+                  >
+                    <div className="kpi-top">
+                      <span>Nuevos Clientes</span>
+                      <span className="kpi-icon icon-lilac">
+                        <UserPlus size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {newClientsCount}
+                      <span className="kpi-currency"> nuevos</span>
+                    </div>
+                    <p className="kpi-subtext">{totalClientsActive} clientes activos en cartera</p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">
+                        <ArrowUpRight size={13} /> +3 cuentas
+                      </span>
+                      <span>vs. mes anterior</span>
+                      <span className="kpi-click-hint">
+                        Ver clientes <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Sales KPI 4: Oportunidades Ganadas */}
+                {showSalesKpiOpps && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateCrm('Oportunidades')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateCrm('Oportunidades')}
+                    title="Ver oportunidades comerciales ganadas"
+                  >
+                    <div className="kpi-top">
+                      <span>Oportunidades Ganadas</span>
+                      <span className="kpi-icon icon-sand">
+                        <Trophy size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {wonOpportunitiesCount}
+                      <span className="kpi-currency"> ({money(wonOpportunitiesValue)})</span>
+                    </div>
+                    <p className="kpi-subtext">Tasa de conversión del pipeline: 34.2%</p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">
+                        <ArrowUpRight size={13} /> +18.5%
+                      </span>
+                      <span>vs. mes anterior</span>
+                      <span className="kpi-click-hint">
+                        Ver pipeline <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Finance KPI 1: Cuentas por Cobrar */}
+                {showTopFinReceivables && (
+                  <article
+                    className="kpi-card kpi-featured kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateFinance('Cobros')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Cobros')}
+                    title="Ver cuentas por cobrar"
+                  >
+                    <div className="kpi-top">
+                      <span>Cuentas por Cobrar</span>
+                      <span className="kpi-icon">
+                        <CreditCard size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(totalReceivableBalance)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {receivables.filter((r) => r.balance > 0).length} facturas pendientes de
+                      cobro
+                    </p>
+                    <div className="kpi-foot">
+                      <span
+                        className={`trend ${
+                          overdueInvoices.length > 0 ? 'trend-down' : 'trend-up'
+                        }`}
+                      >
+                        {overdueInvoices.length > 0
+                          ? `${overdueInvoices.length} vencidas`
+                          : 'Cartera sana'}
+                      </span>
+                      <span>seguimiento CxC</span>
+                      <span className="kpi-click-hint">
+                        Ver cobros <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Finance KPI 2: Disponibilidad en Bancos */}
+                {showTopFinBanks && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateFinance('Resumen')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Resumen')}
+                    title="Ver tesorería y cuentas bancarias"
+                  >
+                    <div className="kpi-top">
+                      <span>Disponibilidad en Bancos</span>
+                      <span className="kpi-icon icon-sand">
+                        <Landmark size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(totalCashInBanks)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {bankAccounts.length} cuentas bancarias conciliadas
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">Tesorería activa</span>
+                      <span>saldo consolidado</span>
+                      <span className="kpi-click-hint">
+                        Ver bancos <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Finance KPI 3: Cuentas por Pagar */}
+                {showTopFinPayables && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateFinance('Pagos')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Pagos')}
+                    title="Ver cuentas por pagar"
+                  >
+                    <div className="kpi-top">
+                      <span>Cuentas por Pagar</span>
+                      <span className="kpi-icon icon-lilac">
+                        <WalletCards size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(totalPayablesBalance)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {pendingPayablesCount.length} documentos pendientes a proveedores
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-neutral">Compromisos vigentes</span>
+                      <span>programación</span>
+                      <span className="kpi-click-hint">
+                        Ver pagos <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Finance KPI 4: Gastos Operativos */}
+                {showTopFinExpenses && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateFinance('Gastos')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Gastos')}
+                    title="Ver control de gastos"
+                  >
+                    <div className="kpi-top">
+                      <span>Gastos Registrados</span>
+                      <span className="kpi-icon icon-green">
+                        <Scale size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(monthlyExpensesTotal)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {expenses.length} comprobantes operativos contabilizados
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-neutral">Control presupuestal</span>
+                      <span>egresos</span>
+                      <span className="kpi-click-hint">
+                        Ver gastos <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Operations KPI 1: Inventario Valorado */}
+                {showTopOpsInventoryVal && (
+                  <article
+                    className="kpi-card kpi-featured kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateOperations('Inventario')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateOperations('Inventario')}
+                    title="Ver inventario valorado"
+                  >
+                    <div className="kpi-top">
+                      <span>Inventario Valorado</span>
+                      <span className="kpi-icon icon-green">
+                        <WarehouseIcon size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {money(totalInventoryValue)}
+                      <span className="kpi-currency"> MXN</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {inventory.length} ubicaciones SKU en {warehouseBreakdown.length} almacenes
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">Existencia física</span>
+                      <span>costo promedio</span>
+                      <span className="kpi-click-hint">
+                        Ver inventario <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Operations KPI 2: SKUs Bajo Umbral Mínimo */}
+                {showTopOpsCritical && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (canViewInventory) {
+                        onNavigateOperations('Inventario')
+                      } else {
+                        setStockConfigTab('thresholds')
+                        setShowStockConfigModal(true)
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (canViewInventory) onNavigateOperations('Inventario')
+                        else {
+                          setStockConfigTab('thresholds')
+                          setShowStockConfigModal(true)
+                        }
+                      }
+                    }}
+                    title="Ver SKUs bajo umbral mínimo"
+                  >
+                    <div className="kpi-top">
+                      <span>SKUs Bajo Umbral Mínimo</span>
+                      <span className="kpi-icon icon-sand">
+                        <AlertTriangle size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {lowStockItems.length}
+                      <span className="kpi-currency"> de {inventory.length} SKUs</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {lowStockItems.length > 0
+                        ? 'Requieren reposición o orden de compra'
+                        : 'Todos los artículos por encima del mínimo'}
+                    </p>
+                    <div className="kpi-foot">
+                      <span
+                        className={`trend ${
+                          lowStockItems.length > 0 ? 'trend-down' : 'trend-up'
+                        }`}
+                      >
+                        {lowStockItems.length > 0 ? 'Atención requerida' : 'Nivel óptimo'}
+                      </span>
+                      <span>stock seguridad</span>
+                      <span className="kpi-click-hint">
+                        Revisar <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Operations KPI 3: Entregas y Despachos Activos */}
+                {showTopOpsDeliveries && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigateOperations('Entregas')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateOperations('Entregas')}
+                    title="Ver entregas y despachos"
+                  >
+                    <div className="kpi-top">
+                      <span>Entregas en Proceso</span>
+                      <span className="kpi-icon">
+                        <Truck size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {activeShipments.length}
+                      <span className="kpi-currency"> envíos activos</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {shipments.filter((s) => s.status === 'Entregado').length} entregas
+                      completadas en el periodo
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-up">Última milla</span>
+                      <span>seguimiento</span>
+                      <span className="kpi-click-hint">
+                        Ver entregas <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+
+                {/* Operations KPI 4: Órdenes de Compra */}
+                {showTopOpsPurchases && (
+                  <article
+                    className="kpi-card kpi-card-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      onNavigatePurchases
+                        ? onNavigatePurchases('Órdenes de compra')
+                        : onNavigateOperations('Compras')
+                    }
+                    onKeyDown={(e) =>
+                      e.key === 'Enter' &&
+                      (onNavigatePurchases
+                        ? onNavigatePurchases('Órdenes de compra')
+                        : onNavigateOperations('Compras'))
+                    }
+                    title="Ver órdenes de compra y recepciones"
+                  >
+                    <div className="kpi-top">
+                      <span>Órdenes de Abasto</span>
+                      <span className="kpi-icon icon-lilac">
+                        <Receipt size={16} />
+                      </span>
+                    </div>
+                    <div className="kpi-value">
+                      {activePurchaseOrders.length}
+                      <span className="kpi-currency"> abiertas</span>
+                    </div>
+                    <p className="kpi-subtext">
+                      {purchaseOrders.length} órdenes totales registradas en compras
+                    </p>
+                    <div className="kpi-foot">
+                      <span className="trend trend-neutral">Abastecimiento</span>
+                      <span>recepciones</span>
+                      <span className="kpi-click-hint">
+                        Ver compras <ArrowRight size={11} />
+                      </span>
+                    </div>
+                  </article>
+                )}
+              </section>
+            </Skeleton>
+          )}
+
+          {/* Tira Secundaria de Resumen Operativo y Financiero */}
+          {visibleStripCount > 0 && (
+            <section
+              className={`ops-summary-strip ops-summary-strip--cols-${visibleStripCount}`}
+              aria-label="Balance operativo y financiero"
+            >
+              {showStripReceivables && (
+                <div
+                  className="ops-summary-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateFinance('Cobros')}
+                  onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Cobros')}
+                  title="Ver cuentas por cobrar"
+                >
+                  <div className="ops-summary-item-left">
+                    <CreditCard size={15} style={{ color: '#356fa6' }} />
+                    <div>
+                      <span>Cuentas por cobrar:</span>
+                      <strong>{money(totalReceivableBalance)}</strong>
+                    </div>
+                  </div>
+                  <span className="text-link" style={{ fontSize: '8.5px' }}>
+                    {receivables.filter((r) => r.balance > 0).length} pendientes{' '}
+                    <ArrowRight size={10} />
+                  </span>
+                </div>
+              )}
+
+              {showStripBanks && (
+                <div
+                  className="ops-summary-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateFinance('Resumen')}
+                  onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Resumen')}
+                  title="Ver tesorería y cuentas bancarias"
+                >
+                  <div className="ops-summary-item-left">
+                    <Landmark size={15} style={{ color: '#a08362' }} />
+                    <div>
+                      <span>Disponibilidad en bancos:</span>
+                      <strong>{money(totalCashInBanks)}</strong>
+                    </div>
+                  </div>
+                  <span className="text-link" style={{ fontSize: '8.5px' }}>
+                    {bankAccounts.length} cuentas <ArrowRight size={10} />
+                  </span>
+                </div>
+              )}
+
+              {showStripInventory && (
+                <div
+                  className="ops-summary-item"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onNavigateOperations('Inventario')}
+                  onKeyDown={(e) => e.key === 'Enter' && onNavigateOperations('Inventario')}
+                  title="Ver inventario valorado"
+                >
+                  <div className="ops-summary-item-left">
+                    <Package
+                      size={15}
+                      style={{ color: lowStockItems.length > 0 ? '#ba4836' : '#3c7d5c' }}
+                    />
+                    <div>
+                      <span>Inventario valorado:</span>
+                      <strong>{money(totalInventoryValue)}</strong>
+                    </div>
+                  </div>
+                  <span
+                    className={`text-link ${lowStockItems.length > 0 ? 'text-alert' : ''}`}
+                    style={{ fontSize: '8.5px', fontWeight: lowStockItems.length > 0 ? 700 : 500 }}
+                  >
+                    {lowStockItems.length > 0
+                      ? `⚠️ ${lowStockItems.length} bajo umbral mín.`
+                      : `${inventory.length} referencias`}{' '}
+                    <ArrowRight size={10} />
+                  </span>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Main Grid: Chart + Role Side Panel + Bank Accounts + CRM Opportunities */}
+          {(hasLeftMainPanel ||
+            hasRightMainPanel ||
+            canViewFinanceSummary ||
+            canViewCrmOpportunities) && (
+            <section
+              className={`dashboard-grid ${
+                isSingleColumnDashboardGrid ? 'dashboard-grid--single' : ''
+              }`}
+            >
+              {/* Left Panel 1: Sales/Finance Recharts Chart */}
+              {showMainRevenueChart && (
+                <Skeleton
+                  name="executive-chart"
+                  loading={isLoadingDashboard}
+                  initialBones={executiveChartBones}
+                  className="chart-skeleton-container"
+                >
+                  <RevenueTargetChart
+                    orders={orders}
+                    receivables={receivables}
+                    expenses={expenses}
+                    allowSalesSeries={canViewSalesChart}
+                    allowFinanceSeries={canViewFinanceChart}
+                  />
+                </Skeleton>
+              )}
+
+              {/* Left Panel 2: Operations Inventory Stock Chart (for Operations-only roles) */}
+              {showMainOperationsChart && (
+                <article
+                  className="panel exec-chart-panel"
+                  aria-label="Disponibilidad de inventario vs umbral mínimo"
+                >
+                  <div className="exec-chart-top-bar">
+                    <div>
+                      <div className="panel-kicker">CONTROL LOGÍSTICO · INVENTARIO ACTIVO</div>
+                      <h2>Existencias actuales vs. umbral mínimo por SKU</h2>
+                      <p className="panel-subtitle">
+                        Monitoreo operativo de los artículos prioritarios y balance por almacén
+                      </p>
+                    </div>
+                    {canViewInventory && (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => onNavigateOperations('Inventario')}
+                      >
+                        Ver inventario completo <ArrowRight size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ width: '100%', height: 225, marginTop: 10 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={inventoryChartData}
+                        margin={{ top: 10, right: 12, left: -12, bottom: 0 }}
+                        barGap={4}
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          vertical={false}
+                          stroke="rgba(139, 150, 143, 0.18)"
+                        />
+                        <XAxis
+                          dataKey="sku"
+                          stroke="#8b968f"
+                          fontSize={9}
+                          tickLine={false}
+                          axisLine={{ stroke: 'rgba(139, 150, 143, 0.25)' }}
+                        />
+                        <YAxis
+                          stroke="#8b968f"
+                          fontSize={9}
+                          tickLine={false}
+                          axisLine={false}
+                        />
+                        <Tooltip
+                          cursor={{ fill: 'rgba(139, 150, 143, 0.08)' }}
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null
+                            const data = payload[0].payload as (typeof inventoryChartData)[number]
+                            const isLow = data.stock <= data.minStock
+                            return (
+                              <div className="exec-chart-tooltip">
+                                <strong>
+                                  {data.sku} · {data.name}
+                                </strong>
+                                <div className="exec-tooltip-row">
+                                  <span>Stock actual:</span>
+                                  <strong style={{ color: isLow ? '#b84b34' : '#1d7a65' }}>
+                                    {data.stock} uds
+                                  </strong>
+                                </div>
+                                <div className="exec-tooltip-row">
+                                  <span>Umbral mínimo:</span>
+                                  <strong>{data.minStock} uds</strong>
+                                </div>
+                              </div>
+                            )
+                          }}
+                        />
+                        <Bar
+                          name="Stock actual"
+                          dataKey="stock"
+                          fill="#1d7a65"
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={26}
+                        />
+                        <Bar
+                          name="Umbral mínimo"
+                          dataKey="minStock"
+                          fill="#d97706"
+                          radius={[4, 4, 0, 0]}
+                          maxBarSize={26}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="ops-warehouse-strip">
+                    {warehouseBreakdown.map((wh) => (
+                      <div key={wh.warehouseName} className="ops-warehouse-card">
+                        <span className="ops-warehouse-name">{wh.warehouseName}</span>
+                        <strong>{wh.units} unidades</strong>
+                        <small>
+                          {wh.skus} SKUs · {money(wh.value)}
+                          {wh.critical > 0 ? ` · ${wh.critical} críticos` : ''}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              )}
+
+              {/* Right Panel 1: CRM Agenda / Next Follow-ups */}
+              {showRightCrmActivities && (
+                <article className="panel activity-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">EN TU AGENDA</div>
+                      <h2>Lo que sigue</h2>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-link"
+                      onClick={() => onNavigateCrm('Actividades')}
+                    >
+                      Ver agenda <ArrowRight size={14} />
+                    </button>
+                  </div>
+                  <div className="today-label">
+                    <span>HOY</span>
+                    <span>
+                      {new Date()
+                        .toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })
+                        .toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="activity-list">
+                    {activities.map((activity) => (
+                      <div className="activity-row" key={activity.title}>
+                        <div className={`activity-icon tone-${activity.tone}`}>
+                          {activity.icon === 'send' ? (
+                            <ArrowRight size={15} />
+                          ) : activity.icon === 'phone' ? (
+                            <Clock3 size={15} />
+                          ) : (
+                            <Users size={15} />
+                          )}
+                        </div>
+                        <div className="activity-copy">
+                          <strong>{activity.title}</strong>
+                          <span>{activity.company}</span>
+                        </div>
+                        <time>{activity.time}</time>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="add-activity"
+                    onClick={() => {
+                      toast.info(
+                        'Puedes programar nuevas actividades en el módulo CRM > Actividades.',
+                        'Agenda comercial'
+                      )
+                      onNavigateCrm('Actividades')
+                    }}
+                  >
+                    <Plus size={15} /> Agregar actividad comercial
+                  </button>
+                  <div className="activity-note">
+                    <span className="note-spark">
+                      <Sparkles size={14} />
+                    </span>
+                    <p>
+                      Un seguimiento a tiempo con tus cuentas clave puede aumentar la conversión
+                      hasta en 35%.
+                    </p>
+                  </div>
+                </article>
+              )}
+
+              {/* Right Panel 2: Finance Priorities (for Finance roles without CRM) */}
+              {showRightFinancePanel && (
+                <article className="panel activity-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">TESORERÍA Y COMPROMISOS</div>
+                      <h2>Vencimientos prioritarios</h2>
+                    </div>
+                    {canViewReceivables && (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => onNavigateFinance('Cobros')}
+                      >
+                        Ir a Cobros <ArrowRight size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="today-label">
+                    <span>PENDIENTES</span>
+                    <span>CXC · CXP</span>
+                  </div>
+                  <div className="activity-list">
+                    {receivables
+                      .filter((r) => r.balance > 0)
+                      .slice(0, 3)
+                      .map((inv) => (
+                        <div className="activity-row" key={inv.id}>
+                          <div
+                            className={`activity-icon ${
+                              inv.status === 'Vencida' ? 'tone-amber' : 'tone-green'
+                            }`}
+                          >
+                            <CreditCard size={15} />
+                          </div>
+                          <div className="activity-copy">
+                            <strong>
+                              {inv.folio} · {inv.clientCompany}
+                            </strong>
+                            <span>
+                              Cobro {inv.status.toLowerCase()} · Vence {inv.dueDate}
+                            </span>
+                          </div>
+                          <time>{money(inv.balance)}</time>
+                        </div>
+                      ))}
+                    {canViewPayables &&
+                      pendingPayablesCount.slice(0, 2).map((bill) => (
+                        <div className="activity-row" key={bill.id}>
+                          <div className="activity-icon tone-blue">
+                            <WalletCards size={15} />
+                          </div>
+                          <div className="activity-copy">
+                            <strong>
+                              {bill.folio} · {bill.supplierCompany}
+                            </strong>
+                            <span>Pago a proveedor · Vence {bill.dueDate}</span>
+                          </div>
+                          <time>{money(bill.balance)}</time>
+                        </div>
+                      ))}
+                  </div>
+                  {canViewPayables && (
+                    <button
+                      type="button"
+                      className="add-activity"
+                      onClick={() => onNavigateFinance('Pagos')}
+                    >
+                      <ArrowRight size={15} /> Programar pagos a proveedores
+                    </button>
+                  )}
+                </article>
+              )}
+
+              {/* Right Panel 3: Operations Priorities (for Operations roles without CRM) */}
+              {showRightOperationsPanel && (
+                <article className="panel activity-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">LOGÍSTICA Y ALMACÉN</div>
+                      <h2>Prioridades operativas</h2>
+                    </div>
+                    {canViewOperationsDeliveries && (
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() => onNavigateOperations('Entregas')}
+                      >
+                        Ver entregas <ArrowRight size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="today-label">
+                    <span>EN CURSO</span>
+                    <span>STOCK · ENVÍOS</span>
+                  </div>
+                  <div className="activity-list">
+                    {lowStockItems.slice(0, 3).map((item) => (
+                      <div className="activity-row" key={item.id}>
+                        <div className="activity-icon tone-amber">
+                          <AlertTriangle size={15} />
+                        </div>
+                        <div className="activity-copy">
+                          <strong>
+                            {item.sku} · {item.name}
+                          </strong>
+                          <span>
+                            {item.warehouseName} · Mín. {item.minStock} {item.unitOfMeasure}
+                          </span>
+                        </div>
+                        <time>
+                          {item.stock} {item.unitOfMeasure}
+                        </time>
+                      </div>
+                    ))}
+                    {canViewOperationsDeliveries &&
+                      activeShipments.slice(0, 2).map((ship) => (
+                        <div className="activity-row" key={ship.id}>
+                          <div className="activity-icon tone-blue">
+                            <Truck size={15} />
+                          </div>
+                          <div className="activity-copy">
+                            <strong>
+                              {ship.folio} · {ship.clientCompany}
+                            </strong>
+                            <span>
+                              {ship.carrier} · {ship.status}
+                            </span>
+                          </div>
+                          <time>{ship.estimatedDelivery}</time>
+                        </div>
+                      ))}
+                  </div>
+                  {canViewOperationsPurchases && (
+                    <button
+                      type="button"
+                      className="add-activity"
+                      onClick={() =>
+                        onNavigatePurchases
+                          ? onNavigatePurchases('Órdenes de compra')
+                          : onNavigateOperations('Compras')
+                      }
+                    >
+                      <ArrowRight size={15} /> Revisar órdenes de compra ({activePurchaseOrders.length})
+                    </button>
+                  )}
+                </article>
+              )}
+
+              {/* Procurement Executive Summary (Compras / Operaciones / Finanzas / Admin) */}
+              {canViewPurchasesExecSummary && (
+                <article
+                  className="panel purchases-exec-panel"
+                  style={{ gridColumn: '1 / -1' }}
+                  aria-label="Resumen ejecutivo de compras"
+                >
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">COMPRAS Y ABASTECIMIENTO</div>
+                      <h2>Resumen ejecutivo de compras</h2>
+                      <p className="panel-subtitle">
+                        Visibilidad en tiempo real de solicitudes internas, órdenes en tránsito hacia almacén y pasivos con proveedores
+                      </p>
+                    </div>
+                    <div className="purchases-exec-heading-actions">
+                      <div className="purchases-period-select-wrap">
+                        <CalendarDays size={13} className="purchases-period-select-icon" aria-hidden="true" />
+                        <select
+                          aria-label="Periodo de visualización de KPIs de compras"
+                          value={purchasesPeriod}
+                          onChange={(e) =>
+                            setPurchasesPeriod(e.target.value as PurchasesKpiPeriod)
+                          }
+                        >
+                          <option value="Mensual">Mensual</option>
+                          <option value="Trimestral">Trimestral</option>
+                          <option value="Anual">Anual</option>
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-link"
+                        onClick={() =>
+                          onNavigatePurchases
+                            ? onNavigatePurchases('Resumen')
+                            : onNavigateOperations('Compras')
+                        }
+                      >
+                        Ir al módulo de Compras <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Period-Responsive Procurement KPIs */}
+                  <div
+                    className={`purchases-exec-kpi-strip cols-${visiblePurchasesColsCount}`}
+                    aria-label={`KPIs de compras (${purchasesPeriod})`}
+                  >
+                    {canViewRequisitionsCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Requisiciones · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{purchasesPeriodKpis.reqsCount}</strong>
+                          <span>{money(purchasesPeriodKpis.reqsTotal)} est.</span>
+                        </div>
+                        <small className="tabular-nums">
+                          {purchasesPeriodKpis.reqsConverted} convertidas a OC ·{' '}
+                          {purchasesPeriodKpis.reqsPending} en gestión
+                        </small>
+                      </div>
+                    )}
+
+                    {canViewPoTransitCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Órdenes de compra · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{money(purchasesPeriodKpis.posTotal)}</strong>
+                          <span>
+                            {purchasesPeriodKpis.posCount}{' '}
+                            {purchasesPeriodKpis.posCount === 1 ? 'orden' : 'órdenes'}
+                          </span>
+                        </div>
+                        <small className="tabular-nums">
+                          {purchasesPeriodKpis.posReceived} recibidas ·{' '}
+                          {purchasesPeriodKpis.posOpen} abiertas / en tránsito
+                        </small>
+                      </div>
+                    )}
+
+                    {canViewSupplierBillsCol && (
+                      <div className="purchases-exec-kpi-card">
+                        <div className="purchases-exec-kpi-top">
+                          <span>Facturación recibida · {purchasesPeriod}</span>
+                          <span className="purchases-exec-kpi-period tabular-nums">
+                            {purchasesPeriodKpis.periodTag}
+                          </span>
+                        </div>
+                        <div className="purchases-exec-kpi-main tabular-nums">
+                          <strong>{money(purchasesPeriodKpis.billsTotal)}</strong>
+                          <span>
+                            {purchasesPeriodKpis.billsCount}{' '}
+                            {purchasesPeriodKpis.billsCount === 1 ? 'factura' : 'facturas'}
+                          </span>
+                        </div>
+                        <small className="tabular-nums">
+                          Pagado {money(purchasesPeriodKpis.billsPaid)} · Saldo{' '}
+                          {money(purchasesPeriodKpis.billsBalance)}
+                        </small>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`purchases-exec-cols cols-${visiblePurchasesColsCount}`}>
+                    {/* Column 1: Requisiciones pendientes */}
+                    {canViewRequisitionsCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className="purchases-exec-col-card"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Requisiciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Requisiciones pendientes</span>
+                            <ClipboardList size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{pendingRequisitionsList.length}</strong>
+                            <span className="tabular-nums">{money(pendingRequisitionsTotal)} est.</span>
+                          </div>
+                          <small>
+                            {awaitingApprovalReqsCount} por aprobar ·{' '}
+                            {pendingRequisitionsList.length - awaitingApprovalReqsCount} listas para OC
+                          </small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {pendingRequisitionsList.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              Sin requisiciones pendientes de atención.
+                            </div>
+                          ) : (
+                            pendingRequisitionsList.slice(0, 3).map((req) => (
+                              <div key={req.id} className="purchases-exec-item">
+                                <div className="purchases-exec-item-main">
+                                  <strong>
+                                    <span className="tabular-nums">{req.folio}</span> · {req.department}
+                                  </strong>
+                                  <span>
+                                    {req.requestedBy} · {req.status} · Req. {req.neededByDate}
+                                  </span>
+                                </div>
+                                <div className="purchases-exec-item-end tabular-nums">
+                                  <strong>{money(req.estimatedTotal)}</strong>
+                                  <small>{req.priority}</small>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Requisiciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          Gestionar requisiciones <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+
+                    {/* Column 2: Órdenes de compra en tránsito */}
+                    {canViewPoTransitCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className="purchases-exec-col-card"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Órdenes de compra')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Órdenes en tránsito</span>
+                            <ShoppingCart size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{transitPurchaseOrders.length}</strong>
+                            <span className="tabular-nums">{money(transitPurchaseOrdersTotal)}</span>
+                          </div>
+                          <small>{transitPendingUnits} unidades pendientes de ingreso en andén</small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {transitPurchaseOrders.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              Todas las órdenes emitidas han sido recibidas.
+                            </div>
+                          ) : (
+                            transitPurchaseOrders.slice(0, 3).map((po) => {
+                              const pendingU = po.items.reduce(
+                                (sum, it) => sum + Math.max(0, it.quantity - it.receivedQty),
+                                0
+                              )
+                              return (
+                                <div key={po.id} className="purchases-exec-item">
+                                  <div className="purchases-exec-item-main">
+                                    <strong>
+                                      <span className="tabular-nums">{po.folio}</span> · {po.supplierCompany}
+                                    </strong>
+                                    <span>
+                                      {po.warehouseName} · Llega {po.expectedDeliveryDate}
+                                    </span>
+                                  </div>
+                                  <div className="purchases-exec-item-end tabular-nums">
+                                    <strong>{money(po.total)}</strong>
+                                    <small>{pendingU} pzas pend.</small>
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Recepciones')
+                              : onNavigateOperations('Compras')
+                          }
+                        >
+                          Ir a recepciones y órdenes <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+
+                    {/* Column 3: Facturas de proveedor por vencer */}
+                    {canViewSupplierBillsCol && (
+                      <section className="purchases-exec-col">
+                        <button
+                          type="button"
+                          className={`purchases-exec-col-card ${
+                            overdueVendorBillsCount > 0 ? 'has-warning' : ''
+                          }`}
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Facturas')
+                              : onNavigateFinance('Pagos')
+                          }
+                        >
+                          <div className="purchases-exec-card-top">
+                            <span>Facturas de proveedor por vencer</span>
+                            <Receipt size={15} />
+                          </div>
+                          <div className="purchases-exec-card-metrics">
+                            <strong className="tabular-nums">{expiringVendorBills.length}</strong>
+                            <span className="tabular-nums">{money(expiringVendorBillsBalance)}</span>
+                          </div>
+                          <small>
+                            {overdueVendorBillsCount > 0
+                              ? `${overdueVendorBillsCount} factura(s) vencida(s) requieren atención`
+                              : 'Sin facturas vencidas al día de hoy'}
+                          </small>
+                        </button>
+
+                        <div className="purchases-exec-list">
+                          {expiringVendorBills.length === 0 ? (
+                            <div className="purchases-exec-empty">
+                              No existen saldos pendientes con proveedores.
+                            </div>
+                          ) : (
+                            expiringVendorBills.slice(0, 3).map((bill) => (
+                              <div
+                                key={bill.id}
+                                className={`purchases-exec-item ${
+                                  bill.status === 'Vencida' ? 'is-overdue' : ''
+                                }`}
+                              >
+                                <div className="purchases-exec-item-main">
+                                  <strong>
+                                    <span className="tabular-nums">{bill.folio}</span> · {bill.supplierCompany}
+                                  </strong>
+                                  <span>
+                                    {bill.purchaseOrderFolio || 'Factura directa'} · Vence {bill.dueDate}
+                                  </span>
+                                </div>
+                                <div className="purchases-exec-item-end tabular-nums">
+                                  <strong>{money(bill.balance)}</strong>
+                                  <small>{bill.status}</small>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="purchases-exec-col-link"
+                          onClick={() =>
+                            onNavigatePurchases
+                              ? onNavigatePurchases('Facturas')
+                              : onNavigateFinance('Pagos')
+                          }
+                        >
+                          Revisar facturas CxP <ArrowRight size={12} />
+                        </button>
+                      </section>
+                    )}
+                  </div>
+                </article>
+              )}
+
+              {/* Bank Accounts Mini Summary (Finance / Admin only) */}
+              {canViewFinanceSummary && (
+                <div style={{ gridColumn: '1 / -1' }} className="bank-summary-card">
+                  <div className="bank-summary-header">
+                    <h3>Disponibilidad en Cuentas Bancarias</h3>
+                    <button
+                      type="button"
+                      className="text-link"
+                      onClick={() => onNavigateFinance('Resumen')}
+                    >
+                      Gestionar tesorería <ArrowRight size={12} />
+                    </button>
+                  </div>
+                  <div className="bank-accounts-list">
+                    {bankAccounts.map((acc) => (
+                      <div key={acc.id} className="bank-mini-item">
+                        <span className="bank-mini-name">
+                          {acc.bankName} · {acc.accountNumber}
+                        </span>
+                        <span className="bank-mini-balance">{money(acc.balance)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Recent CRM Opportunities (CRM / Admin only) */}
+              {canViewCrmOpportunities && (
+                <article className="panel opportunities-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <div className="panel-kicker">SEGUIMIENTO COMERCIAL</div>
+                      <h2>Oportunidades recientes</h2>
+                      <p className="panel-subtitle">Las conversaciones más activas de tu equipo</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-link"
+                      onClick={() => onNavigateCrm('Oportunidades')}
+                    >
+                      Ver todas <ArrowRight size={14} />
+                    </button>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>EMPRESA</th>
+                          <th>ETAPA</th>
+                          <th>VALOR ESTIMADO</th>
+                          <th>ACTUALIZACIÓN</th>
+                          <th style={{ textAlign: 'right' }}>ACCIÓN</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {opportunities.map((opportunity) => (
+                          <tr key={opportunity.company}>
+                            <td>
+                              <div className="company-cell">
+                                <div className={`company-avatar ${opportunity.color}`}>
+                                  {opportunity.initials}
+                                </div>
+                                <div>
+                                  <strong>{opportunity.company}</strong>
+                                  <span>{opportunity.person}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td>
+                              <span className={`stage-badge stage-${opportunity.stageTone}`}>
+                                <i />
+                                {opportunity.stage}
+                              </span>
+                            </td>
+                            <td className="money-cell">{money(opportunity.value)}</td>
+                            <td className="date-cell">{opportunity.date}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                type="button"
+                                className="button button-secondary"
+                                style={{ minHeight: '26px', padding: '0 8px', fontSize: '8.5px' }}
+                                onClick={() => onNavigateCrm('Oportunidades')}
+                              >
+                                Ver en CRM
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    type="button"
+                    className="table-footer"
+                    onClick={() => onNavigateCrm('Oportunidades')}
+                  >
+                    Ver pipeline completo en CRM <ArrowRight size={14} />
+                  </button>
+                </article>
+              )}
+            </section>
+          )}
+
+          {!hasAnyDashboardSection && (
+            <section
+              className="panel dashboard-restricted-panel"
+              aria-label="Resumen del alcance del rol"
+            >
+              <div className="dashboard-restricted-icon">
+                <ShieldAlert size={22} />
+              </div>
+              <div>
+                <h2>Panel adaptado a tu alcance administrativo</h2>
+                <p>
+                  Tu perfil ({activeUserRolesSummary}) está orientado a gestión y configuración del
+                  espacio de trabajo. Utiliza el menú lateral para acceder a tus secciones
+                  habilitadas.
+                </p>
+              </div>
+            </section>
+          )}
+        </>
+      )}
 
       <footer className="page-footer">
         <span>Última sincronización en tiempo real · Datos conectados al ERP</span>
@@ -1369,7 +3005,7 @@ export function ExecutiveDashboard({
       </footer>
 
       {/* Panel de Control Ejecutivo: Umbrales de Stock y Notificaciones (Push & Correo) */}
-      {showStockConfigModal && (
+      {showStockConfigModal && (canViewInventory || canAdjustThresholds) && (
         <div
           className="modal-backdrop"
           role="presentation"
@@ -1444,6 +3080,53 @@ export function ExecutiveDashboard({
               {/* TAB 1: UMBRALES POR PRODUCTO */}
               {stockConfigTab === 'thresholds' && (
                 <div className="stock-thresholds-body">
+                  {/* Interruptor destacado para habilitar Notificaciones Push y Alerta Persistente */}
+                  <div className={`stock-push-quick-switch-card ${pushConfig.enabled ? 'switch-active' : 'switch-inactive'}`}>
+                    <div className="switch-card-left">
+                      <div className="switch-card-icon-wrap">
+                        <BellRing size={18} />
+                        <span className={`switch-status-dot ${pushConfig.enabled ? 'dot-on' : 'dot-off'}`} />
+                      </div>
+                      <div className="switch-card-info">
+                        <div className="switch-card-title-row">
+                          <strong>Notificaciones Push y Alerta Persistente de Stock</strong>
+                          <span className={`push-permission-pill perm-${pushConfig.permission}`}>
+                            {pushConfig.enabled ? '✓ Habilitadas' : '✕ Desactivadas'}
+                          </span>
+                          {lowStockItems.length > 0 && (
+                            <span className="persistent-alert-pill">
+                              ⚠️ Alerta persistente en barra superior ({lowStockItems.length})
+                            </span>
+                          )}
+                        </div>
+                        <p>
+                          Al activar este interruptor, cuando cualquier producto caiga por debajo de su umbral mínimo se emitirá una notificación push y el sistema mostrará una <strong>alerta persistente en el centro de notificaciones superior</strong> hasta su reorden o ajuste.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="switch-card-right">
+                      <label
+                        className="toggle-switch-wrap"
+                        title={pushConfig.enabled ? 'Deshabilitar notificaciones push' : 'Habilitar notificaciones push'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={pushConfig.enabled}
+                          onChange={handleTogglePushEnabled}
+                        />
+                        <span className="toggle-slider" />
+                      </label>
+                      <button
+                        type="button"
+                        className="link-btn-push-opts"
+                        onClick={() => setStockConfigTab('push')}
+                        title="Ver ajustes avanzados de audio, vibración y permisos"
+                      >
+                        Ajustes push &rarr;
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Summary Bar */}
                   <div className="stock-config-summary-bar">
                     <div className="summary-stat-chip">

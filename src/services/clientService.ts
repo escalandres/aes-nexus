@@ -20,6 +20,7 @@ export interface ClientAddress {
 
 export interface ClientRecord {
   id: string
+  clientCode?: string
   name: string
   company: string
   email: string
@@ -39,6 +40,7 @@ export interface ClientRecord {
 }
 
 export interface CreateClientDTO {
+  clientCode?: string
   name: string
   company: string
   email: string
@@ -99,6 +101,7 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
   // Objeto local formateado para actualizar estado inmediato en UI
   const localClient: ClientRecord = {
     id: `cli_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    clientCode: dto.clientCode?.trim() || undefined,
     name: dto.name.trim(),
     company: (dto.company.trim()) || dto.name.trim(),
     email: dto.email.trim(),

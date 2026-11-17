@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
   Plus, Search, ShoppingBag, CheckCircle2, Truck,
   ArrowUpDown, Eye, Trash2, MoreHorizontal,
-  DollarSign, Check, X, MapPin, Package
+  DollarSign, Check, X, MapPin, Package, ReceiptText
 } from 'lucide-react'
 import type { SalesOrder, OrderStatus, SalesLineItem } from '../data/sales'
+import type { InvoiceReceivable } from '../data/finance'
 import { initialProductsAndServices } from '../data/products'
 import { useToast } from './Toast'
 
@@ -21,11 +22,25 @@ interface OrdersSectionProps {
   orders: SalesOrder[]
   onUpdateOrders: (orders: SalesOrder[]) => void
   clientNames: { id: string; name: string; company: string; email: string; address?: string }[]
+  receivables?: InvoiceReceivable[]
+  onInvoiceOrder?: (order: SalesOrder) => void
+  onViewInvoice?: (invoice: InvoiceReceivable) => void
+  presetOrderFolioToView?: string | null
+  onClearPresetOrderView?: () => void
 }
 
 const ORDER_STEPS: OrderStatus[] = ['Confirmado', 'En preparación', 'Enviado', 'Entregado']
 
-export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSectionProps) {
+export function OrdersSection({
+  orders,
+  onUpdateOrders,
+  clientNames,
+  receivables = [],
+  onInvoiceOrder,
+  onViewInvoice,
+  presetOrderFolioToView,
+  onClearPresetOrderView,
+}: OrdersSectionProps) {
   const toast = useToast()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
@@ -36,6 +51,15 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [viewingOrder, setViewingOrder] = useState<SalesOrder | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (presetOrderFolioToView) {
+      const found = orders.find((o) => o.folio === presetOrderFolioToView)
+      if (found) setViewingOrder(found)
+      onClearPresetOrderView?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetOrderFolioToView])
 
   // Direct order form state
   const [selectedClientId, setSelectedClientId] = useState('')
@@ -73,6 +97,28 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
         return sortOrder === 'asc' ? comp : -comp
       })
   }, [orders, selectedStatus, searchQuery, sortBy, sortOrder])
+
+  // Linked invoices and billed totals by order (synchronized with Finanzas > Cuentas por cobrar)
+  const invoicesByOrder = useMemo(() => {
+    const map: Record<string, InvoiceReceivable[]> = {}
+    orders.forEach((ord) => {
+      map[ord.id] = receivables.filter(
+        (inv) =>
+          inv.orderId === ord.id ||
+          (inv.orderFolio && inv.orderFolio !== 'DIRECTA' && inv.orderFolio === ord.folio)
+      )
+    })
+    return map
+  }, [orders, receivables])
+
+  const billedByOrder = useMemo(() => {
+    const map: Record<string, number> = {}
+    orders.forEach((ord) => {
+      const linked = invoicesByOrder[ord.id] || []
+      map[ord.folio] = linked.reduce((s, inv) => s + inv.total, 0)
+    })
+    return map
+  }, [orders, invoicesByOrder])
 
   // KPIs
   const totalFacturado = orders.reduce((sum, o) => sum + (o.status !== 'Cancelado' ? o.total : 0), 0)
@@ -157,8 +203,11 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
       return
     }
 
-    const nextNum = orders.length + 1
-    const folio = `PED-2026-${String(nextNum).padStart(3, '0')}`
+    const maxNum = orders.reduce((max, o) => {
+      const n = parseInt(o.folio.split('-').pop() || '0', 10)
+      return Number.isNaN(n) ? max : Math.max(max, n)
+    }, orders.length)
+    const folio = `PED-2026-${String(maxNum + 1).padStart(3, '0')}`
     const today = new Date()
     const delivery = new Date()
     delivery.setDate(today.getDate() + deliveryDays)
@@ -423,11 +472,19 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
                 </button>
               </th>
               <th>ESTADO</th>
+              <th>FACTURACIÓN / FACTURAS</th>
               <th><span className="sr-only">Acciones</span></th>
             </tr>
           </thead>
           <tbody>
-            {filteredOrders.map((order) => (
+            {filteredOrders.map((order) => {
+              const linkedInvoices = invoicesByOrder[order.id] || []
+              const billedAmount = billedByOrder[order.folio] || 0
+              const canInvoice =
+                Boolean(onInvoiceOrder) &&
+                order.status !== 'Cancelado' &&
+                billedAmount < order.total - 0.5
+              return (
               <tr key={order.id} className="catalog-table-row">
                 <td>
                   <button
@@ -475,7 +532,52 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
                     Sub: {formatMoney(order.subtotal, order.currency)}
                   </small>
                 </td>
-                <td>{getOrderStatusBadge(order.status)}</td>
+                <td>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                    {getOrderStatusBadge(order.status)}
+                    {order.status !== 'Cancelado' && (() => {
+                      const billed = billedByOrder[order.folio] || 0
+                      if (billed >= order.total - 0.5) {
+                        return <small className="text-xs" style={{ color: '#287a53', fontWeight: 600 }}>Facturado 100%</small>
+                      }
+                      if (billed > 0) {
+                        return <small className="text-xs" style={{ color: '#2b6cb0', fontWeight: 600 }}>Fact. parcial ({Math.round((billed / order.total) * 100)}%)</small>
+                      }
+                      return <small className="text-muted text-xs">Sin facturar</small>
+                    })()}
+                  </div>
+                </td>
+                <td>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-start' }}>
+                    {linkedInvoices.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {linkedInvoices.map((inv) => (
+                          <button
+                            key={inv.id}
+                            type="button"
+                            className="catalog-sku-code font-mono text-green"
+                            style={{ cursor: onViewInvoice ? 'pointer' : 'default', border: 'none' }}
+                            title={`Ver factura ${inv.folio} (${formatMoney(inv.total, inv.currency)})`}
+                            onClick={() => onViewInvoice?.(inv)}
+                          >
+                            {inv.folio}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {canInvoice && onInvoiceOrder ? (
+                      <button
+                        type="button"
+                        className="button-convert-quick"
+                        onClick={() => onInvoiceOrder(order)}
+                      >
+                        <ReceiptText size={12} /> Facturar pedido
+                      </button>
+                    ) : linkedInvoices.length === 0 ? (
+                      <span className="text-muted text-xs">—</span>
+                    ) : null}
+                  </div>
+                </td>
                 <td className="catalog-actions-cell">
                   <div className="row-action-wrapper">
                     <button
@@ -498,6 +600,17 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
                         >
                           <Eye size={13} /> Ver detalle de pedido
                         </button>
+                        {canInvoice && onInvoiceOrder && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuId(null)
+                                onInvoiceOrder(order)
+                              }}
+                            >
+                              <ReceiptText size={13} /> Facturar pedido
+                            </button>
+                          )}
                         {order.status !== 'Entregado' && order.status !== 'Cancelado' && (
                           <button
                             type="button"
@@ -538,7 +651,8 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
 
@@ -884,6 +998,45 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
               </div>
             </div>
 
+            {/* Linked Invoices */}
+            {(invoicesByOrder[viewingOrder.id] || []).length > 0 && (
+              <div className="quote-recipient-card" style={{ marginTop: 12 }}>
+                <div className="recipient-label">FACTURAS VINCULADAS AL PEDIDO</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+                  {(invoicesByOrder[viewingOrder.id] || []).map((inv) => (
+                    <div
+                      key={inv.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: 13,
+                      }}
+                    >
+                      <div>
+                        <button
+                          type="button"
+                          className="catalog-item-title-btn font-mono font-bold"
+                          onClick={() => {
+                            setViewingOrder(null)
+                            onViewInvoice?.(inv)
+                          }}
+                        >
+                          {inv.folio}
+                        </button>{' '}
+                        <span className="text-muted">
+                          · {inv.issueDate} · {inv.status}
+                        </span>
+                      </div>
+                      <strong className="font-mono tabular-nums">
+                        {formatMoney(inv.total, inv.currency)}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="create-modal-actions">
               <button
@@ -893,6 +1046,21 @@ export function OrdersSection({ orders, onUpdateOrders, clientNames }: OrdersSec
               >
                 Cerrar
               </button>
+              {onInvoiceOrder &&
+                viewingOrder.status !== 'Cancelado' &&
+                (billedByOrder[viewingOrder.folio] || 0) < viewingOrder.total - 0.5 && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      const target = viewingOrder
+                      setViewingOrder(null)
+                      onInvoiceOrder(target)
+                    }}
+                  >
+                    <ReceiptText size={14} /> Facturar pedido
+                  </button>
+                )}
               {viewingOrder.status !== 'Entregado' && viewingOrder.status !== 'Cancelado' && (
                 <button
                   type="button"

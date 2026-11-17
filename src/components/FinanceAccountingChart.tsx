@@ -51,6 +51,7 @@ const SUBTYPE_COLORS: Record<AccountType, string> = {
   'Ingresos': '#2f855a',
   'Costos': '#b85d38',
   'Gastos de operación': '#ba4836',
+  'Otros ingresos': '#2c7a7b',
 }
 
 interface CustomTooltipProps {
@@ -127,8 +128,8 @@ export function FinanceAccountingChart({ accounts, onSelectType }: FinanceAccoun
         id: 'Ingreso',
         name: 'Ingreso',
         nature: 'Naturaleza Acreedora',
-        description: 'Entradas brutas por ventas de productos y servicios facturados en el periodo.',
-        match: (type: AccountType) => type === 'Ingresos',
+        description: 'Entradas por ventas de productos, servicios facturados y otros ingresos (4xxx / 8xxx).',
+        match: (type: AccountType) => type === 'Ingresos' || type === 'Otros ingresos',
       },
       {
         id: 'Gasto',
@@ -168,6 +169,7 @@ export function FinanceAccountingChart({ accounts, onSelectType }: FinanceAccoun
       'Ingresos',
       'Costos',
       'Gastos de operación',
+      'Otros ingresos',
     ]
 
     const totalAllBalances = accounts.reduce((acc, curr) => acc + curr.balance, 0) || 1

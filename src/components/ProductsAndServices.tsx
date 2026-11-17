@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect, type ReactNode, type KeyboardEvent } from 'react'
 import {
   Plus, Search, MoreHorizontal, Package, Tag, Boxes,
   DollarSign, CheckCircle2, XCircle, ArrowUpDown, Eye, Edit3,
-  Trash2, Copy, X
+  Trash2, Copy, X, FolderTree, CornerDownLeft
 } from 'lucide-react'
 import type { ProductServiceItem, ItemType, ItemCategory, TaxRate, UnitOfMeasure } from '../data/products'
 import { initialProductsAndServices } from '../data/products'
@@ -33,6 +33,117 @@ const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount)
+}
+
+const normalizeSearchText = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+function renderHighlightedText(text: string, rawQuery: string): ReactNode {
+  const tokens = normalizeSearchText(rawQuery)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (!tokens.length || !text) return text
+
+  // Map each normalized character back to its original index in `text`
+  const normChars: string[] = []
+  const indexMap: number[] = []
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    const stripped = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    for (let j = 0; j < stripped.length; j++) {
+      normChars.push(stripped[j])
+      indexMap.push(i)
+    }
+  }
+  const normText = normChars.join('')
+
+  const ranges: Array<[number, number]> = []
+  for (const token of tokens) {
+    let startAt = 0
+    while (startAt < normText.length) {
+      const idx = normText.indexOf(token, startAt)
+      if (idx === -1) break
+      const origStart = indexMap[idx]
+      const origEnd = indexMap[idx + token.length - 1] + 1
+      ranges.push([origStart, origEnd])
+      startAt = idx + token.length
+    }
+  }
+
+  if (!ranges.length) return text
+
+  // Merge overlapping highlight ranges
+  ranges.sort((a, b) => a[0] - b[0])
+  const merged: Array<[number, number]> = [ranges[0]]
+  for (let i = 1; i < ranges.length; i++) {
+    const prev = merged[merged.length - 1]
+    const curr = ranges[i]
+    if (curr[0] <= prev[1]) {
+      prev[1] = Math.max(prev[1], curr[1])
+    } else {
+      merged.push(curr)
+    }
+  }
+
+  const parts: ReactNode[] = []
+  let cursor = 0
+  merged.forEach(([start, end], idx) => {
+    if (start > cursor) {
+      parts.push(text.slice(cursor, start))
+    }
+    parts.push(
+      <mark key={`${start}-${end}-${idx}`} className="catalog-search-mark">
+        {text.slice(start, end)}
+      </mark>
+    )
+    cursor = end
+  })
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor))
+  }
+  return parts
+}
+
+function scoreCatalogItemMatch(item: ProductServiceItem, rawQuery: string): { matched: boolean; score: number } {
+  const normQuery = normalizeSearchText(rawQuery).trim()
+  if (!normQuery) return { matched: true, score: 0 }
+
+  const tokens = normQuery.split(/\s+/).filter(Boolean)
+  const normSku = normalizeSearchText(item.sku)
+  const normName = normalizeSearchText(item.name)
+  const normCategory = normalizeSearchText(item.category)
+
+  const allTokensMatch = tokens.every(
+    (token) => normSku.includes(token) || normName.includes(token) || normCategory.includes(token)
+  )
+  if (!allTokensMatch) return { matched: false, score: -1 }
+
+  let score = 0
+  if (normSku === normQuery) score += 120
+  else if (normSku.startsWith(normQuery)) score += 90
+  else if (normSku.includes(normQuery)) score += 65
+
+  if (normName === normQuery) score += 110
+  else if (normName.startsWith(normQuery)) score += 80
+  else if (normName.includes(normQuery)) score += 50
+
+  if (normCategory === normQuery) score += 70
+  else if (normCategory.startsWith(normQuery)) score += 55
+  else if (normCategory.includes(normQuery)) score += 35
+
+  for (const token of tokens) {
+    if (normSku.startsWith(token)) score += 20
+    else if (normSku.includes(token)) score += 12
+    if (normName.startsWith(token)) score += 16
+    else if (normName.includes(token)) score += 10
+    if (normCategory.includes(token)) score += 8
+  }
+
+  return { matched: true, score }
 }
 
 interface ProductFormData {
@@ -81,6 +192,25 @@ export function ProductsAndServices() {
   const [sortBy, setSortBy] = useState<'name' | 'price' | 'sku'>('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
+  // Predictive search UI state
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(-1)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        searchContainerRef.current &&
+        !searchContainerRef.current.contains(event.target as Node)
+      ) {
+        setIsSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   // Modals state
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create')
@@ -88,33 +218,133 @@ export function ProductsAndServices() {
   const [viewingItem, setViewingItem] = useState<ProductServiceItem | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
 
-  // Filtered and sorted items
+  // Filtered and sorted items (instant live filter by name, SKU, or category)
   const filteredItems = useMemo(() => {
+    const hasQuery = searchQuery.trim().length > 0
     return items
-      .filter((item) => {
-        if (selectedType !== 'all' && item.type !== selectedType) return false
-        if (selectedCategory !== 'all' && item.category !== selectedCategory) return false
-        if (selectedStatus !== 'all' && item.status !== selectedStatus) return false
+      .map((item) => {
+        if (selectedType !== 'all' && item.type !== selectedType) return null
+        if (selectedCategory !== 'all' && item.category !== selectedCategory) return null
+        if (selectedStatus !== 'all' && item.status !== selectedStatus) return null
 
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase()
-          const matchSku = item.sku.toLowerCase().includes(q)
-          const matchName = item.name.toLowerCase().includes(q)
-          const matchDesc = item.description.toLowerCase().includes(q)
-          const matchCat = item.category.toLowerCase().includes(q)
-          return matchSku || matchName || matchDesc || matchCat
+        if (hasQuery) {
+          const match = scoreCatalogItemMatch(item, searchQuery)
+          if (!match.matched) return null
+          return { item, score: match.score }
         }
 
-        return true
+        return { item, score: 0 }
       })
+      .filter((entry): entry is { item: ProductServiceItem; score: number } => entry !== null)
       .sort((a, b) => {
+        if (hasQuery && b.score !== a.score) {
+          return b.score - a.score
+        }
         let comp = 0
-        if (sortBy === 'name') comp = a.name.localeCompare(b.name)
-        else if (sortBy === 'sku') comp = a.sku.localeCompare(b.sku)
-        else if (sortBy === 'price') comp = a.unitPrice - b.unitPrice
+        if (sortBy === 'name') comp = a.item.name.localeCompare(b.item.name)
+        else if (sortBy === 'sku') comp = a.item.sku.localeCompare(b.item.sku)
+        else if (sortBy === 'price') comp = a.item.unitPrice - b.item.unitPrice
         return sortOrder === 'asc' ? comp : -comp
       })
+      .map((entry) => entry.item)
   }, [items, selectedType, selectedCategory, selectedStatus, searchQuery, sortBy, sortOrder])
+
+  // Predictive dropdown suggestions (categories + ranked items across full/type-filtered catalog)
+  const predictiveSuggestions = useMemo(() => {
+    const trimmed = searchQuery.trim()
+    const basePool = items.filter((item) => {
+      if (selectedType !== 'all' && item.type !== selectedType) return false
+      if (selectedStatus !== 'all' && item.status !== selectedStatus) return false
+      return true
+    })
+
+    if (!trimmed) {
+      const categoryCounts = CATEGORIES.map((category) => ({
+        category,
+        count: basePool.filter((item) => item.category === category).length,
+      })).filter((c) => c.count > 0)
+
+      return {
+        hasQuery: false,
+        categories: categoryCounts,
+        items: [] as ProductServiceItem[],
+        totalMatches: basePool.length,
+      }
+    }
+
+    const tokens = normalizeSearchText(trimmed).split(/\s+/).filter(Boolean)
+    const matchingCategories = CATEGORIES.map((category) => {
+      const normCat = normalizeSearchText(category)
+      const catMatches = tokens.every((t) => normCat.includes(t))
+      const count = basePool.filter((item) => item.category === category).length
+      return catMatches && count > 0 ? { category, count } : null
+    }).filter((c): c is { category: ItemCategory; count: number } => c !== null)
+
+    const rankedItems = basePool
+      .filter((item) => selectedCategory === 'all' || item.category === selectedCategory)
+      .map((item) => ({ item, match: scoreCatalogItemMatch(item, trimmed) }))
+      .filter((entry) => entry.match.matched)
+      .sort((a, b) => b.match.score - a.match.score || a.item.name.localeCompare(b.item.name))
+
+    return {
+      hasQuery: true,
+      categories: matchingCategories,
+      items: rankedItems.slice(0, 6).map((entry) => entry.item),
+      totalMatches: rankedItems.length,
+    }
+  }, [items, searchQuery, selectedType, selectedCategory, selectedStatus])
+
+  const totalSuggestionCount =
+    predictiveSuggestions.categories.length + predictiveSuggestions.items.length
+
+  const handleSelectSuggestedCategory = (category: ItemCategory) => {
+    setSelectedCategory(category)
+    setSearchQuery('')
+    setActiveSuggestionIdx(-1)
+    setIsSearchOpen(false)
+  }
+
+  const handleSelectSuggestedItem = (item: ProductServiceItem) => {
+    setSearchQuery(item.name)
+    setActiveSuggestionIdx(-1)
+    setIsSearchOpen(false)
+  }
+
+  const handleSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      if (isSearchOpen) {
+        setIsSearchOpen(false)
+        setActiveSuggestionIdx(-1)
+      } else if (searchQuery) {
+        setSearchQuery('')
+      }
+      return
+    }
+
+    if (!isSearchOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      setIsSearchOpen(true)
+      return
+    }
+
+    if (!totalSuggestionCount) return
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveSuggestionIdx((prev) => (prev + 1) % totalSuggestionCount)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveSuggestionIdx((prev) => (prev <= 0 ? totalSuggestionCount - 1 : prev - 1))
+    } else if (e.key === 'Enter' && isSearchOpen && activeSuggestionIdx >= 0) {
+      e.preventDefault()
+      const catCount = predictiveSuggestions.categories.length
+      if (activeSuggestionIdx < catCount) {
+        handleSelectSuggestedCategory(predictiveSuggestions.categories[activeSuggestionIdx].category)
+      } else {
+        const item = predictiveSuggestions.items[activeSuggestionIdx - catCount]
+        if (item) handleSelectSuggestedItem(item)
+      }
+    }
+  }
 
   // Summary KPIs
   const totalCount = items.length
@@ -358,22 +588,215 @@ export function ProductsAndServices() {
 
       {/* Search & Filters Bar */}
       <div className="catalog-toolbar">
-        <div className="catalog-search">
+        <div
+          ref={searchContainerRef}
+          className={`catalog-search ${isSearchOpen ? 'is-open' : ''}`}
+        >
           <Search size={14} className="search-icon" />
           <input
-            type="search"
-            placeholder="Buscar por SKU, nombre, descripción o categoría..."
+            ref={searchInputRef}
+            type="text"
+            role="combobox"
+            aria-expanded={isSearchOpen}
+            aria-controls="catalog-predictive-listbox"
+            aria-autocomplete="list"
+            aria-label="Buscar en catálogo por nombre, SKU o categoría"
+            placeholder="Buscar predictivamente por nombre, SKU o categoría..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setIsSearchOpen(true)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setIsSearchOpen(true)
+              setActiveSuggestionIdx(-1)
+            }}
+            onKeyDown={handleSearchKeyDown}
           />
           {searchQuery && (
+            <span className="catalog-search-count tabular-nums">
+              {filteredItems.length} {filteredItems.length === 1 ? 'resultado' : 'resultados'}
+            </span>
+          )}
+          {searchQuery && (
             <button
+              type="button"
               className="clear-search"
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('')
+                setActiveSuggestionIdx(-1)
+                searchInputRef.current?.focus()
+              }}
               aria-label="Limpiar búsqueda"
             >
               <X size={12} />
             </button>
+          )}
+
+          {isSearchOpen && (
+            <div
+              id="catalog-predictive-listbox"
+              role="listbox"
+              aria-label="Sugerencias del catálogo"
+              className="catalog-predictive-dropdown"
+            >
+              {!predictiveSuggestions.hasQuery ? (
+                <div className="predictive-section">
+                  <div className="predictive-section-title">
+                    Explorar rápido por categoría
+                  </div>
+                  <div className="predictive-category-grid">
+                    {predictiveSuggestions.categories.map(({ category, count }, idx) => (
+                      <button
+                        key={category}
+                        type="button"
+                        role="option"
+                        aria-selected={activeSuggestionIdx === idx}
+                        className={`predictive-category-item ${
+                          activeSuggestionIdx === idx ? 'is-active' : ''
+                        }`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => handleSelectSuggestedCategory(category)}
+                      >
+                        <span className="predictive-cat-left">
+                          <FolderTree size={13} />
+                          <span>{category}</span>
+                        </span>
+                        <span className="predictive-cat-count tabular-nums">{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : totalSuggestionCount === 0 ? (
+                <div className="predictive-empty">
+                  <span>
+                    Sin coincidencias en nombre, SKU o categoría para{' '}
+                    <strong>&ldquo;{searchQuery.trim()}&rdquo;</strong>
+                  </span>
+                  <button
+                    type="button"
+                    className="predictive-reset-btn"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSearchQuery('')
+                      searchInputRef.current?.focus()
+                    }}
+                  >
+                    Limpiar búsqueda
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {predictiveSuggestions.categories.length > 0 && (
+                    <div className="predictive-section">
+                      <div className="predictive-section-title">
+                        Categorías coincidentes
+                      </div>
+                      <div className="predictive-list">
+                        {predictiveSuggestions.categories.map(({ category, count }, idx) => (
+                          <button
+                            key={category}
+                            type="button"
+                            role="option"
+                            aria-selected={activeSuggestionIdx === idx}
+                            className={`predictive-row predictive-row-cat ${
+                              activeSuggestionIdx === idx ? 'is-active' : ''
+                            }`}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSelectSuggestedCategory(category)}
+                          >
+                            <div className="predictive-row-main">
+                              <FolderTree size={13} className="predictive-row-icon" />
+                              <span className="predictive-row-title">
+                                {renderHighlightedText(category, searchQuery)}
+                              </span>
+                              <span className="predictive-row-meta">
+                                Filtrar categoría · {count} {count === 1 ? 'artículo' : 'artículos'}
+                              </span>
+                            </div>
+                            <span className="predictive-row-action">
+                              Aplicar filtro <CornerDownLeft size={11} />
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {predictiveSuggestions.items.length > 0 && (
+                    <div className="predictive-section">
+                      <div className="predictive-section-title">
+                        <span>Productos y servicios coincidentes</span>
+                        <span className="tabular-nums">
+                          {predictiveSuggestions.totalMatches} en total
+                        </span>
+                      </div>
+                      <div className="predictive-list">
+                        {predictiveSuggestions.items.map((item, idx) => {
+                          const optionIdx = predictiveSuggestions.categories.length + idx
+                          const isActive = activeSuggestionIdx === optionIdx
+                          return (
+                            <div
+                              key={item.id}
+                              role="option"
+                              aria-selected={isActive}
+                              className={`predictive-row ${isActive ? 'is-active' : ''}`}
+                            >
+                              <button
+                                type="button"
+                                className="predictive-row-select"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => handleSelectSuggestedItem(item)}
+                              >
+                                <div className="predictive-row-top">
+                                  <span className="predictive-sku font-mono tabular-nums">
+                                    {renderHighlightedText(item.sku, searchQuery)}
+                                  </span>
+                                  <span className="predictive-row-title">
+                                    {renderHighlightedText(item.name, searchQuery)}
+                                  </span>
+                                </div>
+                                <div className="predictive-row-sub">
+                                  <span>{item.type === 'product' ? 'Producto' : 'Servicio'}</span>
+                                  <span aria-hidden="true">·</span>
+                                  <span>{renderHighlightedText(item.category, searchQuery)}</span>
+                                  <span aria-hidden="true">·</span>
+                                  <span>{item.unitOfMeasure}</span>
+                                </div>
+                              </button>
+
+                              <div className="predictive-row-right">
+                                <span className="predictive-price font-mono tabular-nums">
+                                  {formatMoney(item.unitPrice, item.currency)}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="predictive-preview-btn"
+                                  title={`Ver ficha técnica de ${item.name}`}
+                                  aria-label={`Ver ficha técnica de ${item.name}`}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={() => {
+                                    setViewingItem(item)
+                                    setIsSearchOpen(false)
+                                  }}
+                                >
+                                  <Eye size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="predictive-footer">
+                    <span>↑↓ navegar · Enter seleccionar · Esc cerrar</span>
+                    <span className="tabular-nums">
+                      Tabla filtrada: {filteredItems.length} de {items.length}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
 
@@ -494,7 +917,9 @@ export function ProductsAndServices() {
             {filteredItems.map((item) => (
               <tr key={item.id} className="catalog-table-row">
                 <td className="catalog-sku-cell">
-                  <span className="catalog-sku-code font-mono tabular-nums">{item.sku}</span>
+                  <span className="catalog-sku-code font-mono tabular-nums">
+                    {searchQuery.trim() ? renderHighlightedText(item.sku, searchQuery) : item.sku}
+                  </span>
                 </td>
                 <td className="catalog-name-cell">
                   <button
@@ -502,7 +927,9 @@ export function ProductsAndServices() {
                     className="catalog-item-title-btn"
                     onClick={() => setViewingItem(item)}
                   >
-                    <strong>{item.name}</strong>
+                    <strong>
+                      {searchQuery.trim() ? renderHighlightedText(item.name, searchQuery) : item.name}
+                    </strong>
                   </button>
                   <p className="catalog-item-desc">{item.description}</p>
                 </td>
@@ -511,7 +938,11 @@ export function ProductsAndServices() {
                     {item.type === 'product' ? 'Producto' : 'Servicio'}
                   </span>
                 </td>
-                <td className="catalog-cat-cell">{item.category}</td>
+                <td className="catalog-cat-cell">
+                  {searchQuery.trim()
+                    ? renderHighlightedText(item.category, searchQuery)
+                    : item.category}
+                </td>
                 <td>
                   <span className="catalog-unit-pill font-mono">{item.unitOfMeasure}</span>
                 </td>

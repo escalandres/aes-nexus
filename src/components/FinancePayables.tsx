@@ -10,6 +10,7 @@ import {
   CreditCard,
   ArrowUpRight,
   Eye,
+  Landmark,
 } from 'lucide-react'
 import type {
   BillPayable,
@@ -31,6 +32,7 @@ interface FinancePayablesProps {
   onUpdatePayables: (items: BillPayable[]) => void
   onAddTransaction: (txn: PaymentTransaction) => void
   onUpdateBankAccountBalance: (accountId: string, delta: number) => void
+  onOpenEbpBatchFromBills?: (bills: BillPayable[]) => void
 }
 
 const money = (val: number) =>
@@ -47,10 +49,12 @@ export function FinancePayables({
   onUpdatePayables,
   onAddTransaction,
   onUpdateBankAccountBalance,
+  onOpenEbpBatchFromBills,
 }: FinancePayablesProps) {
   const toast = useToast()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
+  const [selectedBillIds, setSelectedBillIds] = useState<Record<string, boolean>>({})
 
   // Modals
   const [isPayModalOpen, setIsPayModalOpen] = useState(false)
@@ -101,6 +105,11 @@ export function FinancePayables({
   const paidAmountTotal = useMemo(() => {
     return payables.reduce((acc, b) => acc + b.paidAmount, 0)
   }, [payables])
+
+  const selectedBillsList = useMemo(
+    () => payables.filter((b) => b.balance > 0 && selectedBillIds[b.id]),
+    [payables, selectedBillIds]
+  )
 
   // Open Payment Modal
   const handleOpenPayModal = (bill: BillPayable) => {
@@ -337,6 +346,15 @@ export function FinancePayables({
         </div>
 
         <div className="ops-actions-group">
+          {onOpenEbpBatchFromBills && selectedBillsList.length > 0 && (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => onOpenEbpBatchFromBills(selectedBillsList)}
+            >
+              <Landmark size={14} /> Dispersar lote EBP ({selectedBillsList.length})
+            </button>
+          )}
           <button
             className="button button-primary"
             onClick={() => {
@@ -376,6 +394,7 @@ export function FinancePayables({
         <table className="data-table ops-data-table">
           <thead>
             <tr>
+              <th style={{ width: 28 }}>EBP</th>
               <th>FOLIO CXP</th>
               <th>PROVEEDOR</th>
               <th>ORDEN DE COMPRA</th>
@@ -391,7 +410,7 @@ export function FinancePayables({
           <tbody>
             {filteredPayables.length === 0 ? (
               <tr>
-                <td colSpan={10} className="empty-cell">
+                <td colSpan={11} className="empty-cell">
                   No se encontraron cuentas por pagar con los filtros seleccionados.
                 </td>
               </tr>
@@ -402,6 +421,24 @@ export function FinancePayables({
 
                 return (
                   <tr key={b.id} className={isOverdue ? 'row-warning' : ''}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        disabled={!canPay}
+                        checked={Boolean(canPay && selectedBillIds[b.id])}
+                        onChange={(e) =>
+                          setSelectedBillIds((prev) => ({
+                            ...prev,
+                            [b.id]: e.target.checked,
+                          }))
+                        }
+                        title={
+                          canPay
+                            ? 'Incluir en lote de pago bancario EBP'
+                            : 'Factura ya liquidada'
+                        }
+                      />
+                    </td>
                     <td>
                       <span className="fin-folio-tag">{b.folio}</span>
                     </td>

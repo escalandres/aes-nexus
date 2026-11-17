@@ -13,6 +13,13 @@ import {
   AlertCircle,
   Building2,
   Trash2,
+  Send,
+  ReceiptText,
+  ArrowRight,
+  Ban,
+  SlidersHorizontal,
+  Calendar,
+  Layers,
 } from 'lucide-react'
 import type {
   PurchaseOrder,
@@ -22,6 +29,7 @@ import type {
   InventoryItemLocation,
   StockMovement,
 } from '../data/operations'
+import type { BillPayable } from '../data/finance'
 import { useToast } from './Toast'
 
 interface SupplierOption {
@@ -48,6 +56,10 @@ interface OperationsPurchasesProps {
   inventory: InventoryItemLocation[]
   onAddMovement: (movement: StockMovement) => void
   movementsCount: number
+  payables?: BillPayable[]
+  onRegisterSupplierBillFromPO?: (po: PurchaseOrder) => void
+  onOpenFullPurchasesModule?: () => void
+  canApprovePurchases?: boolean
 }
 
 const money = (val: number) =>
@@ -56,6 +68,67 @@ const money = (val: number) =>
     currency: 'MXN',
     maximumFractionDigits: 0,
   }).format(val)
+
+const ALL_PO_STATUSES: PurchaseOrderStatus[] = [
+  'Emitida',
+  'Recepción parcial',
+  'Recibida',
+  'Borrador',
+  'Cancelada',
+]
+
+const SPANISH_MONTH_NUM: Record<string, number> = {
+  ene: 1, enero: 1,
+  feb: 2, febrero: 2,
+  mar: 3, marzo: 3,
+  abr: 4, abril: 4,
+  may: 5, mayo: 5,
+  jun: 6, junio: 6,
+  jul: 7, julio: 7,
+  ago: 8, agosto: 8,
+  sep: 9, sept: 9, septiembre: 9,
+  oct: 10, octubre: 10,
+  nov: 11, noviembre: 11,
+  dic: 12, diciembre: 12,
+}
+
+const MONTH_LABEL_ES = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+]
+
+const parsePoDateToIso = (rawDate: string): string => {
+  const trimmed = rawDate.trim().toLowerCase()
+  const esMatch = trimmed.match(/^(\d{1,2})\s+([a-záéíóú]+)\.?\s+(\d{4})$/i)
+  if (esMatch) {
+    const day = Number(esMatch[1])
+    const month = SPANISH_MONTH_NUM[esMatch[2]]
+    const year = Number(esMatch[3])
+    if (month && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    }
+  }
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (slashMatch) {
+    return `${slashMatch[3]}-${String(Number(slashMatch[2])).padStart(2, '0')}-${String(Number(slashMatch[1])).padStart(2, '0')}`
+  }
+  return ''
+}
+
+const toLocalIsoDate = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 export function OperationsPurchases({
   purchaseOrders,
@@ -67,10 +140,19 @@ export function OperationsPurchases({
   inventory,
   onAddMovement,
   movementsCount,
+  payables = [],
+  onRegisterSupplierBillFromPO,
+  onOpenFullPurchasesModule,
+  canApprovePurchases = true,
 }: OperationsPurchasesProps) {
   const toast = useToast()
   const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('Todas')
+  const [selectedStatuses, setSelectedStatuses] = useState<PurchaseOrderStatus[]>([])
+  const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([])
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [groupBy, setGroupBy] = useState<'none' | 'supplier' | 'status' | 'month'>('none')
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
 
   // Modals
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false)
@@ -102,11 +184,56 @@ export function OperationsPurchases({
   // Reception form state (holds quantity being received per item ID)
   const [receptionQuantities, setReceptionQuantities] = useState<Record<string, number>>({})
 
+  // Supplier filter options with order counts
+  const supplierOptions = useMemo(() => {
+    const names = new Set<string>()
+    suppliers.forEach((s) => {
+      if (s.company.trim()) names.add(s.company.trim())
+    })
+    purchaseOrders.forEach((po) => {
+      if (po.supplierCompany.trim()) names.add(po.supplierCompany.trim())
+    })
+    return Array.from(names)
+      .sort((a, b) => a.localeCompare(b, 'es'))
+      .map((company) => {
+        const companyOrders = purchaseOrders.filter((po) => po.supplierCompany === company)
+        const pendingCount = companyOrders.filter(
+          (po) => po.status === 'Emitida' || po.status === 'Recepción parcial'
+        ).length
+        const pendingAmount = companyOrders
+          .filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial')
+          .reduce((acc, po) => acc + po.total, 0)
+        return {
+          company,
+          totalCount: companyOrders.length,
+          pendingCount,
+          pendingAmount,
+        }
+      })
+  }, [suppliers, purchaseOrders])
+
+  // Orders scoped to selected suppliers and emission date range (used for status tab badges)
+  const ordersBySupplierAndDate = useMemo(() => {
+    return purchaseOrders.filter((po) => {
+      if (selectedSuppliers.length > 0 && !selectedSuppliers.includes(po.supplierCompany)) {
+        return false
+      }
+      if (dateFrom || dateTo) {
+        const poIso = parsePoDateToIso(po.date)
+        if (!poIso) return false
+        if (dateFrom && poIso < dateFrom) return false
+        if (dateTo && poIso > dateTo) return false
+      }
+      return true
+    })
+  }, [purchaseOrders, selectedSuppliers, dateFrom, dateTo])
+
   // Filtered orders
   const filteredOrders = useMemo(() => {
-    return purchaseOrders.filter((po) => {
-      const matchStatus = statusFilter === 'Todas' || po.status === statusFilter
-      const q = searchQuery.toLowerCase()
+    const q = searchQuery.trim().toLowerCase()
+    return ordersBySupplierAndDate.filter((po) => {
+      const matchStatus =
+        selectedStatuses.length === 0 || selectedStatuses.includes(po.status)
       const matchSearch =
         !q ||
         po.folio.toLowerCase().includes(q) ||
@@ -115,16 +242,139 @@ export function OperationsPurchases({
         po.items.some((item) => item.name.toLowerCase().includes(q) || item.sku.toLowerCase().includes(q))
       return matchStatus && matchSearch
     })
-  }, [purchaseOrders, statusFilter, searchQuery])
+  }, [ordersBySupplierAndDate, selectedStatuses, searchQuery])
+
+  const groupedOrders = useMemo(() => {
+    if (groupBy === 'none') {
+      return [
+        {
+          key: '__all__',
+          label: '',
+          orders: filteredOrders,
+          total: filteredOrders.reduce((acc, po) => acc + po.total, 0),
+        },
+      ]
+    }
+    const groups = new Map<string, { label: string; orders: PurchaseOrder[]; sortKey: string }>()
+    for (const po of filteredOrders) {
+      let key = ''
+      let label = ''
+      let sortKey = ''
+      if (groupBy === 'supplier') {
+        key = po.supplierCompany
+        label = po.supplierCompany
+        sortKey = po.supplierCompany
+      } else if (groupBy === 'status') {
+        key = po.status
+        label = po.status
+        sortKey = String(ALL_PO_STATUSES.indexOf(po.status))
+      } else {
+        const iso = parsePoDateToIso(po.date)
+        if (iso) {
+          const [y, m] = iso.split('-')
+          const monthIdx = Math.max(0, Number(m) - 1)
+          key = `${y}-${m}`
+          label = `${MONTH_LABEL_ES[monthIdx] || m} ${y}`
+          sortKey = key
+        } else {
+          key = 'sin-fecha'
+          label = 'Sin fecha'
+          sortKey = '0000-00'
+        }
+      }
+      const existing = groups.get(key)
+      if (existing) {
+        existing.orders.push(po)
+      } else {
+        groups.set(key, { label, orders: [po], sortKey })
+      }
+    }
+    return Array.from(groups.entries())
+      .sort(([, a], [, b]) =>
+        groupBy === 'month'
+          ? b.sortKey.localeCompare(a.sortKey)
+          : a.sortKey.localeCompare(b.sortKey, 'es')
+      )
+      .map(([key, g]) => ({
+        key,
+        label: g.label,
+        orders: g.orders,
+        total: g.orders.reduce((acc, po) => acc + po.total, 0),
+      }))
+  }, [filteredOrders, groupBy])
+
+  const singleSelectedSupplierStats = useMemo(() => {
+    if (selectedSuppliers.length !== 1) return null
+    return supplierOptions.find((s) => s.company === selectedSuppliers[0]) ?? null
+  }, [supplierOptions, selectedSuppliers])
+
+  const activeAdvancedFiltersCount =
+    (dateFrom || dateTo ? 1 : 0) +
+    (selectedStatuses.length > 0 ? 1 : 0) +
+    (selectedSuppliers.length > 0 ? 1 : 0) +
+    (groupBy !== 'none' ? 1 : 0)
+
+  const hasAnyActiveFilter = Boolean(
+    searchQuery.trim() ||
+      dateFrom ||
+      dateTo ||
+      selectedStatuses.length > 0 ||
+      selectedSuppliers.length > 0 ||
+      groupBy !== 'none'
+  )
+
+  const handleToggleStatus = (st: PurchaseOrderStatus) => {
+    setSelectedStatuses((prev) =>
+      prev.includes(st) ? prev.filter((item) => item !== st) : [...prev, st]
+    )
+  }
+
+  const handleToggleSupplier = (company: string) => {
+    setSelectedSuppliers((prev) =>
+      prev.includes(company) ? prev.filter((c) => c !== company) : [...prev, company]
+    )
+  }
+
+  const handleApplyDatePreset = (preset: 'month' | '30d' | 'quarter' | 'year') => {
+    const now = new Date()
+    const toStr = toLocalIsoDate(now)
+    if (preset === 'month') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      setDateFrom(toLocalIsoDate(start))
+      setDateTo(toStr)
+    } else if (preset === '30d') {
+      const start = new Date(now)
+      start.setDate(now.getDate() - 30)
+      setDateFrom(toLocalIsoDate(start))
+      setDateTo(toStr)
+    } else if (preset === 'quarter') {
+      const qStartMonth = Math.floor(now.getMonth() / 3) * 3
+      const start = new Date(now.getFullYear(), qStartMonth, 1)
+      setDateFrom(toLocalIsoDate(start))
+      setDateTo(toStr)
+    } else {
+      setDateFrom(`${now.getFullYear()}-01-01`)
+      setDateTo(`${now.getFullYear()}-12-31`)
+    }
+  }
+
+  const handleClearAllFilters = () => {
+    setSearchQuery('')
+    setSelectedStatuses([])
+    setSelectedSuppliers([])
+    setDateFrom('')
+    setDateTo('')
+    setGroupBy('none')
+  }
 
   // Summary counts
   const totalPurchasesAmount = useMemo(() => {
-    return purchaseOrders.reduce((acc, po) => acc + po.total, 0)
-  }, [purchaseOrders])
+    return filteredOrders.reduce((acc, po) => acc + po.total, 0)
+  }, [filteredOrders])
 
   const pendingReceptionCount = useMemo(() => {
-    return purchaseOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length
-  }, [purchaseOrders])
+    return filteredOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length
+  }, [filteredOrders])
 
   // Helpers for line calculation
   const newPOSubtotal = useMemo(() => {
@@ -425,28 +675,48 @@ export function OperationsPurchases({
       <div className="ops-toolbar">
         <div className="ops-filter-group">
           <div className="warehouse-tab-selector">
-            {['Todas', 'Emitida', 'Recepción parcial', 'Recibida', 'Borrador'].map((st) => (
-              <button
-                key={st}
-                className={`wh-tab ${statusFilter === st ? 'active' : ''}`}
-                onClick={() => setStatusFilter(st)}
-              >
-                {st}
-                <span className="wh-badge">
-                  {st === 'Todas'
-                    ? purchaseOrders.length
-                    : purchaseOrders.filter((po) => po.status === st).length}
-                </span>
-              </button>
-            ))}
+            {(['Todas', 'Emitida', 'Recepción parcial', 'Recibida', 'Borrador'] as const).map((st) => {
+              const isActive =
+                st === 'Todas'
+                  ? selectedStatuses.length === 0
+                  : selectedStatuses.length === 1 && selectedStatuses[0] === st
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  className={`wh-tab ${isActive ? 'active' : ''}`}
+                  onClick={() => setSelectedStatuses(st === 'Todas' ? [] : [st])}
+                >
+                  {st}
+                  <span className="wh-badge">
+                    {st === 'Todas'
+                      ? ordersBySupplierAndDate.length
+                      : ordersBySupplierAndDate.filter((po) => po.status === st).length}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
 
         <div className="ops-actions-group">
+          {onOpenFullPurchasesModule && (
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={onOpenFullPurchasesModule}
+            >
+              Módulo de Compras <ArrowRight size={13} />
+            </button>
+          )}
           <button
             className="button button-primary"
             onClick={() => {
-              if (suppliers.length > 0) setNewSupplierCompany(suppliers[0].company)
+              if (selectedSuppliers.length === 1) {
+                setNewSupplierCompany(selectedSuppliers[0])
+              } else if (suppliers.length > 0) {
+                setNewSupplierCompany(suppliers[0].company)
+              }
               setIsNewOrderModalOpen(true)
             }}
           >
@@ -455,27 +725,329 @@ export function OperationsPurchases({
         </div>
       </div>
 
-      {/* Search Input */}
+      {/* Search, Quick Supplier Filter & Advanced Filter Toggle */}
       <div className="ops-subbar">
-        <div className="ops-search-input-wrap" style={{ maxWidth: '420px', width: '100%' }}>
-          <Search size={14} />
-          <input
-            type="text"
-            placeholder="Buscar por folio, proveedor, almacén o producto..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              className="search-clear-btn"
-              onClick={() => setSearchQuery('')}
-              title="Limpiar búsqueda"
+        <div className="ops-subbar-filters">
+          <div className="ops-search-input-wrap ops-po-search">
+            <Search size={14} />
+            <input
+              type="text"
+              placeholder="Buscar por folio, proveedor, almacén o producto..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                onClick={() => setSearchQuery('')}
+                title="Limpiar búsqueda"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <div className="ops-supplier-filter-wrap">
+            <Building2 size={14} className="ops-supplier-filter-icon" />
+            <select
+              aria-label="Filtrar por proveedor"
+              value={
+                selectedSuppliers.length === 0
+                  ? 'Todos'
+                  : selectedSuppliers.length === 1
+                  ? selectedSuppliers[0]
+                  : '__MULTI__'
+              }
+              onChange={(e) => {
+                const val = e.target.value
+                if (val === 'Todos') {
+                  setSelectedSuppliers([])
+                } else if (val !== '__MULTI__') {
+                  setSelectedSuppliers([val])
+                }
+              }}
             >
-              <X size={13} />
+              <option value="Todos">
+                Todos los proveedores ({purchaseOrders.length})
+              </option>
+              {selectedSuppliers.length > 1 && (
+                <option value="__MULTI__">
+                  {selectedSuppliers.length} proveedores seleccionados
+                </option>
+              )}
+              {supplierOptions.map((sup) => (
+                <option key={sup.company} value={sup.company}>
+                  {sup.company} —{' '}
+                  {sup.pendingCount > 0
+                    ? `${sup.pendingCount} ${sup.pendingCount === 1 ? 'pendiente' : 'pendientes'}`
+                    : `${sup.totalCount} ${sup.totalCount === 1 ? 'orden' : 'órdenes'}`}
+                </option>
+              ))}
+            </select>
+            {selectedSuppliers.length > 0 && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                onClick={() => setSelectedSuppliers([])}
+                title="Mostrar todos los proveedores"
+                aria-label="Limpiar filtro de proveedor"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className={`ops-adv-toggle-btn ${
+              showAdvancedFilters || activeAdvancedFiltersCount > 0 ? 'active' : ''
+            }`}
+            onClick={() => setShowAdvancedFilters((prev) => !prev)}
+            aria-expanded={showAdvancedFilters}
+          >
+            <SlidersHorizontal size={13} />
+            Filtros avanzados
+            {activeAdvancedFiltersCount > 0 && (
+              <span className="ops-adv-count tabular-nums">{activeAdvancedFiltersCount}</span>
+            )}
+          </button>
+        </div>
+
+        <div className="ops-filter-meta">
+          {singleSelectedSupplierStats ? (
+            <span className="ops-supplier-summary-text">
+              <strong>{singleSelectedSupplierStats.company}</strong>:{' '}
+              {singleSelectedSupplierStats.pendingCount}{' '}
+              {singleSelectedSupplierStats.pendingCount === 1 ? 'pendiente' : 'pendientes'} (
+              {money(singleSelectedSupplierStats.pendingAmount)})
+            </span>
+          ) : selectedSuppliers.length > 1 ? (
+            <span className="ops-supplier-summary-text">
+              <strong>{selectedSuppliers.length} proveedores</strong> activos
+            </span>
+          ) : null}
+          <span className="ops-supplier-summary-text">
+            {filteredOrders.length} {filteredOrders.length === 1 ? 'orden' : 'órdenes'}
+          </span>
+          {hasAnyActiveFilter && (
+            <button
+              type="button"
+              className="ops-clear-filters-btn"
+              onClick={handleClearAllFilters}
+            >
+              Limpiar filtros
             </button>
           )}
         </div>
       </div>
+
+      {/* Advanced Filters Panel */}
+      {showAdvancedFilters && (
+        <section
+          className="ops-advanced-filter-panel"
+          aria-label="Panel de filtros avanzados de órdenes de compra"
+        >
+          <div className="ops-adv-panel-header">
+            <div className="ops-adv-panel-title">
+              <SlidersHorizontal size={14} />
+              <div>
+                <strong>Filtros avanzados y agrupación</strong>
+                <span>
+                  Combina rango de fechas de emisión, múltiples estados y varios proveedores simultáneamente.
+                </span>
+              </div>
+            </div>
+
+            <div className="ops-adv-header-controls">
+              <label className="ops-adv-groupby">
+                <Layers size={13} aria-hidden="true" />
+                <span>Agrupar por:</span>
+                <select
+                  aria-label="Agrupar órdenes por"
+                  value={groupBy}
+                  onChange={(e) =>
+                    setGroupBy(e.target.value as 'none' | 'supplier' | 'status' | 'month')
+                  }
+                >
+                  <option value="none">Sin agrupar</option>
+                  <option value="supplier">Proveedor</option>
+                  <option value="status">Estado de orden</option>
+                  <option value="month">Mes de emisión</option>
+                </select>
+              </label>
+
+              {hasAnyActiveFilter && (
+                <button
+                  type="button"
+                  className="ops-clear-filters-btn"
+                  onClick={handleClearAllFilters}
+                >
+                  Restablecer todo
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="ops-adv-grid">
+            {/* Block 1: Emission Date Range */}
+            <div className="ops-adv-block">
+              <div className="ops-adv-block-head">
+                <span>
+                  <Calendar size={13} aria-hidden="true" /> Rango de fechas de emisión
+                </span>
+                {(dateFrom || dateTo) && (
+                  <button
+                    type="button"
+                    className="ops-adv-inline-clear"
+                    onClick={() => {
+                      setDateFrom('')
+                      setDateTo('')
+                    }}
+                  >
+                    Limpiar fechas
+                  </button>
+                )}
+              </div>
+
+              <div className="ops-adv-date-inputs">
+                <label className="ops-adv-date-field">
+                  <span>Desde</span>
+                  <input
+                    type="date"
+                    aria-label="Fecha de emisión desde"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                  />
+                </label>
+                <label className="ops-adv-date-field">
+                  <span>Hasta</span>
+                  <input
+                    type="date"
+                    aria-label="Fecha de emisión hasta"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="ops-adv-presets">
+                <button type="button" onClick={() => handleApplyDatePreset('month')}>
+                  Este mes
+                </button>
+                <button type="button" onClick={() => handleApplyDatePreset('30d')}>
+                  Últimos 30 días
+                </button>
+                <button type="button" onClick={() => handleApplyDatePreset('quarter')}>
+                  Este trimestre
+                </button>
+                <button type="button" onClick={() => handleApplyDatePreset('year')}>
+                  Todo el año
+                </button>
+              </div>
+            </div>
+
+            {/* Block 2: Specific Order Statuses (multi-select) */}
+            <div className="ops-adv-block">
+              <div className="ops-adv-block-head">
+                <span>Estados específicos de la orden</span>
+                <div className="ops-adv-head-links">
+                  <button
+                    type="button"
+                    className="ops-adv-inline-clear"
+                    onClick={() => setSelectedStatuses(['Emitida', 'Recepción parcial'])}
+                  >
+                    Solo pendientes
+                  </button>
+                  {selectedStatuses.length > 0 && (
+                    <button
+                      type="button"
+                      className="ops-adv-inline-clear"
+                      onClick={() => setSelectedStatuses([])}
+                    >
+                      Todos
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="ops-adv-checklist">
+                {ALL_PO_STATUSES.map((st) => {
+                  const checked = selectedStatuses.includes(st)
+                  const count = ordersBySupplierAndDate.filter((po) => po.status === st).length
+                  return (
+                    <label
+                      key={st}
+                      className={`ops-adv-check-item ${checked ? 'is-checked' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => handleToggleStatus(st)}
+                      />
+                      <span className="ops-adv-check-label">{st}</span>
+                      <span className="ops-adv-check-count tabular-nums">{count}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Block 3: Multi-Supplier Selector */}
+            <div className="ops-adv-block">
+              <div className="ops-adv-block-head">
+                <span>
+                  <Building2 size={13} aria-hidden="true" /> Múltiples proveedores (
+                  {selectedSuppliers.length === 0 ? 'Todos' : selectedSuppliers.length})
+                </span>
+                <div className="ops-adv-head-links">
+                  <button
+                    type="button"
+                    className="ops-adv-inline-clear"
+                    onClick={() =>
+                      setSelectedSuppliers(supplierOptions.map((s) => s.company))
+                    }
+                  >
+                    Todos
+                  </button>
+                  {selectedSuppliers.length > 0 && (
+                    <button
+                      type="button"
+                      className="ops-adv-inline-clear"
+                      onClick={() => setSelectedSuppliers([])}
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="ops-adv-checklist ops-adv-suppliers-scroll">
+                {supplierOptions.map((sup) => {
+                  const checked = selectedSuppliers.includes(sup.company)
+                  return (
+                    <label
+                      key={sup.company}
+                      className={`ops-adv-check-item ${checked ? 'is-checked' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => handleToggleSupplier(sup.company)}
+                      />
+                      <span className="ops-adv-check-label">{sup.company}</span>
+                      <span className="ops-adv-check-count tabular-nums">
+                        {sup.pendingCount > 0 ? `${sup.pendingCount} pend. · ` : ''}
+                        {sup.totalCount} OC
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Orders Table */}
       <div className="table-wrap ops-table-wrap">
@@ -497,11 +1069,28 @@ export function OperationsPurchases({
             {filteredOrders.length === 0 ? (
               <tr>
                 <td colSpan={9} className="empty-cell">
-                  No se encontraron órdenes de compra registradas.
+                  No se encontraron órdenes de compra con los filtros seleccionados.
                 </td>
               </tr>
             ) : (
-              filteredOrders.map((po) => {
+              groupedOrders.flatMap((group) => {
+                const headerRow =
+                  groupBy !== 'none' ? (
+                    <tr key={`grp_${group.key}`} className="ops-group-header-row">
+                      <td colSpan={9}>
+                        <div className="ops-group-header-inner tabular-nums">
+                          <strong>{group.label}</strong>
+                          <span>
+                            {group.orders.length}{' '}
+                            {group.orders.length === 1 ? 'orden' : 'órdenes'} ·{' '}
+                            {money(group.total)}
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null
+
+                const orderRows = group.orders.map((po) => {
                 const canReceive = po.status === 'Emitida' || po.status === 'Recepción parcial'
                 const totalItemsQty = po.items.reduce((acc, it) => acc + it.quantity, 0)
                 const totalReceivedQty = po.items.reduce((acc, it) => acc + it.receivedQty, 0)
@@ -551,6 +1140,32 @@ export function OperationsPurchases({
                         >
                           <Eye size={13} /> Detalle
                         </button>
+                        {po.status === 'Borrador' && (
+                          <button
+                            className="button-icon-action action-receive"
+                            title="Emitir orden de compra a proveedor"
+                            onClick={() => {
+                              if (!canApprovePurchases) {
+                                toast.warning(
+                                  'Tu rol actual no tiene permiso para emitir órdenes de compra.',
+                                  'Permiso requerido'
+                                )
+                                return
+                              }
+                              onUpdatePurchaseOrders(
+                                purchaseOrders.map((item) =>
+                                  item.id === po.id ? { ...item, status: 'Emitida' } : item
+                                )
+                              )
+                              toast.success(
+                                `Orden ${po.folio} emitida y enviada a ${po.supplierCompany}.`,
+                                'Orden emitida'
+                              )
+                            }}
+                          >
+                            <Send size={13} /> Emitir
+                          </button>
+                        )}
                         {canReceive && (
                           <button
                             className="button-icon-action action-receive"
@@ -560,10 +1175,49 @@ export function OperationsPurchases({
                             <FileCheck2 size={13} /> Recepcionar
                           </button>
                         )}
+                        {onRegisterSupplierBillFromPO &&
+                          (po.status === 'Emitida' ||
+                            po.status === 'Recepción parcial' ||
+                            po.status === 'Recibida') &&
+                          !payables.some((b) => b.purchaseOrderFolio === po.folio) && (
+                            <button
+                              className="button-icon-action"
+                              title="Generar factura de proveedor en Cuentas por pagar"
+                              onClick={() => onRegisterSupplierBillFromPO(po)}
+                            >
+                              <ReceiptText size={13} /> Facturar CxP
+                            </button>
+                          )}
+                        {(po.status === 'Borrador' ||
+                          (po.status === 'Emitida' && totalReceivedQty === 0)) && (
+                          <button
+                            className="button-icon-action"
+                            title="Cancelar orden de compra"
+                            onClick={() => {
+                              if (!canApprovePurchases) {
+                                toast.warning(
+                                  'Tu rol actual no tiene permiso para cancelar órdenes de compra.',
+                                  'Permiso requerido'
+                                )
+                                return
+                              }
+                              onUpdatePurchaseOrders(
+                                purchaseOrders.map((item) =>
+                                  item.id === po.id ? { ...item, status: 'Cancelada' } : item
+                                )
+                              )
+                              toast.info(`Orden ${po.folio} marcada como cancelada.`, 'Orden cancelada')
+                            }}
+                          >
+                            <Ban size={12} /> Cancelar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
                 )
+              })
+                return headerRow ? [headerRow, ...orderRows] : orderRows
               })
             )}
           </tbody>
