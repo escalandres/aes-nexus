@@ -9,9 +9,11 @@ import {
   CreditCard,
   X,
   ArrowRight,
+  Landmark,
 } from 'lucide-react'
 import type { BillPayable } from '../data/finance'
 import type { PurchaseOrder } from '../data/operations'
+import type { EbpAggregationMode } from '../data/ebp'
 import { useToast } from './Toast'
 
 interface SupplierOption {
@@ -26,6 +28,7 @@ interface PurchasesInvoicesProps {
   suppliers: SupplierOption[]
   onCreateSupplierBill: (bill: BillPayable) => void
   onNavigateToFinancePayables?: () => void
+  onOpenEbpBatchFromBills?: (bills: BillPayable[], mode?: EbpAggregationMode) => void
 }
 
 const money = (val: number) =>
@@ -41,11 +44,13 @@ export function PurchasesInvoices({
   suppliers,
   onCreateSupplierBill,
   onNavigateToFinancePayables,
+  onOpenEbpBatchFromBills,
 }: PurchasesInvoicesProps) {
   const toast = useToast()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
+  const [selectedBillIds, setSelectedBillIds] = useState<Record<string, boolean>>({})
 
   // Modal state
   const [selectedPoId, setSelectedPoId] = useState('')
@@ -83,6 +88,11 @@ export function PurchasesInvoices({
   const totalPendingBalance = useMemo(
     () => payables.reduce((sum, b) => sum + b.balance, 0),
     [payables]
+  )
+
+  const selectedBillsList = useMemo(
+    () => payables.filter((b) => b.balance > 0 && selectedBillIds[b.id]),
+    [payables, selectedBillIds]
   )
 
   const handleSelectPo = (poId: string) => {
@@ -248,6 +258,34 @@ export function PurchasesInvoices({
         </div>
 
         <div className="ops-actions-group">
+          {onOpenEbpBatchFromBills && selectedBillsList.length > 0 && (
+            <>
+              {selectedBillsList.length > 1 && (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => onOpenEbpBatchFromBills(selectedBillsList, 'individual')}
+                >
+                  <Landmark size={13} /> EBP individual ({selectedBillsList.length})
+                </button>
+              )}
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() =>
+                  onOpenEbpBatchFromBills(
+                    selectedBillsList,
+                    selectedBillsList.length > 1 ? 'consolidated' : 'individual'
+                  )
+                }
+              >
+                <Landmark size={13} />{' '}
+                {selectedBillsList.length > 1
+                  ? `Consolidar en EBP (${selectedBillsList.length})`
+                  : 'Pagar con EBP'}
+              </button>
+            </>
+          )}
           {onNavigateToFinancePayables && (
             <button
               type="button"
@@ -294,6 +332,7 @@ export function PurchasesInvoices({
         <table className="data-table ops-data-table">
           <thead>
             <tr>
+              {onOpenEbpBatchFromBills && <th style={{ width: 28 }}>EBP</th>}
               <th>FOLIO CXP</th>
               <th>PROVEEDOR</th>
               <th>ORDEN DE COMPRA</th>
@@ -303,18 +342,41 @@ export function PurchasesInvoices({
               <th style={{ textAlign: 'right' }}>PAGADO</th>
               <th style={{ textAlign: 'right' }}>SALDO</th>
               <th>ESTADO</th>
+              {onOpenEbpBatchFromBills && <th style={{ textAlign: 'right' }}>PAGO EBP</th>}
             </tr>
           </thead>
           <tbody>
             {filteredBills.length === 0 ? (
               <tr>
-                <td colSpan={9} className="empty-cell">
+                <td colSpan={onOpenEbpBatchFromBills ? 11 : 9} className="empty-cell">
                   No se encontraron facturas de proveedor con los filtros actuales.
                 </td>
               </tr>
             ) : (
-              filteredBills.map((b) => (
+              filteredBills.map((b) => {
+                const canPay = b.balance > 0
+                return (
                 <tr key={b.id} className={b.status === 'Vencida' ? 'row-warning' : ''}>
+                  {onOpenEbpBatchFromBills && (
+                    <td>
+                      <input
+                        type="checkbox"
+                        disabled={!canPay}
+                        checked={Boolean(canPay && selectedBillIds[b.id])}
+                        onChange={(e) =>
+                          setSelectedBillIds((prev) => ({
+                            ...prev,
+                            [b.id]: e.target.checked,
+                          }))
+                        }
+                        title={
+                          canPay
+                            ? 'Seleccionar para pago individual o consolidado en EBP'
+                            : 'Factura liquidada'
+                        }
+                      />
+                    </td>
+                  )}
                   <td>
                     <span className="fin-folio-tag tabular-nums">{b.folio}</span>
                   </td>
@@ -343,8 +405,25 @@ export function PurchasesInvoices({
                     </strong>
                   </td>
                   <td>{getStatusBadge(b.status)}</td>
+                  {onOpenEbpBatchFromBills && (
+                    <td style={{ textAlign: 'right' }}>
+                      {canPay ? (
+                        <button
+                          type="button"
+                          className="button-icon-action action-pay"
+                          title="Pagar esta factura con EBP eligiendo cuenta bancaria del proveedor"
+                          onClick={() => onOpenEbpBatchFromBills([b], 'individual')}
+                        >
+                          <Landmark size={12} /> Pagar EBP
+                        </button>
+                      ) : (
+                        <span className="ebp-field-hint">Liquidada</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
-              ))
+                )
+              })
             )}
           </tbody>
         </table>

@@ -7,7 +7,7 @@ import {
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
-  LogIn, LogOut,
+  LogIn, LogOut, BarChart3,
 } from 'lucide-react'
 import { activities, opportunities } from './data/dashboard'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
@@ -88,13 +88,17 @@ import { FinanceOverview } from './components/FinanceOverview'
 import { FinanceAccounting } from './components/FinanceAccounting'
 import { FinanceEbp } from './components/FinanceEbp'
 import { EbpBatchWizardModal, type EbpWizardCandidateLine } from './components/EbpBatchWizardModal'
+import { SupplierBankAccountsManager } from './components/SupplierBankAccountsManager'
 import {
+  getPreferredSupplierBankAccount,
   initialBankFormatPacks,
   initialEbpBatches,
   makeValidClabe,
-  validateEbpFieldValue,
+  normalizeSupplierBankAccounts,
   type BankFormatPack,
+  type EbpAggregationMode,
   type ElectronicPaymentBatch,
+  type SupplierBankAccount,
 } from './data/ebp'
 import {
   AdministrationSection,
@@ -102,6 +106,7 @@ import {
   type DepartmentRecord,
   type PhysicalLocationRecord,
 } from './components/AdministrationSection'
+import { ReportsSection, type ReportsSectionTab } from './components/ReportsSection'
 import {
   initialBankAccounts,
   initialReceivables,
@@ -125,6 +130,7 @@ const sections: { labelKey: TranslationKey; items: { name: string; labelKey: Tra
     { name: 'Compras', labelKey: 'nav.purchases', icon: ShoppingCart, count: 'H3' },
     { name: 'Operaciones', labelKey: 'nav.operations', icon: WarehouseIcon, count: 'H3' },
     { name: 'Finanzas', labelKey: 'nav.finance', icon: WalletCards, count: 'H3' },
+    { name: 'Reportes', labelKey: 'nav.reports', icon: BarChart3, count: 'BI' },
     { name: 'Administración', labelKey: 'nav.admin', icon: ShieldCheck, count: 'H1' },
   ] },
 ]
@@ -135,6 +141,7 @@ const moduleDetails = {
   Compras: { icon: ShoppingCart, phase: 'H3 · MVP operativo', description: 'Centraliza requisiciones internas, órdenes de compra a proveedores, recepciones en almacén y facturas sincronizadas con Finanzas.', areas: ['Requisiciones y aprobación', 'Órdenes de compra', 'Recepciones en andén', 'Facturas de proveedor (CxP)'] },
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
+  Reportes: { icon: BarChart3, phase: 'BI · Analítica ERP', description: 'Inteligencia financiera y operativa consolidada en tiempo real con exportación CSV e impresión.', areas: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas, Inventario y Nómina'] },
   Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos', 'Historial de auditoría'] },
 } as const
 
@@ -163,6 +170,7 @@ type DirectoryRecord = {
   accountNumber?: string
   defaultReference?: string
   bankPackValues?: Record<string, Record<string, string>>
+  bankAccounts?: SupplierBankAccount[]
 }
 
 const clients: DirectoryRecord[] = [
@@ -174,10 +182,100 @@ const clients: DirectoryRecord[] = [
 ]
 
 const suppliers: DirectoryRecord[] = [
-  { supplierCode: 'PRV-001', name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue', rfc: 'ACO170812K90', bankName: 'BBVA México', clabe: makeValidClabe('01218000512098761'), accountNumber: '0512098761', defaultReference: '1049201', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } }, country: 'MX', city: 'CDMX', addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }] },
-  { supplierCode: 'PRV-002', name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', rfc: 'CIN190305AB4', bankName: 'Banorte', clabe: makeValidClabe('07258000334455112'), accountNumber: '0334455112', defaultReference: '2055102', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } }, country: 'MX' },
-  { supplierCode: 'PRV-003', name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', rfc: 'LVA200918RT2', bankName: 'Santander', clabe: makeValidClabe('01432000991122334'), accountNumber: '9911223340', defaultReference: '3091122', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } }, country: 'MX' },
-  { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
+  {
+    supplierCode: 'PRV-001',
+    name: 'Distribuidora Atlas',
+    company: 'Atlas Comercial',
+    email: 'contacto@atlascomercial.mx',
+    phone: '55 3055 4820',
+    status: 'Activo',
+    lastActivity: 'Hoy',
+    initials: 'DA',
+    color: 'blue',
+    rfc: 'ACO170812K90',
+    currency: 'MXN',
+    bankName: 'BBVA México',
+    clabe: makeValidClabe('01218000512098761'),
+    accountNumber: '0512098761',
+    defaultReference: '1049201',
+    bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } },
+    bankAccounts: [
+      {
+        id: 'sba_atlas_1',
+        alias: 'BBVA Principal Mercancía',
+        bankName: 'BBVA México',
+        clabe: makeValidClabe('01218000512098761'),
+        accountNumber: '0512098761',
+        currency: 'MXN',
+        defaultReference: '1049201',
+        isDefault: true,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } },
+      },
+      {
+        id: 'sba_atlas_2',
+        alias: 'Banorte Operativa Logística',
+        bankName: 'Banorte',
+        clabe: makeValidClabe('07218000912044551'),
+        accountNumber: '0912044551',
+        currency: 'MXN',
+        defaultReference: '1049209',
+        isDefault: false,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+      },
+    ],
+    country: 'MX',
+    city: 'CDMX',
+    addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }],
+  },
+  {
+    supplierCode: 'PRV-002',
+    name: 'Papelería Central',
+    company: 'Central de Insumos',
+    email: 'ventas@centralinsumos.mx',
+    phone: '81 2104 6651',
+    status: 'Activo',
+    lastActivity: '3 nov',
+    initials: 'PC',
+    color: 'sage',
+    rfc: 'CIN190305AB4',
+    currency: 'MXN',
+    bankName: 'Banorte',
+    clabe: makeValidClabe('07258000334455112'),
+    accountNumber: '0334455112',
+    defaultReference: '2055102',
+    bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+    bankAccounts: [
+      {
+        id: 'sba_central_1',
+        alias: 'Banorte Cuenta Principal',
+        bankName: 'Banorte',
+        clabe: makeValidClabe('07258000334455112'),
+        accountNumber: '0334455112',
+        currency: 'MXN',
+        defaultReference: '2055102',
+        isDefault: true,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+      },
+      {
+        id: 'sba_central_2',
+        alias: 'Santander Sucursal Monterrey',
+        bankName: 'Santander',
+        clabe: makeValidClabe('01458000778899001'),
+        accountNumber: '7788990012',
+        currency: 'MXN',
+        defaultReference: '2055199',
+        isDefault: false,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } },
+      },
+    ],
+    country: 'MX',
+  },
+  { supplierCode: 'PRV-003', name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', rfc: 'LVA200918RT2', currency: 'MXN', bankName: 'Santander', clabe: makeValidClabe('01432000991122334'), accountNumber: '9911223340', defaultReference: '3091122', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } }, country: 'MX' },
+  { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', currency: 'MXN', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
 ]
 
 const initialDepartments: DepartmentRecord[] = [
@@ -249,6 +347,7 @@ const pageRoutes: Record<string, string> = {
   Compras: '/purchases',
   Operaciones: '/operations',
   Finanzas: '/finance',
+  Reportes: '/reports',
   Administración: '/admin',
   Configuración: '/settings',
 }
@@ -256,9 +355,17 @@ const pageRoutes: Record<string, string> = {
 const pageFromPath = (pathname: string) => {
   if (pathname.startsWith('/crm')) return 'CRM'
   if (pathname.startsWith('/sales') || pathname.startsWith('/ventas')) return 'Ventas'
-  if (pathname.startsWith('/purchases') || pathname.startsWith('/compras')) return 'Compras'
+  if (
+    pathname.startsWith('/purchases') ||
+    pathname.startsWith('/compras') ||
+    pathname === '/vendorbill' ||
+    pathname === '/vendorbills'
+  ) {
+    return 'Compras'
+  }
   if (pathname.startsWith('/operations') || pathname.startsWith('/operaciones')) return 'Operaciones'
   if (pathname.startsWith('/finance') || pathname.startsWith('/finanzas')) return 'Finanzas'
+  if (pathname.startsWith('/reports') || pathname.startsWith('/reportes')) return 'Reportes'
   const normalized = pathname.replace(/\/$/, '') || '/'
   if (normalized === '/administracion') return 'Administración'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
@@ -271,7 +378,13 @@ const purchasesSectionFromPath = (pathname: string): PurchasesSectionTab =>
     ? 'Órdenes de compra'
     : pathname === '/purchases/receptions' || pathname === '/compras/recepciones'
     ? 'Recepciones'
-    : pathname === '/purchases/invoices' || pathname === '/compras/facturas'
+    : pathname === '/purchases/vendorbill' ||
+      pathname === '/purchases/vendorbills' ||
+      pathname === '/purchases/vendor-bills' ||
+      pathname === '/vendorbill' ||
+      pathname === '/vendorbills' ||
+      pathname === '/purchases/invoices' ||
+      pathname === '/compras/facturas'
     ? 'Facturas'
     : 'Resumen'
 
@@ -325,6 +438,19 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Resumen'
     : 'Cobros'
 
+const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
+  pathname === '/reports/financial' || pathname === '/reportes/finanzas'
+    ? 'Finanzas y Tesorería'
+    : pathname === '/reports/payables-ebp' || pathname === '/reportes/cxp-ebp'
+    ? 'CxP y Pagos EBP'
+    : pathname === '/reports/sales' || pathname === '/reportes/ventas'
+    ? 'Ventas y CxC'
+    : pathname === '/reports/inventory' || pathname === '/reportes/inventario'
+    ? 'Compras e Inventario'
+    : pathname === '/reports/payroll' || pathname === '/reportes/nomina'
+    ? 'Nómina y RRHH'
+    : 'Resumen ejecutivo'
+
 const adminSectionFromPath = (pathname: string): AdminSectionTab =>
   pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
     ? 'Ubicaciones'
@@ -343,6 +469,7 @@ function AppContent() {
   const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
   const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [reportsSection, setReportsSection] = useState<ReportsSectionTab>(() => reportsSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
@@ -1070,6 +1197,7 @@ function AppContent() {
   const [globalEbpWizard, setGlobalEbpWizard] = useState<{
     isOpen: boolean
     batchType: 'Nómina' | 'Proveedores'
+    defaultAggregationMode?: EbpAggregationMode
     sourceRefId: string
     sourceFolio: string
     candidates: EbpWizardCandidateLine[]
@@ -1256,10 +1384,29 @@ function AppContent() {
         }
       }
     } else {
-      // Proveedores: liquidar facturas incluidas en el lote
-      const lineAmountByBillId = new Map(
-        batch.lines.map((l) => [l.sourceLineId, l.amount])
-      )
+      // Proveedores: liquidar todas las facturas individuales o consolidadas incluidas en el lote
+      const lineAmountByBillId = new Map<string, number>()
+      const paymentLabelByBillId = new Map<string, string>()
+
+      batch.lines.forEach((line) => {
+        const destLabel = `${batch.folio} · ${line.selectedBankAlias || line.bankName}`
+        if (line.billAllocations && line.billAllocations.length > 0) {
+          line.billAllocations.forEach((alloc) => {
+            lineAmountByBillId.set(
+              alloc.billId,
+              (lineAmountByBillId.get(alloc.billId) || 0) + alloc.amountToPay
+            )
+            paymentLabelByBillId.set(alloc.billId, `EBP ${destLabel}`)
+          })
+        } else {
+          lineAmountByBillId.set(
+            line.sourceLineId,
+            (lineAmountByBillId.get(line.sourceLineId) || 0) + line.amount
+          )
+          paymentLabelByBillId.set(line.sourceLineId, `EBP ${destLabel}`)
+        }
+      })
+
       setPayables((prev) =>
         prev.map((bill) => {
           const paidDelta = lineAmountByBillId.get(bill.id)
@@ -1271,21 +1418,29 @@ function AppContent() {
             paidAmount: nextPaid,
             balance: nextBal,
             status: nextBal === 0 ? 'Pagada' : 'Parcial',
-            paymentMethod: `EBP · ${batch.folio}`,
+            paymentMethod: paymentLabelByBillId.get(bill.id) || `EBP · ${batch.folio}`,
           }
         })
       )
       handleUpdateBankAccountBalance(bankAcc.id, -batch.totalAmount)
-      handleAddTransaction({
-        id: `txn_${Date.now()}`,
-        folio: `PAG-2026-${String(transactions.length + 1).padStart(3, '0')}`,
-        date: dateStr,
-        type: 'Pago a proveedor',
-        entityName: `Lote EBP (${batch.operationsCount} proveedores)`,
-        reference: `${batch.folio} · ${batch.generatedFilename}`,
-        amount: batch.totalAmount,
-        method: `EBP (${batch.packName})`,
-        account: bankAcc.bankName,
+      batch.lines.forEach((line, idx) => {
+        const foliosText =
+          line.billAllocations && line.billAllocations.length > 0
+            ? line.billAllocations.map((a) => a.billFolio).join(', ')
+            : line.beneficiaryCode
+        const destAccText = line.selectedBankAlias || `${line.bankName} ${line.clabe.slice(-4)}`
+        const reasonText = line.paymentReason ? ` · ${line.paymentReason}` : ''
+        handleAddTransaction({
+          id: `txn_${Date.now()}_${idx}`,
+          folio: `PAG-2026-${String(transactions.length + idx + 1).padStart(3, '0')}`,
+          date: dateStr,
+          type: 'Pago a proveedor',
+          entityName: line.beneficiaryName,
+          reference: `${batch.folio} (${destAccText})${reasonText} · Facturas: ${foliosText}`,
+          amount: line.amount,
+          method: `EBP (${batch.packName})`,
+          account: bankAcc.bankName,
+        })
       })
       const bankAccCode = bankAcc.id === 'bank_2' ? '1002-002' : '1002-001'
       setChartAccounts((prev) =>
@@ -1310,7 +1465,7 @@ function AppContent() {
     appendAuditLog({
       category: 'finance',
       action: 'Dispersión bancaria aplicada (EBP)',
-      detail: `Lote ${batch.folio} aplicado en banco ${bankAcc.bankName} · ${money(batch.totalAmount)} (${batch.operationsCount} operaciones)`,
+      detail: `Lote ${batch.folio} aplicado en banco ${bankAcc.bankName} · ${money(batch.totalAmount)} (${batch.operationsCount} operación(es))`,
       user: activeSessionProfile.name,
     })
   }
@@ -1336,37 +1491,114 @@ function AppContent() {
     setGlobalEbpWizard({
       isOpen: true,
       batchType: 'Nómina',
+      defaultAggregationMode: 'individual',
       sourceRefId: run.id,
       sourceFolio: run.folio,
       candidates,
     })
   }
 
-  const openEbpWizardForVendorBills = (bills: BillPayable[]) => {
+  const openEbpWizardForVendorBills = (
+    bills: BillPayable[],
+    preferredMode?: EbpAggregationMode
+  ) => {
     const supMap = new Map(supplierRecords.map((s) => [s.company.toLowerCase(), s]))
     const candidates: EbpWizardCandidateLine[] = bills.map((bill) => {
       const sup = supMap.get(bill.supplierCompany.toLowerCase())
+      const accounts = sup
+        ? normalizeSupplierBankAccounts({
+            company: sup.company,
+            currency: sup.currency || bill.currency || 'MXN',
+            bankName: sup.bankName,
+            clabe: sup.clabe,
+            accountNumber: sup.accountNumber,
+            defaultReference: sup.defaultReference,
+            bankPackValues: sup.bankPackValues,
+            bankAccounts: sup.bankAccounts,
+          })
+        : []
+      const preferredAcc = getPreferredSupplierBankAccount(
+        accounts,
+        bill.currency || 'MXN'
+      )
+
       return {
         sourceLineId: bill.id,
+        supplierKey: bill.supplierCompany.toLowerCase(),
+        billId: bill.id,
+        billFolio: bill.folio,
+        purchaseOrderFolio: bill.purchaseOrderFolio,
+        dueDate: bill.dueDate,
+        currency: bill.currency || 'MXN',
         beneficiaryName: bill.supplierCompany,
         beneficiaryCode: bill.folio,
         rfc: sup?.rfc,
-        bankName: sup?.bankName || '',
-        clabe: sup?.clabe || '',
-        accountNumber: sup?.accountNumber,
+        bankName: preferredAcc?.bankName || sup?.bankName || '',
+        clabe: preferredAcc?.clabe || sup?.clabe || '',
+        accountNumber: preferredAcc?.accountNumber ?? sup?.accountNumber,
         amount: bill.balance,
-        reference: sup?.defaultReference || bill.folio.replace(/\D/g, '').slice(-7) || '100001',
+        reference:
+          preferredAcc?.defaultReference ||
+          sup?.defaultReference ||
+          bill.folio.replace(/\D/g, '').slice(-7) ||
+          '100001',
         concept: `PAGO ${bill.folio}`,
-        bankPackValues: sup?.bankPackValues,
+        bankPackValues: preferredAcc?.bankPackValues || sup?.bankPackValues,
+        availableBankAccounts: accounts,
+        selectedBankAccountId: preferredAcc?.id,
       }
     })
     setGlobalEbpWizard({
       isOpen: true,
       batchType: 'Proveedores',
+      defaultAggregationMode:
+        preferredMode || (bills.length > 1 ? 'consolidated' : 'individual'),
       sourceRefId: bills.map((b) => b.id).join(','),
       sourceFolio:
         bills.length === 1 ? bills[0].folio : `LOTE-CXP (${bills.length} fact.)`,
       candidates,
+    })
+  }
+
+  const usedSupplierBankAccountIds = useMemo(() => {
+    const ids = new Set<string>()
+    ebpBatches.forEach((b) => {
+      b.lines.forEach((l) => {
+        if (l.selectedBankAccountId) ids.add(l.selectedBankAccountId)
+      })
+    })
+    return ids
+  }, [ebpBatches])
+
+  const handleUpdateSupplierBankAccounts = (
+    supplierCompany: string,
+    nextAccounts: SupplierBankAccount[]
+  ) => {
+    const targetKey = supplierCompany.trim().toLowerCase()
+    setSupplierRecords((prev) =>
+      prev.map((s) => {
+        if (s.company.trim().toLowerCase() !== targetKey) return s
+        const primaryAcc = getPreferredSupplierBankAccount(
+          nextAccounts,
+          s.currency || 'MXN'
+        )
+        return {
+          ...s,
+          bankAccounts: nextAccounts,
+          bankName: primaryAcc?.bankName || undefined,
+          clabe: primaryAcc?.clabe || undefined,
+          accountNumber: primaryAcc?.accountNumber || undefined,
+          defaultReference: primaryAcc?.defaultReference || undefined,
+          bankPackValues: primaryAcc?.bankPackValues || {},
+          lastActivity: 'Ahora',
+        }
+      })
+    )
+    appendAuditLog({
+      category: 'finance',
+      action: 'Edición de cuentas bancarias de proveedor (EBP)',
+      detail: `Actualización de detalles bancarios de ${supplierCompany} · ${nextAccounts.length} cuenta(s) registrada(s)`,
+      user: activeSessionProfile.name,
     })
   }
 
@@ -1974,6 +2206,15 @@ function AppContent() {
       )
       setFinanceSection((first as typeof financeSection) || 'Cobros')
     }
+    if (page === 'Reportes') {
+      const first = getFirstAccessibleSection(
+        'Reportes',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+      setReportsSection((first as ReportsSectionTab) || 'Resumen ejecutivo')
+    }
     if (page === 'Administración') {
       const first = getFirstAccessibleSection(
         'Administración',
@@ -1993,6 +2234,36 @@ function AppContent() {
       if (first) setActiveSetting(first)
     }
     const route = pageRoutes[page] ?? '/'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToReportsSection = (section: ReportsSectionTab) => {
+    if (
+      !canAccessSection(
+        'Reportes',
+        section,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+    ) {
+      notifyAccessDenied(`Reportes · ${section}`)
+      return
+    }
+    setActivePage('Reportes')
+    setReportsSection(section)
+    const route =
+      section === 'Finanzas y Tesorería'
+        ? '/reports/financial'
+        : section === 'CxP y Pagos EBP'
+        ? '/reports/payables-ebp'
+        : section === 'Ventas y CxC'
+        ? '/reports/sales'
+        : section === 'Compras e Inventario'
+        ? '/reports/inventory'
+        : section === 'Nómina y RRHH'
+        ? '/reports/payroll'
+        : '/reports'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -2123,7 +2394,7 @@ function AppContent() {
         : section === 'Recepciones'
         ? '/purchases/receptions'
         : section === 'Facturas'
-        ? '/purchases/invoices'
+        ? '/purchases/vendorbill'
         : '/purchases'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
@@ -2362,11 +2633,31 @@ function AppContent() {
           state: supplierAddresses[0]?.state,
           addresses: supplierAddresses,
           rfc: createForm.rfc.trim().toUpperCase() || undefined,
+          currency: 'MXN',
           bankName: createForm.bankName.trim() || undefined,
           clabe: createForm.clabe.trim() || undefined,
           accountNumber: createForm.accountNumber.trim() || undefined,
           defaultReference: createForm.defaultReference.trim() || undefined,
           bankPackValues: createForm.bankPackValues,
+          bankAccounts:
+            createForm.bankName.trim() || createForm.clabe.trim()
+              ? [
+                  {
+                    id: `sba_${Date.now()}`,
+                    alias: createForm.bankName.trim()
+                      ? `${createForm.bankName.trim()} Principal`
+                      : 'Cuenta Principal',
+                    bankName: createForm.bankName.trim(),
+                    clabe: createForm.clabe.trim(),
+                    accountNumber: createForm.accountNumber.trim() || undefined,
+                    currency: 'MXN',
+                    defaultReference: createForm.defaultReference.trim() || undefined,
+                    isDefault: true,
+                    active: true,
+                    bankPackValues: createForm.bankPackValues || {},
+                  },
+                ]
+              : [],
         },
         ...records,
       ])
@@ -2402,6 +2693,7 @@ function AppContent() {
       setSalesSection(salesSectionFromPath(window.location.pathname))
       setPurchasesSection(purchasesSectionFromPath(window.location.pathname))
       setOperationsSection(operationsSectionFromPath(window.location.pathname))
+      setReportsSection(reportsSectionFromPath(window.location.pathname))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -2688,7 +2980,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -3144,6 +3436,8 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Reportes'
+                ? reportsSection
                 : activePage === 'Administración'
                 ? adminSection
                 : 'Inicio'
@@ -3219,6 +3513,8 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Reportes'
+                ? reportsSection
                 : activePage === 'Administración'
                 ? adminSection
                 : 'Inicio',
@@ -3896,6 +4192,7 @@ function AppContent() {
                   }))}
                   onCreateSupplierBill={handleCreateSupplierBill}
                   onNavigateToFinancePayables={() => navigateToFinanceSection('Pagos')}
+                  onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
                 />
               ) : (
                 <PurchasesOverview
@@ -4133,11 +4430,13 @@ function AppContent() {
                     company: s.company,
                     email: s.email,
                     rfc: s.rfc,
+                    currency: s.currency,
                     bankName: s.bankName,
                     clabe: s.clabe,
                     accountNumber: s.accountNumber,
                     defaultReference: s.defaultReference,
                     bankPackValues: s.bankPackValues,
+                    bankAccounts: s.bankAccounts,
                   }))}
                   payrollRuns={payrollRuns}
                   payables={payables}
@@ -4145,6 +4444,7 @@ function AppContent() {
                   onCreateBatch={(batch) => setEbpBatches((prev) => [batch, ...prev])}
                   onApplyBatchInFinance={handleApplyEbpBatchInFinance}
                   onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
+                  onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
                 />
               ) : financeSection === 'Gastos' ? (
                 <FinanceExpenses
@@ -4170,6 +4470,66 @@ function AppContent() {
                 />
               )}
             </section>
+          ) : activePage === 'Reportes' ? (
+            <ReportsSection
+              activeTab={reportsSection}
+              allowedTabs={([
+                'Resumen ejecutivo',
+                'Finanzas y Tesorería',
+                'CxP y Pagos EBP',
+                'Ventas y CxC',
+                'Compras e Inventario',
+                'Nómina y RRHH',
+              ] as ReportsSectionTab[]).filter((sec) =>
+                canAccessSection(
+                  'Reportes',
+                  sec,
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              )}
+              onSelectTab={navigateToReportsSection}
+              bankAccounts={bankAccounts}
+              receivables={receivables}
+              payables={payables}
+              expenses={expenses}
+              transactions={transactions}
+              chartAccounts={chartAccounts}
+              ebpBatches={ebpBatches}
+              quotes={quotes}
+              orders={orders}
+              purchaseOrders={purchaseOrders}
+              requisitions={requisitions}
+              inventory={inventory}
+              movements={movements}
+              warehouses={warehouses}
+              locations={locations}
+              employees={employees}
+              payrollRuns={payrollRuns}
+              departments={departments}
+              suppliers={supplierRecords.map((s) => ({
+                company: s.company,
+                rfc: s.rfc,
+                currency: s.currency,
+                bankName: s.bankName,
+                clabe: s.clabe,
+                accountNumber: s.accountNumber,
+                defaultReference: s.defaultReference,
+                bankPackValues: s.bankPackValues,
+                bankAccounts: s.bankAccounts,
+              }))}
+              clientsCount={clientRecords.length}
+              onNavigateModule={navigateTo}
+              onExportAudit={(reportName, rowCount) =>
+                appendAuditLog({
+                  category: 'finance',
+                  action: 'Exportación de reporte CSV',
+                  detail: `Reporte “${reportName}” exportado con ${rowCount} registro(s).`,
+                  user: activeSessionProfile.name,
+                })
+              }
+            />
           ) : activePage === 'Administración' ? (
             <AdministrationSection
               departments={departments}
@@ -4806,218 +5166,145 @@ function AppContent() {
         </section>
       </div>}
 
-      {/* Modal: Configurar datos bancarios + Packs EBP del Proveedor */}
-      {editingSupplierBank && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setEditingSupplierBank(null)
-          }}
-        >
-          <section className="create-modal modal-wide" role="dialog" aria-modal="true">
-            <div className="create-modal-heading">
-              <div>
-                <div className="panel-kicker">PROVEEDOR · DISPERSIÓN BANCARIA EBP</div>
-                <h2>{editingSupplierBank.company}</h2>
-                <p>Configura CLABE, RFC y campos dinámicos exigidos por tus packs bancarios instalados.</p>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Cerrar"
-                onClick={() => setEditingSupplierBank(null)}
-              >
-                <X size={18} />
-              </button>
-            </div>
+      {/* Modal: Configurar múltiples detalles bancarios + Packs EBP del Proveedor */}
+      {editingSupplierBank && (() => {
+        const currentAccounts = normalizeSupplierBankAccounts({
+          company: editingSupplierBank.company,
+          currency: editingSupplierBank.currency || 'MXN',
+          bankName: editingSupplierBank.bankName,
+          clabe: editingSupplierBank.clabe,
+          accountNumber: editingSupplierBank.accountNumber,
+          defaultReference: editingSupplierBank.defaultReference,
+          bankPackValues: editingSupplierBank.bankPackValues,
+          bankAccounts: editingSupplierBank.bankAccounts,
+        })
+        const usedAccIds = new Set<string>()
+        ebpBatches.forEach((b) => {
+          b.lines.forEach((l) => {
+            if (l.selectedBankAccountId) usedAccIds.add(l.selectedBankAccountId)
+          })
+        })
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                setSupplierRecords((prev) =>
-                  prev.map((s) =>
-                    s.email === editingSupplierBank.email && s.company === editingSupplierBank.company
-                      ? editingSupplierBank
-                      : s
-                  )
-                )
-                toast.success(
-                  `Datos bancarios de ${editingSupplierBank.company} actualizados para lotes EBP.`,
-                  'Proveedor actualizado'
-                )
-                setEditingSupplierBank(null)
-              }}
-            >
-              <div className="form-grid-3">
-                <label className="form-field">
-                  <span>RFC</span>
-                  <input
-                    className="mono"
-                    maxLength={13}
-                    value={editingSupplierBank.rfc || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        rfc: e.target.value.toUpperCase(),
-                      })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Banco receptor</span>
-                  <input
-                    value={editingSupplierBank.bankName || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({ ...editingSupplierBank, bankName: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Referencia predeterminada</span>
-                  <input
-                    value={editingSupplierBank.defaultReference || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        defaultReference: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-              <div className="form-grid">
-                <label className="form-field">
-                  <span>CLABE interbancaria (18 dígitos)</span>
-                  <input
-                    className="mono"
-                    maxLength={18}
-                    value={editingSupplierBank.clabe || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({ ...editingSupplierBank, clabe: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Número de cuenta</span>
-                  <input
-                    className="mono"
-                    value={editingSupplierBank.accountNumber || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        accountNumber: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              {ebpPacks.filter(
-                (p) =>
-                  p.installed &&
-                  (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
-                  p.beneficiaryBankSchema.length > 0
-              ).length > 0 && (
-                <>
-                  <div className="form-section-divider">
-                    Campos específicos de Packs Bancarios EBP instalados
-                  </div>
-                  <div className="ebp-dynamic-packs-stack">
-                    {ebpPacks
-                      .filter(
-                        (p) =>
-                          p.installed &&
-                          (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
-                          p.beneficiaryBankSchema.length > 0
-                      )
-                      .map((pack) => {
-                        const vals = editingSupplierBank.bankPackValues?.[pack.id] || {}
-                        return (
-                          <div key={pack.id} className="ebp-dynamic-pack-subbox">
-                            <div className="ebp-subbox-title">
-                              <strong>{pack.name}</strong>
-                              <span className="emp-code-pill">{pack.bankName}</span>
-                            </div>
-                            <div className="form-grid">
-                              {pack.beneficiaryBankSchema.map((field) => {
-                                const val = vals[field.key] ?? field.defaultValue ?? ''
-                                const err = validateEbpFieldValue(
-                                  field,
-                                  val,
-                                  pack.embeddedCatalogs
-                                )
-                                const cat = field.catalogRef
-                                  ? pack.embeddedCatalogs[field.catalogRef]
-                                  : undefined
-                                return (
-                                  <label key={field.key} className="form-field">
-                                    <span>
-                                      {field.label} {field.validators.required ? '*' : ''}
-                                    </span>
-                                    {field.type === 'select_catalog' && cat ? (
-                                      <select
-                                        value={val}
-                                        onChange={(e) =>
-                                          setEditingSupplierBank({
-                                            ...editingSupplierBank,
-                                            bankPackValues: {
-                                              ...(editingSupplierBank.bankPackValues || {}),
-                                              [pack.id]: { ...vals, [field.key]: e.target.value },
-                                            },
-                                          })
-                                        }
-                                      >
-                                        <option value="">Selecciona opción...</option>
-                                        {cat.options.map((opt) => (
-                                          <option key={opt.code} value={opt.code}>
-                                            {opt.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <input
-                                        value={val}
-                                        placeholder={field.placeholder}
-                                        onChange={(e) =>
-                                          setEditingSupplierBank({
-                                            ...editingSupplierBank,
-                                            bankPackValues: {
-                                              ...(editingSupplierBank.bankPackValues || {}),
-                                              [pack.id]: { ...vals, [field.key]: e.target.value },
-                                            },
-                                          })
-                                        }
-                                      />
-                                    )}
-                                    {err && <small className="ebp-field-err">{err}</small>}
-                                  </label>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        )
-                      })}
-                  </div>
-                </>
-              )}
-
-              <div className="create-modal-actions">
+        return (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setEditingSupplierBank(null)
+            }}
+          >
+            <section className="create-modal modal-wide" role="dialog" aria-modal="true">
+              <div className="create-modal-heading">
+                <div>
+                  <div className="panel-kicker">PROVEEDOR · DETALLES BANCARIOS EBP</div>
+                  <h2>{editingSupplierBank.company}</h2>
+                  <p>
+                    Registra una o varias cuentas bancarias (con moneda y parámetros EBP propios) para pagar facturas individuales o consolidadas.
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="button button-secondary"
+                  className="icon-button"
+                  aria-label="Cerrar"
                   onClick={() => setEditingSupplierBank(null)}
                 >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <Check size={14} /> Guardar datos bancarios
+                  <X size={18} />
                 </button>
               </div>
-            </form>
-          </section>
-        </div>
-      )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const primaryAcc = getPreferredSupplierBankAccount(
+                    currentAccounts,
+                    editingSupplierBank.currency || 'MXN'
+                  )
+                  const updatedSupplier: DirectoryRecord = {
+                    ...editingSupplierBank,
+                    bankAccounts: currentAccounts,
+                    bankName: primaryAcc?.bankName || undefined,
+                    clabe: primaryAcc?.clabe || undefined,
+                    accountNumber: primaryAcc?.accountNumber || undefined,
+                    defaultReference: primaryAcc?.defaultReference || undefined,
+                    bankPackValues: primaryAcc?.bankPackValues || {},
+                    lastActivity: 'Ahora',
+                  }
+                  setSupplierRecords((prev) =>
+                    prev.map((s) =>
+                      s.email === editingSupplierBank.email && s.company === editingSupplierBank.company
+                        ? updatedSupplier
+                        : s
+                    )
+                  )
+                  toast.success(
+                    `Detalles bancarios de ${editingSupplierBank.company} (${currentAccounts.length} cuenta(s)) actualizados para lotes EBP.`,
+                    'Proveedor actualizado'
+                  )
+                  setEditingSupplierBank(null)
+                }}
+              >
+                <div className="form-grid" style={{ marginBottom: 12 }}>
+                  <label className="form-field">
+                    <span>RFC / Tax ID del proveedor</span>
+                    <input
+                      className="mono"
+                      maxLength={13}
+                      value={editingSupplierBank.rfc || ''}
+                      onChange={(e) =>
+                        setEditingSupplierBank({
+                          ...editingSupplierBank,
+                          rfc: e.target.value.toUpperCase(),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Moneda comercial principal</span>
+                    <select
+                      value={editingSupplierBank.currency || 'MXN'}
+                      onChange={(e) =>
+                        setEditingSupplierBank({
+                          ...editingSupplierBank,
+                          currency: e.target.value as 'MXN' | 'USD',
+                        })
+                      }
+                    >
+                      <option value="MXN">MXN · Peso Mexicano</option>
+                      <option value="USD">USD · Dólar Americano</option>
+                    </select>
+                  </label>
+                </div>
+
+                <SupplierBankAccountsManager
+                  accounts={currentAccounts}
+                  installedPacks={ebpPacks}
+                  usedAccountIds={usedAccIds}
+                  defaultCurrency={editingSupplierBank.currency || 'MXN'}
+                  onChange={(nextAccounts) =>
+                    setEditingSupplierBank({
+                      ...editingSupplierBank,
+                      bankAccounts: nextAccounts,
+                    })
+                  }
+                />
+
+                <div className="create-modal-actions" style={{ marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingSupplierBank(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <Check size={14} /> Guardar detalles bancarios
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )
+      })()}
 
       {/* Ficha de Cliente / Proveedor (mismo diseño que Ficha de Empleados) */}
       {detailDirectory && (() => {
@@ -5119,19 +5406,35 @@ function AppContent() {
         />
       )}
 
-      {/* Global EBP Batch Wizard Modal (launched from CRM Payroll or Finance Payables) */}
+      {/* Global EBP Batch Wizard Modal (launched from CRM Payroll, Purchases Invoices or Finance Payables) */}
       {globalEbpWizard.isOpen && (
         <EbpBatchWizardModal
           isOpen={globalEbpWizard.isOpen}
           batchType={globalEbpWizard.batchType}
+          defaultAggregationMode={globalEbpWizard.defaultAggregationMode}
           sourceRefId={globalEbpWizard.sourceRefId}
           sourceFolio={globalEbpWizard.sourceFolio}
           candidates={globalEbpWizard.candidates}
+          suppliers={supplierRecords.map((s) => ({
+            name: s.name,
+            company: s.company,
+            email: s.email,
+            rfc: s.rfc,
+            currency: s.currency,
+            bankName: s.bankName,
+            clabe: s.clabe,
+            accountNumber: s.accountNumber,
+            defaultReference: s.defaultReference,
+            bankPackValues: s.bankPackValues,
+            bankAccounts: s.bankAccounts,
+          }))}
+          usedSupplierBankAccountIds={usedSupplierBankAccountIds}
           packs={ebpPacks}
           bankAccounts={bankAccounts}
           existingBatchesCount={ebpBatches.length}
           onClose={() => setGlobalEbpWizard((prev) => ({ ...prev, isOpen: false }))}
           onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
+          onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
           onCreateBatch={(batch) => {
             setEbpBatches((prev) => [batch, ...prev])
             navigateToFinanceSection('Pagos Bancarios')

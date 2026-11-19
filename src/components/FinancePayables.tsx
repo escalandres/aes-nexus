@@ -17,6 +17,7 @@ import type {
   BankAccount,
   PaymentTransaction,
 } from '../data/finance'
+import type { EbpAggregationMode } from '../data/ebp'
 import { useToast } from './Toast'
 
 interface SupplierOption {
@@ -32,7 +33,7 @@ interface FinancePayablesProps {
   onUpdatePayables: (items: BillPayable[]) => void
   onAddTransaction: (txn: PaymentTransaction) => void
   onUpdateBankAccountBalance: (accountId: string, delta: number) => void
-  onOpenEbpBatchFromBills?: (bills: BillPayable[]) => void
+  onOpenEbpBatchFromBills?: (bills: BillPayable[], mode?: EbpAggregationMode) => void
 }
 
 const money = (val: number) =>
@@ -347,13 +348,32 @@ export function FinancePayables({
 
         <div className="ops-actions-group">
           {onOpenEbpBatchFromBills && selectedBillsList.length > 0 && (
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={() => onOpenEbpBatchFromBills(selectedBillsList)}
-            >
-              <Landmark size={14} /> Dispersar lote EBP ({selectedBillsList.length})
-            </button>
+            <>
+              {selectedBillsList.length > 1 && (
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => onOpenEbpBatchFromBills(selectedBillsList, 'individual')}
+                >
+                  <Landmark size={14} /> EBP individual ({selectedBillsList.length})
+                </button>
+              )}
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() =>
+                  onOpenEbpBatchFromBills(
+                    selectedBillsList,
+                    selectedBillsList.length > 1 ? 'consolidated' : 'individual'
+                  )
+                }
+              >
+                <Landmark size={14} />{' '}
+                {selectedBillsList.length > 1
+                  ? `Consolidar EBP (${selectedBillsList.length})`
+                  : 'Pagar con EBP'}
+              </button>
+            </>
           )}
           <button
             className="button button-primary"
@@ -479,10 +499,20 @@ export function FinancePayables({
                         >
                           <Eye size={13} /> Detalle
                         </button>
+                        {canPay && onOpenEbpBatchFromBills && (
+                          <button
+                            type="button"
+                            className="button-icon-action"
+                            title="Pagar factura vía EBP seleccionando detalle bancario del proveedor"
+                            onClick={() => onOpenEbpBatchFromBills([b], 'individual')}
+                          >
+                            <Landmark size={12} /> EBP
+                          </button>
+                        )}
                         {canPay && (
                           <button
                             className="button-icon-action action-pay"
-                            title="Dispersar pago a proveedor"
+                            title="Dispersar pago manual a proveedor"
                             onClick={() => handleOpenPayModal(b)}
                           >
                             <ArrowUpRight size={13} /> Pagar

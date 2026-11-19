@@ -157,6 +157,248 @@ export const DEFAULT_INTEGRATIONS: IntegrationConfig[] = [
   },
 ]
 
+export type ExternalApiAction = 'read' | 'create' | 'update' | 'delete'
+
+export type ExternalApiResource =
+  | 'clientes'
+  | 'productos'
+  | 'ventas'
+  | 'compras'
+  | 'finanzas'
+  | 'rrhh'
+
+export type ExternalSystemType =
+  | 'Ecommerce'
+  | 'BI / Analítica'
+  | 'Contabilidad Externa'
+  | 'WMS / Logística'
+  | 'Webhook / Middleware'
+  | 'ERP / Legacy'
+  | 'Otro'
+
+export interface ExternalIntegrationLog {
+  id: string
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  resource: ExternalApiResource
+  statusCode: 200 | 201 | 401 | 403
+  summary: string
+  timestampIso: string
+}
+
+export interface ExternalIntegrationRecord {
+  id: string
+  name: string
+  systemType: ExternalSystemType
+  description: string
+  environment: 'production' | 'sandbox'
+  status: 'active' | 'paused' | 'revoked'
+  apiKeyPrefix: string
+  apiKeySecret: string
+  webhookCallbackUrl: string
+  ipAllowlist: string
+  rateLimitPerMin: number
+  permissions: Record<ExternalApiResource, ExternalApiAction[]>
+  createdAtIso: string
+  lastUsedAtIso: string
+  requestsCount: number
+  recentLogs: ExternalIntegrationLog[]
+}
+
+export const EXTERNAL_API_RESOURCES: Array<{
+  id: ExternalApiResource
+  label: string
+  endpoint: string
+  description: string
+}> = [
+  {
+    id: 'clientes',
+    label: 'Clientes & CRM',
+    endpoint: '/api/v1/clientes',
+    description: 'Directorio fiscal, contactos, crédito y direcciones',
+  },
+  {
+    id: 'productos',
+    label: 'Productos & Inventario',
+    endpoint: '/api/v1/productos',
+    description: 'Catálogo SKU, precios, costos y existencias por almacén',
+  },
+  {
+    id: 'ventas',
+    label: 'Ventas & Pedidos',
+    endpoint: '/api/v1/ventas',
+    description: 'Cotizaciones, órdenes de venta y estatus de despacho',
+  },
+  {
+    id: 'compras',
+    label: 'Compras & Proveedores',
+    endpoint: '/api/v1/compras',
+    description: 'Órdenes de compra, recepciones y cuentas bancarias',
+  },
+  {
+    id: 'finanzas',
+    label: 'Finanzas & Tesorería',
+    endpoint: '/api/v1/finanzas',
+    description: 'Pólizas, CxC, CxP y conciliación bancaria',
+  },
+  {
+    id: 'rrhh',
+    label: 'RRHH & Nómina',
+    endpoint: '/api/v1/rrhh',
+    description: 'Plantilla, departamentos e incidencias',
+  },
+]
+
+export const EXTERNAL_API_ACTIONS: Array<{
+  id: ExternalApiAction
+  label: string
+  httpMethod: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  shortTag: string
+}> = [
+  { id: 'read', label: 'Consultar', httpMethod: 'GET', shortTag: 'GET' },
+  { id: 'create', label: 'Insertar', httpMethod: 'POST', shortTag: 'POST' },
+  { id: 'update', label: 'Editar', httpMethod: 'PUT', shortTag: 'PUT' },
+  { id: 'delete', label: 'Borrar', httpMethod: 'DELETE', shortTag: 'DEL' },
+]
+
+export const EMPTY_EXTERNAL_PERMISSIONS: Record<ExternalApiResource, ExternalApiAction[]> = {
+  clientes: [],
+  productos: [],
+  ventas: [],
+  compras: [],
+  finanzas: [],
+  rrhh: [],
+}
+
+export function generateExternalApiKey(environment: 'production' | 'sandbox'): {
+  apiKeyPrefix: string
+  apiKeySecret: string
+} {
+  const envTag = environment === 'production' ? 'live' : 'sbx'
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+  let token = ''
+  for (let i = 0; i < 28; i += 1) {
+    token += chars[Math.floor(Math.random() * chars.length)]
+  }
+  const secret = `nexus_${envTag}_${token}`
+  return {
+    apiKeyPrefix: secret.slice(0, 14),
+    apiKeySecret: secret,
+  }
+}
+
+export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
+  {
+    id: 'ext_shopify_mx',
+    name: 'Sincronizador Shopify MX',
+    systemType: 'Ecommerce',
+    description: 'Sincroniza catálogo de SKUs, pedidos en línea y altas de clientes desde tienda web.',
+    environment: 'production',
+    status: 'active',
+    apiKeyPrefix: 'nexus_live_8Kp',
+    apiKeySecret: 'nexus_live_8Kp92VmQx4RtN7wL3YzH5BcJ6DfA',
+    webhookCallbackUrl: 'https://hooks.brujulaestudio.mx/shopify-sync',
+    ipAllowlist: '34.192.18.0/24, 52.84.112.14',
+    rateLimitPerMin: 240,
+    permissions: {
+      clientes: ['read', 'create', 'update'],
+      productos: ['read', 'update'],
+      ventas: ['read', 'create', 'update'],
+      compras: [],
+      finanzas: [],
+      rrhh: [],
+    },
+    createdAtIso: '2026-09-12T10:15:00.000Z',
+    lastUsedAtIso: '2026-11-16T14:22:00.000Z',
+    requestsCount: 18420,
+    recentLogs: [
+      {
+        id: 'log_seed_1',
+        method: 'POST',
+        resource: 'ventas',
+        statusCode: 201,
+        summary: 'Pedido #VTA-9841 insertado desde checkout web',
+        timestampIso: '2026-11-16T14:22:00.000Z',
+      },
+      {
+        id: 'log_seed_2',
+        method: 'PUT',
+        resource: 'productos',
+        statusCode: 200,
+        summary: 'Stock reservado para 4 SKUs en Almacén Vallejo',
+        timestampIso: '2026-11-16T14:19:00.000Z',
+      },
+    ],
+  },
+  {
+    id: 'ext_powerbi_dwh',
+    name: 'Conector Power BI / Data Warehouse',
+    systemType: 'BI / Analítica',
+    description: 'Extracción programada de solo lectura para tableros directivos y márgenes por sucursal.',
+    environment: 'production',
+    status: 'active',
+    apiKeyPrefix: 'nexus_live_4Tx',
+    apiKeySecret: 'nexus_live_4Tx71MnPq8WvZ2yK9HcR3BgF5EsU',
+    webhookCallbackUrl: '',
+    ipAllowlist: '189.204.112.44',
+    rateLimitPerMin: 120,
+    permissions: {
+      clientes: ['read'],
+      productos: ['read'],
+      ventas: ['read'],
+      compras: ['read'],
+      finanzas: ['read'],
+      rrhh: ['read'],
+    },
+    createdAtIso: '2026-10-03T16:40:00.000Z',
+    lastUsedAtIso: '2026-11-16T12:00:00.000Z',
+    requestsCount: 5390,
+    recentLogs: [
+      {
+        id: 'log_seed_3',
+        method: 'GET',
+        resource: 'finanzas',
+        statusCode: 200,
+        summary: 'Consulta paginada de pólizas y flujo mensual (250 registros)',
+        timestampIso: '2026-11-16T12:00:00.000Z',
+      },
+    ],
+  },
+  {
+    id: 'ext_wms_sandbox',
+    name: 'Middleware Logístico 3PL (Pruebas)',
+    systemType: 'WMS / Logística',
+    description: 'Integración de pruebas para alta, actualización y depuración de órdenes de surtido.',
+    environment: 'sandbox',
+    status: 'paused',
+    apiKeyPrefix: 'nexus_sbx_6Mn',
+    apiKeySecret: 'nexus_sbx_6Mn29QrLp5ZtW8vD4JkY7ChG1NxB',
+    webhookCallbackUrl: 'https://sandbox.logistica3pl.mx/nexus/callback',
+    ipAllowlist: '',
+    rateLimitPerMin: 60,
+    permissions: {
+      clientes: ['read'],
+      productos: ['read', 'create', 'update', 'delete'],
+      ventas: ['read', 'update'],
+      compras: ['read', 'create'],
+      finanzas: [],
+      rrhh: [],
+    },
+    createdAtIso: '2026-11-01T09:05:00.000Z',
+    lastUsedAtIso: '2026-11-14T18:10:00.000Z',
+    requestsCount: 412,
+    recentLogs: [
+      {
+        id: 'log_seed_4',
+        method: 'DELETE',
+        resource: 'productos',
+        statusCode: 200,
+        summary: 'Depuración de SKU temporal de prueba WMS-TEST-09',
+        timestampIso: '2026-11-14T18:10:00.000Z',
+      },
+    ],
+  },
+]
+
 export type AuditCategory =
   | 'settings'
   | 'users'
@@ -302,29 +544,225 @@ export const INITIAL_AUDIT_EVENTS: AuditEventRecord[] = [
 
 export type PlanTier = 'Growth' | 'Enterprise' | 'Corporate'
 
+export interface PlanTierSpec {
+  tier: PlanTier
+  tagline: string
+  monthlyMxn: number
+  maxUsers: number | null
+  maxWarehouses: number | null
+  storageGb: number
+  monthlyCfdiLimit: number | null
+  supportSla: string
+  features: string[]
+}
+
+export const PLAN_TIER_CATALOG: PlanTierSpec[] = [
+  {
+    tier: 'Growth',
+    tagline: 'Operación esencial para empresas en expansión',
+    monthlyMxn: 8900,
+    maxUsers: 10,
+    maxWarehouses: 2,
+    storageGb: 25,
+    monthlyCfdiLimit: 250,
+    supportSla: 'Soporte laboral 8x5 (SLA 12h)',
+    features: [
+      'Hasta 10 usuarios y roles estándar',
+      '2 almacenes conectados y kardex en vivo',
+      '250 timbres CFDI 4.0 mensuales',
+      '25 GB de bóveda documental XML/PDF',
+    ],
+  },
+  {
+    tier: 'Enterprise',
+    tagline: 'Control financiero, EBP bancario y analítica multi-sucursal',
+    monthlyMxn: 14900,
+    maxUsers: null,
+    maxWarehouses: 10,
+    storageGb: 100,
+    monthlyCfdiLimit: null,
+    supportSla: 'Soporte prioritario 24/5 (SLA 4h)',
+    features: [
+      'Usuarios ilimitados y roles personalizados',
+      'Hasta 10 almacenes y sucursales con traspasos',
+      'Emisión CFDI 4.0 ilimitada + Pagos EBP',
+      'Reportes ejecutivos YoY y 100 GB en bóveda',
+    ],
+  },
+  {
+    tier: 'Corporate',
+    tagline: 'Infraestructura dedicada, multi-entidad y automatización H2H',
+    monthlyMxn: 21600,
+    maxUsers: null,
+    maxWarehouses: null,
+    storageGb: 500,
+    monthlyCfdiLimit: null,
+    supportSla: 'Gerente de cuenta y SLA 99.95% (1h)',
+    features: [
+      'Usuarios, almacenes y sucursales ilimitadas',
+      '500 GB de retención documental y API dedicada',
+      'Conciliación bancaria H2H y auditoría extendida',
+      'Soporte 24/7 con ejecutivo técnico asignado',
+    ],
+  },
+]
+
+export interface PlanBillingInvoice {
+  id: string
+  folio: string
+  dateIso: string
+  periodLabel: string
+  concept: string
+  paymentMethod: string
+  subtotalMxn: number
+  taxMxn: number
+  amountMxn: number
+  status: 'paid' | 'pending'
+  cfdiUuid: string
+}
+
+export interface PlanAddonsState {
+  extraWarehouses: boolean
+  speiH2H: boolean
+  auditArchive: boolean
+}
+
+export const PLAN_ADDONS_CATALOG: Array<{
+  key: keyof PlanAddonsState
+  name: string
+  description: string
+  monthlyMxn: number
+}> = [
+  {
+    key: 'extraWarehouses',
+    name: '+5 Almacenes Adicionales',
+    description: 'Amplía tu cuota operativa con 5 sedes o bodegas adicionales sincronizadas.',
+    monthlyMxn: 1800,
+  },
+  {
+    key: 'speiH2H',
+    name: 'Conector SPEI Host-to-Host',
+    description: 'Conciliación bancaria automática en tiempo real y webhooks de tesorería.',
+    monthlyMxn: 2400,
+  },
+  {
+    key: 'auditArchive',
+    name: 'Archivo Fiscal y Auditoría 7 Años',
+    description: 'Retención inmutable de XML, PDF y bitácoras de seguridad por 7 ejercicios.',
+    monthlyMxn: 950,
+  },
+]
+
 export interface PlanSubscriptionSettings {
   tier: PlanTier
   billingCycle: 'monthly' | 'annual'
+  autoRenew: boolean
+  paymentBrand: 'VISA' | 'Mastercard' | 'AMEX' | 'SPEI'
   paymentLast4: string
+  paymentExpiry: string
+  paymentHolder: string
+  billingEmail: string
   nextBillingIso: string
-  billingInvoices: Array<{
-    id: string
-    folio: string
-    dateIso: string
-    amountMxn: number
-    status: 'paid'
-  }>
+  storageUsedGb: number
+  addons: PlanAddonsState
+  billingInvoices: PlanBillingInvoice[]
 }
 
 export const DEFAULT_PLAN_SETTINGS: PlanSubscriptionSettings = {
   tier: 'Enterprise',
   billingCycle: 'annual',
+  autoRenew: true,
+  paymentBrand: 'VISA',
   paymentLast4: '4821',
+  paymentExpiry: '09/2028',
+  paymentHolder: 'Andrea Morales Escala',
+  billingEmail: 'facturacion@brujulaestudio.mx',
   nextBillingIso: '2026-12-01T00:00:00.000Z',
+  storageUsedGb: 18.4,
+  addons: {
+    extraWarehouses: false,
+    speiH2H: true,
+    auditArchive: false,
+  },
   billingInvoices: [
-    { id: 'bill_1', folio: 'SUB-2026-11', dateIso: '2026-11-01T09:00:00.000Z', amountMxn: 14900, status: 'paid' },
-    { id: 'bill_2', folio: 'SUB-2026-10', dateIso: '2026-10-01T09:00:00.000Z', amountMxn: 14900, status: 'paid' },
-    { id: 'bill_3', folio: 'SUB-2026-09', dateIso: '2026-09-01T09:00:00.000Z', amountMxn: 14900, status: 'paid' },
+    {
+      id: 'bill_1',
+      folio: 'SUB-2026-11',
+      dateIso: '2026-11-01T09:00:00.000Z',
+      periodLabel: '01 Nov – 30 Nov 2026',
+      concept: 'Suscripción AES Nexus · Conector SPEI H2H',
+      paymentMethod: 'VISA •••• 4821',
+      subtotalMxn: 14711,
+      taxMxn: 2354,
+      amountMxn: 17065,
+      status: 'paid',
+      cfdiUuid: 'F8A41D20-9B3C-4E12-8D90-A12B449C0111',
+    },
+    {
+      id: 'bill_2',
+      folio: 'SUB-2026-10',
+      dateIso: '2026-10-01T09:00:00.000Z',
+      periodLabel: '01 Oct – 31 Oct 2026',
+      concept: 'Suscripción AES Nexus · Conector SPEI H2H',
+      paymentMethod: 'VISA •••• 4821',
+      subtotalMxn: 14711,
+      taxMxn: 2354,
+      amountMxn: 17065,
+      status: 'paid',
+      cfdiUuid: 'D4C29A10-3F81-4920-9C41-B83E120A0110',
+    },
+    {
+      id: 'bill_3',
+      folio: 'SUB-2026-09',
+      dateIso: '2026-09-01T09:00:00.000Z',
+      periodLabel: '01 Sep – 30 Sep 2026',
+      concept: 'Suscripción AES Nexus · Renovación mensual',
+      paymentMethod: 'VISA •••• 4821',
+      subtotalMxn: 12665,
+      taxMxn: 2026,
+      amountMxn: 14691,
+      status: 'paid',
+      cfdiUuid: 'A91E73B2-11C4-4091-8A77-C50F931D0109',
+    },
+    {
+      id: 'bill_4',
+      folio: 'SUB-2026-08',
+      dateIso: '2026-08-01T09:00:00.000Z',
+      periodLabel: '01 Ago – 31 Ago 2026',
+      concept: 'Suscripción AES Nexus · Renovación mensual',
+      paymentMethod: 'VISA •••• 4821',
+      subtotalMxn: 12665,
+      taxMxn: 2026,
+      amountMxn: 14691,
+      status: 'paid',
+      cfdiUuid: '71B04E88-7E5A-4D23-B122-94D8A10E0108',
+    },
+    {
+      id: 'bill_5',
+      folio: 'SUB-2026-07',
+      dateIso: '2026-07-01T09:00:00.000Z',
+      periodLabel: '01 Jul – 31 Jul 2026',
+      concept: 'Suscripción AES Nexus · Renovación mensual',
+      paymentMethod: 'SPEI STP •••• 2190',
+      subtotalMxn: 12665,
+      taxMxn: 2026,
+      amountMxn: 14691,
+      status: 'paid',
+      cfdiUuid: '5C392F41-60B9-4A18-99E0-42C1D88B0107',
+    },
+    {
+      id: 'bill_6',
+      folio: 'SUB-2026-06',
+      dateIso: '2026-06-01T09:00:00.000Z',
+      periodLabel: '01 Jun – 30 Jun 2026',
+      concept: 'Suscripción AES Nexus · Alta inicial',
+      paymentMethod: 'SPEI STP •••• 2190',
+      subtotalMxn: 12665,
+      taxMxn: 2026,
+      amountMxn: 14691,
+      status: 'paid',
+      cfdiUuid: '2E881C04-12D7-4876-81F5-77A0E41F0106',
+    },
   ],
 }
 
@@ -338,6 +776,7 @@ export const STORAGE_KEYS = {
   roleDefinitions: 'aes_nexus_settings_role_profiles',
   defaultNewUserRole: 'aes_nexus_settings_default_new_user_role',
   integrations: 'aes_nexus_settings_integrations',
+  externalIntegrations: 'aes_nexus_settings_external_integrations',
   audit: 'aes_nexus_settings_audit',
   plan: 'aes_nexus_settings_plan',
 } as const

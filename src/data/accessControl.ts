@@ -14,6 +14,7 @@ export const MODULE_SECTIONS = {
   Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
   Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
+  Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
   Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
   Configuración: [
     'General',
@@ -70,6 +71,14 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Gastos: ['expenseControl'],
     'Cuentas contables': ['balanceReports'],
     Resumen: ['manageReceivables', 'schedulePayments', 'balanceReports', 'expenseControl'],
+  },
+  Reportes: {
+    'Resumen ejecutivo': ['fullReports', 'balanceReports', 'pipelineReports'],
+    'Finanzas y Tesorería': ['fullReports', 'balanceReports', 'manageReceivables', 'schedulePayments', 'expenseControl'],
+    'CxP y Pagos EBP': ['fullReports', 'schedulePayments', 'approvePurchases', 'balanceReports'],
+    'Ventas y CxC': ['fullReports', 'pipelineReports', 'manageReceivables', 'issueOrders'],
+    'Compras e Inventario': ['fullReports', 'approvePurchases', 'inventoryControl', 'stockLedger'],
+    'Nómina y RRHH': ['fullReports', 'schedulePayments', 'manageUsers'],
   },
   Administración: {
     Departamentos: ['sysConfig', 'manageUsers'],
