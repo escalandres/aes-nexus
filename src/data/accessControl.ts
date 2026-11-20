@@ -1,35 +1,22 @@
 import {
   ALL_CAPABILITIES,
+  SYSTEM_MODULE_SECTIONS,
+  buildSectionPermissionsMap,
+  deriveSectionPermissionsFromCapabilities,
   isGeneralAdminRole,
+  levelAllowsHttpMethod,
+  maxSectionAccessLevel,
+  normalizeRoleDefinition,
   type RoleCapabilityId,
   type RoleDefinition,
   type RoleKey,
+  type RoleSectionPermissions,
+  type SectionAccessLevel,
 } from './settings'
 
 export const ACTIVE_SESSION_STORAGE_KEY = 'aes_nexus_active_session_v1'
 
-export const MODULE_SECTIONS = {
-  CRM: ['Resumen', 'Clientes', 'Proveedores', 'Empleados', 'Nómina', 'Oportunidades', 'Actividades'],
-  Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Resumen'],
-  Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas'],
-  Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
-  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
-  Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
-  Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
-  Configuración: [
-    'General',
-    'Organización',
-    'Idioma y región',
-    'Usuarios',
-    'Roles y permisos',
-    'Seguridad',
-    'Apariencia',
-    'Notificaciones',
-    'Auditoría',
-    'Integraciones',
-    'Plan y facturación',
-  ],
-} as const
+export const MODULE_SECTIONS = SYSTEM_MODULE_SECTIONS
 
 // Empty array [] = accessible to any active user (personal preference / landing).
 // Non-empty array = user needs AT LEAST ONE of the listed capabilities (or full admin).
@@ -127,26 +114,52 @@ export function resolveEffectiveAccess(
 ): {
   isFullAdmin: boolean
   capabilities: Set<RoleCapabilityId>
+  sectionAccess: RoleSectionPermissions
 } {
   if (!isAccountActive) {
-    return { isFullAdmin: false, capabilities: new Set() }
+    return {
+      isFullAdmin: false,
+      capabilities: new Set(),
+      sectionAccess: buildSectionPermissionsMap('none'),
+    }
   }
   const caps = new Set<RoleCapabilityId>()
+  const sectionAccess = buildSectionPermissionsMap('none')
   let isFullAdmin = false
 
   for (const roleId of assignedRoles) {
-    const def = roleDefinitions.find((r) => r.id === roleId)
+    const rawDef = roleDefinitions.find((r) => r.id === roleId)
+    if (!rawDef && roleId === 'Administrador') {
+      isFullAdmin = true
+      for (const c of ALL_CAPABILITIES) caps.add(c.id)
+      const fullMap = buildSectionPermissionsMap('full')
+      for (const [mod, secs] of Object.entries(fullMap)) {
+        for (const [sec, lvl] of Object.entries(secs)) {
+          sectionAccess[mod][sec] = maxSectionAccessLevel(sectionAccess[mod]?.[sec], lvl)
+        }
+      }
+      continue
+    }
+    if (!rawDef) continue
+    const def = normalizeRoleDefinition(rawDef)
     if (isGeneralAdminRole(def) || roleId === 'Administrador') {
       isFullAdmin = true
       for (const c of ALL_CAPABILITIES) caps.add(c.id)
-      continue
-    }
-    if (def) {
+    } else {
       for (const capId of def.capabilities) caps.add(capId)
+    }
+    const roleSections =
+      def.sectionPermissions ||
+      deriveSectionPermissionsFromCapabilities(def.capabilities, def.builtInKey)
+    for (const [mod, secs] of Object.entries(roleSections)) {
+      if (!sectionAccess[mod]) sectionAccess[mod] = {}
+      for (const [sec, lvl] of Object.entries(secs)) {
+        sectionAccess[mod][sec] = maxSectionAccessLevel(sectionAccess[mod][sec], lvl)
+      }
     }
   }
 
-  return { isFullAdmin, capabilities: caps }
+  return { isFullAdmin, capabilities: caps, sectionAccess }
 }
 
 export function getRequiredCapabilities(moduleName: string, sectionName?: string): RoleCapabilityId[] {
@@ -163,16 +176,74 @@ export function getRequiredCapabilities(moduleName: string, sectionName?: string
   return Array.from(union)
 }
 
+export function getSectionAccessLevel(
+  moduleName: string,
+  sectionName: string,
+  sectionAccess?: RoleSectionPermissions,
+  isFullAdmin = false,
+  isAccountActive = true
+): SectionAccessLevel {
+  if (!isAccountActive) return 'none'
+  if (isFullAdmin) return 'full'
+  if (moduleName === 'Inicio') return 'full'
+  const explicit = sectionAccess?.[moduleName]?.[sectionName]
+  if (explicit) return explicit
+  return 'none'
+}
+
+export function canCreateInSection(
+  moduleName: string,
+  sectionName: string,
+  sectionAccess?: RoleSectionPermissions,
+  isFullAdmin = false,
+  isAccountActive = true
+): boolean {
+  return levelAllowsHttpMethod(
+    getSectionAccessLevel(moduleName, sectionName, sectionAccess, isFullAdmin, isAccountActive),
+    'POST'
+  )
+}
+
+export function canEditInSection(
+  moduleName: string,
+  sectionName: string,
+  sectionAccess?: RoleSectionPermissions,
+  isFullAdmin = false,
+  isAccountActive = true
+): boolean {
+  return levelAllowsHttpMethod(
+    getSectionAccessLevel(moduleName, sectionName, sectionAccess, isFullAdmin, isAccountActive),
+    'PUT'
+  )
+}
+
+export function canDeleteInSection(
+  moduleName: string,
+  sectionName: string,
+  sectionAccess?: RoleSectionPermissions,
+  isFullAdmin = false,
+  isAccountActive = true
+): boolean {
+  return levelAllowsHttpMethod(
+    getSectionAccessLevel(moduleName, sectionName, sectionAccess, isFullAdmin, isAccountActive),
+    'DELETE'
+  )
+}
+
 export function canAccessSection(
   moduleName: string,
   sectionName: string,
   capabilities: Set<RoleCapabilityId>,
   isFullAdmin: boolean,
-  isAccountActive = true
+  isAccountActive = true,
+  sectionAccess?: RoleSectionPermissions
 ): boolean {
   if (!isAccountActive) return false
   if (isFullAdmin) return true
   if (moduleName === 'Inicio') return true
+  if (sectionAccess && sectionAccess[moduleName] && sectionAccess[moduleName][sectionName]) {
+    return sectionAccess[moduleName][sectionName] !== 'none'
+  }
   const moduleReqs = SECTION_CAPABILITY_REQUIREMENTS[moduleName]
   if (!moduleReqs) return true
   const reqs = moduleReqs[sectionName]
@@ -185,27 +256,34 @@ export function canAccessModule(
   moduleName: string,
   capabilities: Set<RoleCapabilityId>,
   isFullAdmin: boolean,
-  isAccountActive = true
+  isAccountActive = true,
+  sectionAccess?: RoleSectionPermissions
 ): boolean {
   if (!isAccountActive) return moduleName === 'Inicio'
   if (isFullAdmin) return true
   if (moduleName === 'Inicio') return true
   const sections = MODULE_SECTIONS[moduleName as keyof typeof MODULE_SECTIONS]
   if (!sections) return true
-  return sections.some((sec) => canAccessSection(moduleName, sec, capabilities, isFullAdmin, isAccountActive))
+  return sections.some((sec) =>
+    canAccessSection(moduleName, sec, capabilities, isFullAdmin, isAccountActive, sectionAccess)
+  )
 }
 
 export function getFirstAccessibleSection(
   moduleName: keyof typeof MODULE_SECTIONS,
   capabilities: Set<RoleCapabilityId>,
   isFullAdmin: boolean,
-  isAccountActive = true
+  isAccountActive = true,
+  sectionAccess?: RoleSectionPermissions
 ): string | null {
   const sections = MODULE_SECTIONS[moduleName]
   for (const sec of sections) {
-    if (canAccessSection(moduleName, sec, capabilities, isFullAdmin, isAccountActive)) {
+    if (
+      canAccessSection(moduleName, sec, capabilities, isFullAdmin, isAccountActive, sectionAccess)
+    ) {
       return sec
     }
   }
   return null
 }
+

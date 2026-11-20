@@ -41,6 +41,8 @@ import {
   CAPABILITY_LABELS_ES,
   canAccessModule,
   canAccessSection,
+  canCreateInSection,
+  canEditInSection,
   getFirstAccessibleSection,
   getRequiredCapabilities,
   resolveEffectiveAccess,
@@ -1068,7 +1070,11 @@ function AppContent() {
     }
   }, [activeSessionId, employees, workspaceUsers, roleDefinitions])
 
-  const { isFullAdmin, capabilities: activeCapabilities } = useMemo(
+  const {
+    isFullAdmin,
+    capabilities: activeCapabilities,
+    sectionAccess: activeSectionAccess,
+  } = useMemo(
     () =>
       resolveEffectiveAccess(
         activeSessionProfile.roles,
@@ -1175,7 +1181,13 @@ function AppContent() {
     const nextAccess = resolveEffectiveAccess(nextRoles, roleDefinitions, true)
     if (
       activePage !== 'Inicio' &&
-      !canAccessModule(activePage, nextAccess.capabilities, nextAccess.isFullAdmin, true)
+      !canAccessModule(
+        activePage,
+        nextAccess.capabilities,
+        nextAccess.isFullAdmin,
+        true,
+        nextAccess.sectionAccess
+      )
     ) {
       navigateTo('Inicio')
     }
@@ -2155,7 +2167,13 @@ function AppContent() {
   const navigateTo = (page: string) => {
     if (
       page !== 'Inicio' &&
-      !canAccessModule(page, activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+      !canAccessModule(
+        page,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
     ) {
       notifyAccessDenied(page)
       return
@@ -2166,7 +2184,8 @@ function AppContent() {
         'Ventas',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setSalesSection((first as typeof salesSection) || 'Catálogo')
     }
@@ -2175,7 +2194,8 @@ function AppContent() {
         'CRM',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setCrmSection(first || 'Resumen')
     }
@@ -2184,7 +2204,8 @@ function AppContent() {
         'Compras',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setPurchasesSection((first as PurchasesSectionTab) || 'Resumen')
     }
@@ -2193,7 +2214,8 @@ function AppContent() {
         'Operaciones',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setOperationsSection((first as typeof operationsSection) || 'Inventario')
     }
@@ -2202,7 +2224,8 @@ function AppContent() {
         'Finanzas',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setFinanceSection((first as typeof financeSection) || 'Cobros')
     }
@@ -2211,7 +2234,8 @@ function AppContent() {
         'Reportes',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setReportsSection((first as ReportsSectionTab) || 'Resumen ejecutivo')
     }
@@ -2220,7 +2244,8 @@ function AppContent() {
         'Administración',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setAdminSection((first as typeof adminSection) || 'Departamentos')
     }
@@ -2229,7 +2254,8 @@ function AppContent() {
         'Configuración',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       if (first) setActiveSetting(first)
     }
@@ -2244,7 +2270,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Reportes · ${section}`)
@@ -2274,7 +2301,8 @@ function AppContent() {
         setting,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Settings · ${setting}`)
@@ -2294,7 +2322,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Administración · ${section}`)
@@ -2320,7 +2349,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Finanzas · ${section}`)
@@ -2350,7 +2380,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Operaciones · ${section}`)
@@ -2378,7 +2409,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Compras · ${section}`)
@@ -2406,7 +2438,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Ventas · ${section}`)
@@ -2434,7 +2467,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`CRM · ${section}`)
@@ -2460,6 +2494,29 @@ function AppContent() {
   }
 
   const openCreate = (kind: CreateKind) => {
+    const targetSection =
+      kind === 'client'
+        ? 'Clientes'
+        : kind === 'supplier'
+        ? 'Proveedores'
+        : kind === 'opportunity'
+        ? 'Oportunidades'
+        : 'Actividades'
+    if (
+      !canCreateInSection(
+        'CRM',
+        targetSection,
+        activeSectionAccess,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+    ) {
+      toast.warning(
+        `Tu rol actual solo tiene nivel de consulta en CRM · ${targetSection} y no permite crear registros.`,
+        'Permiso insuficiente'
+      )
+      return
+    }
     setCreateKind(kind)
     setCreateForm({
       supplierCode: '',
@@ -2729,7 +2786,8 @@ function AppContent() {
               'Configuración',
               activeCapabilities,
               isFullAdmin,
-              activeSessionProfile.isActive
+              activeSessionProfile.isActive,
+              activeSectionAccess
             )
             if (!firstSetting) {
               notifyAccessDenied('Configuración')
@@ -2741,7 +2799,8 @@ function AppContent() {
                 'General',
                 activeCapabilities,
                 isFullAdmin,
-                activeSessionProfile.isActive
+                activeSessionProfile.isActive,
+                activeSectionAccess
               )
                 ? 'General'
                 : firstSetting
@@ -2783,7 +2842,13 @@ function AppContent() {
         <nav className="side-nav" aria-label="Navegación principal">
           {sections.map((section) => {
             const visibleItems = section.items.filter(({ name }) =>
-              canAccessModule(name, activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+              canAccessModule(
+                name,
+                activeCapabilities,
+                isFullAdmin,
+                activeSessionProfile.isActive,
+                activeSectionAccess
+              )
             )
             if (visibleItems.length === 0) return null
             return (
@@ -2818,7 +2883,13 @@ function AppContent() {
           <small>{t('nav.progressSteps')}</small>
         </div>
         <button className="nav-item quiet"><CircleHelp size={17} /><span>{t('nav.help')}</span></button>
-        {canAccessModule('Configuración', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+        {canAccessModule(
+          'Configuración',
+          activeCapabilities,
+          isFullAdmin,
+          activeSessionProfile.isActive,
+          activeSectionAccess
+        ) && (
           <button
             className={`nav-item quiet ${activePage === 'Configuración' ? 'active' : ''}`}
             aria-current={activePage === 'Configuración' ? 'page' : undefined}
@@ -3448,7 +3519,8 @@ function AppContent() {
                 activeSectionName,
                 activeCapabilities,
                 isFullAdmin,
-                activeSessionProfile.isActive
+                activeSessionProfile.isActive,
+                activeSectionAccess
               )
             if (!isSectionAllowed) {
               const requiredCaps = getRequiredCapabilities(activePage, activeSectionName)
@@ -3520,7 +3592,8 @@ function AppContent() {
                 : 'Inicio',
               activeCapabilities,
               isFullAdmin,
-              activeSessionProfile.isActive
+              activeSessionProfile.isActive,
+              activeSectionAccess
             )
           ) ? null : activePage === 'Configuración' ? (
             <SettingsSection
@@ -3532,7 +3605,8 @@ function AppContent() {
                     setting,
                     activeCapabilities,
                     isFullAdmin,
-                    activeSessionProfile.isActive
+                    activeSessionProfile.isActive,
+                    activeSectionAccess
                   )
                 ) {
                   notifyAccessDenied(`Settings · ${setting}`)
@@ -3562,6 +3636,7 @@ function AppContent() {
               onWorkspaceMetaChange={setWorkspaceMeta}
               receivablesCount={receivables.length}
               activeCapabilities={activeCapabilities}
+              activeSectionAccess={activeSectionAccess}
               isFullAdmin={isFullAdmin}
               isAccountActive={activeSessionProfile.isActive}
             />
@@ -3570,25 +3645,25 @@ function AppContent() {
               <div className="crm-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · H2 PILOTO COMERCIAL</div><h1 id="crm-title">{t('module.crm.title')}</h1><p>{t('module.crm.subtitle')}</p></div></div>
               {notice && <div className="notice" role="status">{notice}<button aria-label={t('common.close')} onClick={() => setNotice('')}><X size={15} /></button></div>}
               <nav className="crm-tabs" aria-label="Secciones de CRM">
-                {canAccessSection('CRM', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Resumen' ? 'active' : ''} onClick={() => navigateToCrmSection('Resumen')}>{t('tabs.crm.summary')}</button>
                 )}
-                {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Clientes' ? 'active' : ''} onClick={() => navigateToCrmSection('Clientes')}>{t('tabs.crm.clients')} <span>{clientRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Proveedores' ? 'active' : ''} onClick={() => navigateToCrmSection('Proveedores')}>{t('tabs.crm.suppliers')} <span>{supplierRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Empleados' ? 'active' : ''} onClick={() => navigateToCrmSection('Empleados')}>{t('tabs.crm.employees')} <span>{employees.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Nómina' ? 'active' : ''} onClick={() => navigateToCrmSection('Nómina')}>{t('tabs.crm.payroll')} <span>{payrollRuns.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Oportunidades' ? 'active' : ''} onClick={() => navigateToCrmSection('Oportunidades')}>{t('tabs.crm.opportunities')} <span>{opportunityRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Actividades' ? 'active' : ''} onClick={() => navigateToCrmSection('Actividades')}>{t('tabs.crm.activities')} <span>{activityRecords.length}</span></button>
                 )}
               </nav>
@@ -3622,7 +3697,8 @@ function AppContent() {
                       'Roles y permisos',
                       activeCapabilities,
                       isFullAdmin,
-                      activeSessionProfile.isActive
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
                     )
                       ? () => navigateToSettingSection('Roles y permisos')
                       : undefined
@@ -3641,14 +3717,14 @@ function AppContent() {
                   onOpenEbpWizard={openEbpWizardForPayrollRun}
                 />
               ) : crmSection === 'Oportunidades' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="opportunity-summary"><article><span className="kpi-icon"><Target size={17} /></span><div><strong>{opportunityRecords.length}</strong><small>Abiertas</small></div></article><article><span className="kpi-icon icon-sand"><BriefcaseBusiness size={17} /></span><div><strong>{money(opportunityRecords.reduce((total, opportunity) => total + opportunity.value, 0))}</strong><small>Valor del pipeline</small></div></article><article><span className="kpi-icon icon-green"><ArrowUpRight size={17} /></span><div><strong>32%</strong><small>Tasa de conversión</small></div></article></div>
-                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3><button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button></div><div className="opportunities-list">{opportunityRecords.map((opportunity) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span><button className="row-more" aria-label={`Opciones para ${opportunity.company}`} onClick={() => { setNotice(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`, 'Oportunidad') }}><MoreHorizontal size={17} /></button></article>)}</div></div>
+                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3>{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button>}</div><div className="opportunities-list">{opportunityRecords.map((opportunity) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span><button className="row-more" aria-label={`Opciones para ${opportunity.company}`} onClick={() => { setNotice(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`, 'Oportunidad') }}><MoreHorizontal size={17} /></button></article>)}</div></div>
               </> : crmSection === 'Actividades' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div><button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button></div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => { setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`); toast.info(`La actividad “${activity.title}” se marcará al conectar el CRM.`, 'Actividad') }}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
+                <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div>{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button>}</div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => { setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`); toast.info(`La actividad “${activity.title}” se marcará al conectar el CRM.`, 'Actividad') }}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
               </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', crmSection, activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && (crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>)}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
                 <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
                 <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th style={{ textAlign: 'right' }}>ACCIONES</th></tr></thead><tbody>{filteredDirectory.map((client) => {
@@ -3719,32 +3795,39 @@ function AppContent() {
           >
             <Eye size={12} /> Ficha
           </button>
-          {crmSection === 'Proveedores' ? (
-            <button
-              type="button"
-              className="button-icon-action"
-              onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
-              title="Configurar datos bancarios y packs EBP del proveedor"
-            >
-              <Landmark size={12} /> Datos bancarios
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="button-icon-action"
-              onClick={() =>
-                setEditingDirectory({
-                  kind: 'client',
-                  originalEmail: client.email,
-                  originalCompany: client.company,
-                  record: JSON.parse(JSON.stringify(client)),
-                })
-              }
-              title="Editar datos del cliente"
-            >
-              <Edit3 size={12} /> Editar
-            </button>
-          )}
+          {canEditInSection(
+            'CRM',
+            crmSection,
+            activeSectionAccess,
+            isFullAdmin,
+            activeSessionProfile.isActive
+          ) &&
+            (crmSection === 'Proveedores' ? (
+              <button
+                type="button"
+                className="button-icon-action"
+                onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
+                title="Configurar datos bancarios y packs EBP del proveedor"
+              >
+                <Landmark size={12} /> Datos bancarios
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="button-icon-action"
+                onClick={() =>
+                  setEditingDirectory({
+                    kind: 'client',
+                    originalEmail: client.email,
+                    originalCompany: client.company,
+                    record: JSON.parse(JSON.stringify(client)),
+                  })
+                }
+                title="Editar datos del cliente"
+              >
+                <Edit3 size={12} /> Editar
+              </button>
+            ))}
         </div>
       </td>
     </tr>
@@ -3752,7 +3835,7 @@ function AppContent() {
 })}</tbody></table>{filteredDirectory.length === 0 && <div className="clients-empty"><Users size={20} /><strong>No encontramos {crmSection.toLowerCase()}</strong><span>Prueba con otro nombre, empresa o estado.</span></div>}</div>
               </> : (
                 <div className="crm-overview-grid">
-                  {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card crm-overview-highlight">
                       <span className="kpi-icon"><Users size={17} /></span>
                       <div>
@@ -3767,7 +3850,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-blue"><BriefcaseBusiness size={17} /></span>
                       <div>
@@ -3782,7 +3865,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-green"><Users size={17} /></span>
                       <div>
@@ -3795,7 +3878,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-amber"><WalletCards size={17} /></span>
                       <div>
@@ -3810,7 +3893,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-lilac"><Target size={17} /></span>
                       <div>
@@ -3825,7 +3908,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-sand"><Clock3 size={17} /></span>
                       <div>
@@ -3851,7 +3934,7 @@ function AppContent() {
               </div>
               {notice && <div className="notice" role="status">{notice}<button aria-label={t('common.close')} onClick={() => setNotice('')}><X size={15} /></button></div>}
               <nav className="crm-tabs" aria-label="Secciones de Ventas">
-                {canAccessSection('Ventas', 'Catálogo', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Catálogo', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Catálogo' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Catálogo')}
@@ -3859,7 +3942,7 @@ function AppContent() {
                     {t('tabs.sales.catalog')}
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Cotizaciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Cotizaciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Cotizaciones' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Cotizaciones')}
@@ -3867,7 +3950,7 @@ function AppContent() {
                     {t('tabs.sales.quotes')} <span>{quotes.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Pedidos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Pedidos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Pedidos' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Pedidos')}
@@ -3875,7 +3958,7 @@ function AppContent() {
                     {t('tabs.sales.orders')} <span>{orders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Facturas' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Facturas')}
@@ -3883,7 +3966,7 @@ function AppContent() {
                     {t('tabs.sales.invoices')} <span>{receivables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Resumen')}
@@ -3982,9 +4065,9 @@ function AppContent() {
 
               <section className="purchases-top-kpi-strip" aria-label="Indicadores clave de compras">
                 {(() => {
-                  const canGoOrders = canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
-                  const canGoInvoices = canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
-                  const canGoReceptions = canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+                  const canGoOrders = canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
+                  const canGoInvoices = canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
+                  const canGoReceptions = canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
 
                   const OrderWrap = canGoOrders ? 'button' : 'div'
                   const InvoiceWrap = canGoInvoices ? 'button' : 'div'
@@ -4079,7 +4162,7 @@ function AppContent() {
               </section>
 
               <nav className="crm-tabs" aria-label="Secciones de Compras">
-                {canAccessSection('Compras', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Resumen')}
@@ -4087,7 +4170,7 @@ function AppContent() {
                     {t('tabs.purchases.summary')}
                   </button>
                 )}
-                {canAccessSection('Compras', 'Requisiciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Requisiciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Requisiciones' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Requisiciones')}
@@ -4095,7 +4178,7 @@ function AppContent() {
                     {t('tabs.purchases.requisitions')} <span>{requisitions.length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Órdenes de compra' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Órdenes de compra')}
@@ -4103,7 +4186,7 @@ function AppContent() {
                     {t('tabs.purchases.orders')} <span>{purchaseOrders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Recepciones' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Recepciones')}
@@ -4111,7 +4194,7 @@ function AppContent() {
                     {t('tabs.purchases.receptions')} <span>{purchaseOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Facturas' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Facturas')}
@@ -4140,7 +4223,17 @@ function AppContent() {
                   }))}
                   departments={departments.map((d) => d.name)}
                   currentUserName={activeSessionProfile.name}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Compras',
+                        'Requisiciones',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                   onCreateRequisition={handleCreateRequisition}
                   onUpdateRequisitionStatus={handleUpdateRequisitionStatus}
                   onConvertToPurchaseOrder={handleConvertRequisitionToPo}
@@ -4169,14 +4262,34 @@ function AppContent() {
                   movementsCount={movements.length}
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Compras',
+                        'Órdenes de compra',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                 />
               ) : purchasesSection === 'Recepciones' ? (
                 <PurchasesReceptions
                   purchaseOrders={purchaseOrders}
                   inventory={inventory}
                   movements={movements}
-                  canReceiveGoods={isFullAdmin || activeCapabilities.has('receiveGoods')}
+                  canReceiveGoods={
+                    isFullAdmin ||
+                    (activeCapabilities.has('receiveGoods') &&
+                      canEditInSection(
+                        'Compras',
+                        'Recepciones',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                   onUpdatePurchaseOrders={setPurchaseOrders}
                   onUpdateInventory={setInventory}
                   onAddMovement={handleAddMovement}
@@ -4218,7 +4331,7 @@ function AppContent() {
               </div>
 
               <nav className="crm-tabs" aria-label="Secciones de Operaciones">
-                {canAccessSection('Operaciones', 'Inventario', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Inventario', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Inventario' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Inventario')}
@@ -4226,7 +4339,7 @@ function AppContent() {
                     {t('tabs.ops.inventory')} <span>{inventory.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Traslados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Traslados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Traslados' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Traslados')}
@@ -4234,7 +4347,7 @@ function AppContent() {
                     {t('tabs.ops.transfers')} <span>{transfers.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Compras', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Compras', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Compras' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Compras')}
@@ -4242,7 +4355,7 @@ function AppContent() {
                     {t('tabs.ops.purchases')} <span>{purchaseOrders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Entregas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Entregas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Entregas' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Entregas')}
@@ -4250,7 +4363,7 @@ function AppContent() {
                     {t('tabs.ops.deliveries')} <span>{shipments.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Resumen')}
@@ -4310,7 +4423,17 @@ function AppContent() {
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
                   onOpenFullPurchasesModule={() => navigateToPurchasesSection('Resumen')}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Operaciones',
+                        'Compras',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                 />
               ) : operationsSection === 'Entregas' ? (
                 <OperationsDeliveries
@@ -4341,7 +4464,7 @@ function AppContent() {
               </div>
 
               <nav className="crm-tabs" aria-label="Secciones de Finanzas">
-                {canAccessSection('Finanzas', 'Cobros', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Cobros', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Cobros' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Cobros')}
@@ -4349,7 +4472,7 @@ function AppContent() {
                     {t('tabs.fin.receivables')} <span>{receivables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Pagos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Pagos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Pagos' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Pagos')}
@@ -4357,7 +4480,7 @@ function AppContent() {
                     {t('tabs.fin.payables')} <span>{payables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Pagos Bancarios', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Pagos Bancarios', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Pagos Bancarios' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Pagos Bancarios')}
@@ -4365,7 +4488,7 @@ function AppContent() {
                     {t('tabs.fin.ebp')} <span>{ebpBatches.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Gastos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Gastos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Gastos' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Gastos')}
@@ -4373,7 +4496,7 @@ function AppContent() {
                     {t('tabs.fin.expenses')} <span>{expenses.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Cuentas contables' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Cuentas contables')}
@@ -4381,7 +4504,7 @@ function AppContent() {
                     {t('tabs.fin.accounting')} <span>{chartAccounts.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Resumen')}
@@ -4486,7 +4609,8 @@ function AppContent() {
                   sec,
                   activeCapabilities,
                   isFullAdmin,
-                  activeSessionProfile.isActive
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
                 )
               )}
               onSelectTab={navigateToReportsSection}
@@ -4548,7 +4672,8 @@ function AppContent() {
                     sec,
                     activeCapabilities,
                     isFullAdmin,
-                    activeSessionProfile.isActive
+                    activeSessionProfile.isActive,
+                    activeSectionAccess
                   )
               )}
               currentUserName={activeSessionProfile.name}

@@ -42,6 +42,8 @@ import {
   Terminal,
   ShieldAlert,
   Code2,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -52,27 +54,33 @@ import type { SupportedLocale } from '../i18n/types'
 import type { Warehouse } from '../data/operations'
 import type { PhysicalLocationRecord, LocationType } from './AdministrationSection'
 import {
-  ALL_CAPABILITIES,
   AUDIT_CHANGED_EVENT,
-  DEFAULT_EXTERNAL_INTEGRATIONS,
   DEFAULT_INTEGRATIONS,
   DEFAULT_NEW_USER_ROLE_CHANGED_EVENT,
   DEFAULT_PLAN_SETTINGS,
-  DEFAULT_ROLE_PERMISSIONS,
+  DEFAULT_ROLE_SECTION_PERMISSIONS,
   EMPTY_EXTERNAL_PERMISSIONS,
-  EXTERNAL_API_ACTIONS,
-  EXTERNAL_API_RESOURCES,
+  INTEGRATIONS_CHANGED_EVENT,
   PLAN_ADDONS_CATALOG,
   PLAN_TIER_CATALOG,
   ROLES_CHANGED_EVENT,
+  SECTION_ACCESS_LEVELS,
   STORAGE_KEYS,
+  SYSTEM_MODULE_SECTIONS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
+  buildSectionPermissionsMap,
+  cloneSectionPermissions,
+  deriveCapabilitiesFromSectionPermissions,
+  deriveSectionPermissionsFromCapabilities,
   generateExternalApiKey,
+  getSectionApiEndpoint,
   getWorkspaceUserRoleIds,
   isGeneralAdminRole,
+  levelAllowsHttpMethod,
   loadDefaultNewUserRole,
   loadStoredAuditEvents,
+  loadStoredExternalIntegrations,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
   readStoredJson,
@@ -94,9 +102,16 @@ import {
   type RoleCapabilityId,
   type RoleDefinition,
   type RoleKey,
+  type RoleSectionPermissions,
+  type SectionAccessLevel,
   type WorkspaceUserRecord,
 } from '../data/settings'
-import { canAccessSection } from '../data/accessControl'
+import {
+  canAccessSection,
+  canCreateInSection,
+  canDeleteInSection,
+  canEditInSection,
+} from '../data/accessControl'
 
 export interface GeneralSettings {
   workspaceName: string
@@ -176,6 +191,7 @@ export interface SettingsSectionProps {
   onWorkspaceMetaChange?: (meta: { workspaceName: string; avatarColor: string }) => void
   receivablesCount?: number
   activeCapabilities?: Set<RoleCapabilityId>
+  activeSectionAccess?: RoleSectionPermissions
   isFullAdmin?: boolean
   isAccountActive?: boolean
 }
@@ -198,6 +214,7 @@ export function SettingsSection({
   onWorkspaceMetaChange,
   receivablesCount = 0,
   activeCapabilities,
+  activeSectionAccess,
   isFullAdmin = true,
   isAccountActive = true,
 }: SettingsSectionProps) {
@@ -381,11 +398,21 @@ export function SettingsSection({
     loadDefaultNewUserRole(loadStoredRoleDefinitions())
   )
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null)
-  const [roleCapsDraft, setRoleCapsDraft] = useState<RoleCapabilityId[]>([])
+  const [editRoleName, setEditRoleName] = useState('')
+  const [editRoleDesc, setEditRoleDesc] = useState('')
+  const [editRoleForApiIntegration, setEditRoleForApiIntegration] = useState(false)
+  const [roleSectionDraft, setRoleSectionDraft] = useState<RoleSectionPermissions>(() =>
+    buildSectionPermissionsMap('none')
+  )
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleDesc, setNewRoleDesc] = useState('')
-  const [newRoleCapsDraft, setNewRoleCapsDraft] = useState<RoleCapabilityId[]>([])
+  const [newRoleForApiIntegration, setNewRoleForApiIntegration] = useState(false)
+  const [newRoleSectionDraft, setNewRoleSectionDraft] = useState<RoleSectionPermissions>(() =>
+    buildSectionPermissionsMap('none')
+  )
+  const [roleMatrixFilter, setRoleMatrixFilter] = useState('')
+  const [openModuleAccordions, setOpenModuleAccordions] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const syncDefaultRole = () => {
@@ -405,9 +432,9 @@ export function SettingsSection({
   )
   const [editingIntegration, setEditingIntegration] = useState<IntegrationConfig | null>(null)
 
-  // 8B. EXTERNAL SYSTEMS API INTEGRATIONS (CRUD REGISTRY)
+  // 8B. EXTERNAL SYSTEMS API INTEGRATIONS (LINKED TO ROLE, 0 USER SLOTS)
   const [externalIntegrations, setExternalIntegrations] = useState<ExternalIntegrationRecord[]>(() =>
-    readStoredJson(STORAGE_KEYS.externalIntegrations, DEFAULT_EXTERNAL_INTEGRATIONS)
+    loadStoredExternalIntegrations(loadStoredRoleDefinitions())
   )
   const [extSearch, setExtSearch] = useState('')
   const [extStatusFilter, setExtStatusFilter] = useState<'all' | 'active' | 'paused' | 'revoked'>('all')
@@ -419,39 +446,98 @@ export function SettingsSection({
   } | null>(null)
   const [extModalOpen, setExtModalOpen] = useState(false)
   const [extEditingId, setExtEditingId] = useState<string | null>(null)
+  const [extRoleMode, setExtRoleMode] = useState<'existing' | 'newRole'>('existing')
+  const [extNewRoleName, setExtNewRoleName] = useState('')
+  const [extRolePermsDraft, setExtRolePermsDraft] = useState<RoleSectionPermissions>(() =>
+    buildSectionPermissionsMap('none')
+  )
   const [extDraft, setExtDraft] = useState<{
     name: string
     systemType: ExternalSystemType
     description: string
     environment: 'production' | 'sandbox'
     status: 'active' | 'paused' | 'revoked'
+    roleId: RoleKey
     webhookCallbackUrl: string
     ipAllowlist: string
     rateLimitPerMin: number
-    permissions: Record<ExternalApiResource, ExternalApiAction[]>
   }>({
     name: '',
     systemType: 'Ecommerce',
     description: '',
     environment: 'production',
     status: 'active',
+    roleId: 'role_integracion_ecommerce',
     webhookCallbackUrl: '',
     ipAllowlist: '',
     rateLimitPerMin: 120,
-    permissions: {
-      ...EMPTY_EXTERNAL_PERMISSIONS,
-      clientes: ['read'],
-    },
   })
+  const [cfgTargetId, setCfgTargetId] = useState<string>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    return initialIntegs[0]?.id || '__new__'
+  })
+  const [cfgName, setCfgName] = useState<string>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    return initialIntegs[0]?.name || ''
+  })
+  const [cfgSystemType, setCfgSystemType] = useState<ExternalSystemType>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    return initialIntegs[0]?.systemType || 'Ecommerce'
+  })
+  const [cfgRoleMode, setCfgRoleMode] = useState<'existing' | 'newRole'>('existing')
+  const [cfgRoleId, setCfgRoleId] = useState<RoleKey>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    return (
+      initialIntegs[0]?.roleId ||
+      initialRoles.find((r) => r.id === 'role_integracion_ecommerce')?.id ||
+      initialRoles.find((r) => !isGeneralAdminRole(r))?.id ||
+      initialRoles[0]?.id ||
+      'Ventas'
+    )
+  })
+  const [cfgNewRoleName, setCfgNewRoleName] = useState('')
+  const [cfgPerms, setCfgPerms] = useState<RoleSectionPermissions>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    const targetRoleId =
+      initialIntegs[0]?.roleId ||
+      initialRoles.find((r) => r.id === 'role_integracion_ecommerce')?.id ||
+      initialRoles.find((r) => !isGeneralAdminRole(r))?.id ||
+      initialRoles[0]?.id
+    const roleDef = initialRoles.find((r) => r.id === targetRoleId)
+    return cloneSectionPermissions(
+      roleDef?.sectionPermissions ||
+        deriveSectionPermissionsFromCapabilities(roleDef?.capabilities || [], roleDef?.builtInKey)
+    )
+  })
+  const [cfgMatrixFilter, setCfgMatrixFilter] = useState('')
   const [simIntegrationId, setSimIntegrationId] = useState<string | null>(null)
   const [simMethod, setSimMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE'>('GET')
-  const [simResource, setSimResource] = useState<ExternalApiResource>('clientes')
+  const [simModule, setSimModule] = useState<string>('CRM')
+  const [simSection, setSimSection] = useState<string>('Clientes')
   const [simPayload, setSimPayload] = useState('')
   const [simResult, setSimResult] = useState<{
     statusCode: 200 | 201 | 401 | 403
     latencyMs: number
     body: string
   } | null>(null)
+  const [integLogSearch, setIntegLogSearch] = useState('')
+  const [integLogIntegrationFilter, setIntegLogIntegrationFilter] = useState<string>('all')
+  const [integLogStatusFilter, setIntegLogStatusFilter] = useState<'all' | 'success' | 'error'>('all')
+  const [integLogMethodFilter, setIntegLogMethodFilter] = useState<
+    'all' | 'GET' | 'POST' | 'PUT' | 'DELETE'
+  >('all')
+  const [expandedIntegLogIds, setExpandedIntegLogIds] = useState<Record<string, boolean>>({})
+  const [integViewTab, setIntegViewTab] = useState<'all' | 'commercial' | 'custom' | 'analyzer'>('all')
+  const [analyzerIntegrationId, setAnalyzerIntegrationId] = useState<string>(() => {
+    const initialRoles = loadStoredRoleDefinitions()
+    const initialIntegs = loadStoredExternalIntegrations(initialRoles)
+    return initialIntegs[0]?.id || ''
+  })
 
   // 9. AUDIT TRAIL STATE
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>(() =>
@@ -582,26 +668,33 @@ export function SettingsSection({
     return role.description || t('settings.roles.defaultCustomDesc')
   }
 
-  const getCapabilityLabel = (capId: RoleCapabilityId) => {
-    switch (capId) {
-      case 'sysConfig': return t('settings.roles.cap.sysConfig')
-      case 'manageUsers': return t('settings.roles.cap.manageUsers')
-      case 'approvePurchases': return t('settings.roles.cap.approvePurchases')
-      case 'fullReports': return t('settings.roles.cap.fullReports')
-      case 'inventoryControl': return t('settings.roles.cap.inventoryControl')
-      case 'adjustThresholds': return t('settings.roles.cap.adjustThresholds')
-      case 'receiveGoods': return t('settings.roles.cap.receiveGoods')
-      case 'stockLedger': return t('settings.roles.cap.stockLedger')
-      case 'createQuotes': return t('settings.roles.cap.createQuotes')
-      case 'issueOrders': return t('settings.roles.cap.issueOrders')
-      case 'crmClients': return t('settings.roles.cap.crmClients')
-      case 'pipelineReports': return t('settings.roles.cap.pipelineReports')
-      case 'manageReceivables': return t('settings.roles.cap.manageReceivables')
-      case 'schedulePayments': return t('settings.roles.cap.schedulePayments')
-      case 'balanceReports': return t('settings.roles.cap.balanceReports')
-      case 'expenseControl': return t('settings.roles.cap.expenseControl')
-    }
+  const getRoleSectionPermissions = (role: RoleDefinition | undefined): RoleSectionPermissions => {
+    if (!role) return buildSectionPermissionsMap('none')
+    return (
+      role.sectionPermissions ||
+      deriveSectionPermissionsFromCapabilities(role.capabilities || [], role.builtInKey)
+    )
   }
+
+  const getEnabledSectionEntries = (perms: RoleSectionPermissions) => {
+    const entries: Array<{
+      moduleName: string
+      sectionName: string
+      level: SectionAccessLevel
+    }> = []
+    for (const [mod, sections] of Object.entries(SYSTEM_MODULE_SECTIONS)) {
+      for (const sec of sections) {
+        const lvl = perms[mod]?.[sec] || 'none'
+        if (lvl !== 'none') {
+          entries.push({ moduleName: mod, sectionName: sec, level: lvl })
+        }
+      }
+    }
+    return entries
+  }
+
+  const getLevelLabel = (level: SectionAccessLevel) =>
+    SECTION_ACCESS_LEVELS.find((l) => l.id === level)?.label || level
 
   const getIntegrationMeta = (id: IntegrationId) => {
     if (id === 'cfdi') {
@@ -1053,21 +1146,31 @@ export function SettingsSection({
   }
 
   const handleOpenRoleModal = (role: RoleDefinition) => {
-    if (isGeneralAdminRole(role)) {
-      toast.warning(
-        t('settings.roles.protectedAdminEditToast'),
-        t('settings.item.Roles y permisos')
-      )
-      return
+    const rolePerms = cloneSectionPermissions(getRoleSectionPermissions(role))
+    const initialAccordions: Record<string, boolean> = {}
+    for (const [modName, secs] of Object.entries(SYSTEM_MODULE_SECTIONS)) {
+      initialAccordions[modName] = secs.some((sec) => (rolePerms[modName]?.[sec] || 'none') !== 'none')
     }
     setEditingRole(role)
-    setRoleCapsDraft([...role.capabilities])
+    setEditRoleName(getRoleCardTitle(role))
+    setEditRoleDesc(getRoleCardDesc(role))
+    setEditRoleForApiIntegration(Boolean(role.forApiIntegration))
+    setRoleMatrixFilter('')
+    setOpenModuleAccordions(initialAccordions)
+    setRoleSectionDraft(rolePerms)
   }
 
   const handleSaveRolePermissions = (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingRole) return
-    if (isGeneralAdminRole(editingRole)) {
+    const canEditRoles = canEditInSection(
+      'Configuración',
+      'Roles y permisos',
+      activeSectionAccess,
+      isFullAdmin,
+      isAccountActive
+    )
+    if (isGeneralAdminRole(editingRole) || !canEditRoles) {
       toast.warning(
         t('settings.roles.protectedAdminEditToast'),
         t('settings.item.Roles y permisos')
@@ -1075,22 +1178,71 @@ export function SettingsSection({
       setEditingRole(null)
       return
     }
+    const cleanName = editRoleName.trim()
+    if (!editingRole.builtInKey && !cleanName) {
+      toast.warning(
+        t('settings.roles.createModal.missingNameToast'),
+        t('settings.item.Roles y permisos')
+      )
+      return
+    }
+    if (
+      !editingRole.builtInKey &&
+      roleDefinitions.some(
+        (r) =>
+          r.id !== editingRole.id &&
+          (r.id.toLowerCase() === cleanName.toLowerCase() ||
+            r.name.toLowerCase() === cleanName.toLowerCase() ||
+            getRoleLabel(r.id).toLowerCase() === cleanName.toLowerCase() ||
+            getRoleCardTitle(r).toLowerCase() === cleanName.toLowerCase())
+      )
+    ) {
+      toast.warning(
+        t('settings.roles.createModal.duplicateNameToast'),
+        t('settings.item.Roles y permisos')
+      )
+      return
+    }
+    const cleanPerms = cloneSectionPermissions(roleSectionDraft)
+    const derivedCaps = deriveCapabilitiesFromSectionPermissions(cleanPerms)
+    const enabledCount = getEnabledSectionEntries(cleanPerms).length
+    const nextName = editingRole.builtInKey ? editingRole.name : cleanName
+    const nextDesc = editingRole.builtInKey
+      ? editingRole.description
+      : editRoleDesc.trim() || editingRole.description
     const updated = roleDefinitions.map((r) =>
-      r.id === editingRole.id ? { ...r, capabilities: roleCapsDraft } : r
+      r.id === editingRole.id
+        ? {
+            ...r,
+            name: nextName,
+            description: nextDesc,
+            forApiIntegration: editingRole.builtInKey ? false : editRoleForApiIntegration,
+            sectionPermissions: cleanPerms,
+            capabilities: derivedCaps,
+          }
+        : r
     )
     persistRoleDefinitions(updated)
-    const roleLabel = getRoleCardTitle(editingRole)
+    const syncedIntegs = externalIntegrations.map((ext) =>
+      ext.roleId === editingRole.id
+        ? { ...ext, permissions: deriveLegacyCrudSummaryFromRole(cleanPerms) }
+        : ext
+    )
+    if (externalIntegrations.some((ext) => ext.roleId === editingRole.id)) {
+      persistExternalIntegrations(syncedIntegs)
+    }
+    if (cfgRoleMode === 'existing' && cfgRoleId === editingRole.id) {
+      setCfgPerms(cloneSectionPermissions(cleanPerms))
+    }
+    const roleLabel = editingRole.builtInKey ? getRoleCardTitle(editingRole) : nextName
     recordAudit({
       category: 'users',
       action: t('settings.roles.modal.savedTitle'),
-      detail: `${roleLabel} · ${roleCapsDraft.length}`,
+      detail: `${roleLabel} · ${enabledCount} secciones configuradas`,
       user: 'Andrea Morales',
     })
     toast.success(
-      t('settings.roles.modal.savedToast', {
-        role: roleLabel,
-        count: roleCapsDraft.length,
-      }),
+      `Permisos actualizados para ${roleLabel} (${enabledCount} secciones activas).`,
       t('settings.roles.modal.savedTitle')
     )
     setEditingRole(null)
@@ -1099,7 +1251,10 @@ export function SettingsSection({
   const handleOpenCreateRoleModal = () => {
     setNewRoleName('')
     setNewRoleDesc('')
-    setNewRoleCapsDraft([])
+    setNewRoleForApiIntegration(false)
+    setRoleMatrixFilter('')
+    setOpenModuleAccordions({})
+    setNewRoleSectionDraft(buildSectionPermissionsMap('none'))
     setShowCreateRoleModal(true)
   }
 
@@ -1128,32 +1283,42 @@ export function SettingsSection({
       )
       return
     }
-    const cleanDesc = newRoleDesc.trim() || t('settings.roles.defaultCustomDesc')
+    const cleanDesc =
+      newRoleDesc.trim() ||
+      (newRoleForApiIntegration
+        ? 'Rol dedicado para integración API sin consumo de espacio de usuario.'
+        : t('settings.roles.defaultCustomDesc'))
+    const cleanPerms = cloneSectionPermissions(newRoleSectionDraft)
+    const enabledCount = getEnabledSectionEntries(cleanPerms).length
     const created: RoleDefinition = {
       id: `role_${Date.now()}`,
       name: cleanName,
       description: cleanDesc,
-      capabilities: [...newRoleCapsDraft],
+      forApiIntegration: newRoleForApiIntegration,
+      capabilities: deriveCapabilitiesFromSectionPermissions(cleanPerms),
+      sectionPermissions: cleanPerms,
     }
     const updated = [...roleDefinitions, created]
     persistRoleDefinitions(updated)
     recordAudit({
       category: 'users',
       action: t('settings.roles.createModal.createdTitle'),
-      detail: `${cleanName} · ${newRoleCapsDraft.length}`,
+      detail: `${cleanName} · ${enabledCount} secciones habilitadas${
+        newRoleForApiIntegration ? ' · Para integración API' : ''
+      }`,
       user: 'Andrea Morales',
     })
     toast.success(
-      t('settings.roles.createModal.createdToast', {
-        role: cleanName,
-        count: newRoleCapsDraft.length,
-      }),
+      `Rol «${cleanName}» creado con ${enabledCount} secciones habilitadas${
+        newRoleForApiIntegration ? ' (para integración API).' : '.'
+      }`,
       t('settings.roles.createModal.createdTitle')
     )
     setShowCreateRoleModal(false)
     setNewRoleName('')
     setNewRoleDesc('')
-    setNewRoleCapsDraft([])
+    setNewRoleForApiIntegration(false)
+    setNewRoleSectionDraft(buildSectionPermissionsMap('none'))
   }
 
   const handleDeleteRole = (role: RoleDefinition) => {
@@ -1188,6 +1353,13 @@ export function SettingsSection({
       })
       persistUsers(reassignedUsers)
     }
+    const affectedIntegs = externalIntegrations.filter((ext) => ext.roleId === role.id).length
+    if (affectedIntegs > 0 && fallbackRole) {
+      const reassignedIntegs = externalIntegrations.map((ext) =>
+        ext.roleId === role.id ? { ...ext, roleId: fallbackRole.id } : ext
+      )
+      persistExternalIntegrations(reassignedIntegs)
+    }
     setInviteRoles((prev) => {
       const filtered = prev.filter((id) => id !== role.id)
       return filtered.length > 0 ? filtered : fallbackRole ? [fallbackRole.id] : []
@@ -1202,8 +1374,8 @@ export function SettingsSection({
       category: 'users',
       action: t('settings.roles.deletedTitle'),
       detail:
-        affectedCount > 0 && fallbackRole
-          ? `${roleDisplay} (${affectedCount} → ${getRoleLabel(fallbackRole.id)})`
+        (affectedCount > 0 || affectedIntegs > 0) && fallbackRole
+          ? `${roleDisplay} (${affectedCount} usuarios, ${affectedIntegs} integraciones → ${getRoleLabel(fallbackRole.id)})`
           : roleDisplay,
       user: 'Andrea Morales',
     })
@@ -1280,233 +1452,425 @@ export function SettingsSection({
   const persistExternalIntegrations = (updated: ExternalIntegrationRecord[]) => {
     setExternalIntegrations(updated)
     writeStoredJson(STORAGE_KEYS.externalIntegrations, updated)
+    window.dispatchEvent(
+      new CustomEvent(INTEGRATIONS_CHANGED_EVENT, { detail: { integrations: updated } })
+    )
   }
 
-  const cloneExtPermissions = (
-    perms: Record<ExternalApiResource, ExternalApiAction[]>
-  ): Record<ExternalApiResource, ExternalApiAction[]> => ({
-    clientes: [...perms.clientes],
-    productos: [...perms.productos],
-    ventas: [...perms.ventas],
-    compras: [...perms.compras],
-    finanzas: [...perms.finanzas],
-    rrhh: [...perms.rrhh],
-  })
+  const mapModuleToLegacyResource = (moduleName: string): ExternalApiResource => {
+    if (moduleName === 'CRM') return 'clientes'
+    if (moduleName === 'Operaciones') return 'productos'
+    if (moduleName === 'Ventas') return 'ventas'
+    if (moduleName === 'Compras') return 'compras'
+    if (moduleName === 'Finanzas') return 'finanzas'
+    return 'rrhh'
+  }
 
-  const getSamplePayloadForCrud = (
-    resource: ExternalApiResource,
+  const deriveLegacyCrudSummaryFromRole = (
+    perms: RoleSectionPermissions
+  ): Record<ExternalApiResource, ExternalApiAction[]> => {
+    const out: Record<ExternalApiResource, ExternalApiAction[]> = {
+      clientes: [],
+      productos: [],
+      ventas: [],
+      compras: [],
+      finanzas: [],
+      rrhh: [],
+    }
+    const enabled = getEnabledSectionEntries(perms)
+    for (const entry of enabled) {
+      const resKey = mapModuleToLegacyResource(entry.moduleName)
+      const set = new Set<ExternalApiAction>(out[resKey])
+      if (levelAllowsHttpMethod(entry.level, 'GET')) set.add('read')
+      if (levelAllowsHttpMethod(entry.level, 'POST')) set.add('create')
+      if (levelAllowsHttpMethod(entry.level, 'PUT')) set.add('update')
+      if (levelAllowsHttpMethod(entry.level, 'DELETE')) set.add('delete')
+      out[resKey] = Array.from(set)
+    }
+    return out
+  }
+
+  const getSamplePayloadForSection = (
+    moduleName: string,
+    sectionName: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE'
   ): string => {
     if (method === 'GET') return ''
     if (method === 'DELETE') {
       return JSON.stringify(
         {
-          id: `${resource.slice(0, 3).toUpperCase()}-9042`,
-          reason: 'Depuración solicitada por sistema externo autorizado',
+          modulo: moduleName,
+          seccion: sectionName,
+          registroId: `${moduleName.slice(0, 3).toUpperCase()}-9042`,
+          motivo: 'Baja ejecutada mediante rol asignado a integración',
         },
         null,
         2
       )
     }
-    const samples: Record<ExternalApiResource, Record<string, unknown>> = {
-      clientes: {
-        razonSocial: 'Distribuidora Industrial Bajío S.A. de C.V.',
-        rfc: 'DIB180412KX9',
-        correo: 'cuentas@bajioindustrial.mx',
-        limiteCreditoMxn: 250000,
-      },
-      productos: {
-        sku: 'NX-VALV-440',
-        nombre: 'Válvula Check Acero Inox 2"',
-        precioUnitarioMxn: 3420,
-        stockInicial: 48,
-      },
-      ventas: {
-        clienteId: 'CLI-1084',
+    return JSON.stringify(
+      {
+        modulo: moduleName,
+        seccion: sectionName,
+        referencia: `${moduleName.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 8999)}`,
         sucursal: 'CDMX Insurgentes',
-        moneda: 'MXN',
-        partidas: [{ sku: 'NX-VALV-440', cantidad: 6, precio: 3420 }],
+        actualizadoPorIntegracion: true,
       },
-      compras: {
-        proveedorId: 'PROV-302',
-        almacenDestino: 'Vallejo Central',
-        partidas: [{ sku: 'NX-VALV-440', cantidad: 30, costoUnitario: 2150 }],
-      },
-      finanzas: {
-        tipoPoliza: 'Ingreso',
-        referencia: 'SPEI-994120',
-        montoMxn: 20520,
-        cuentaContable: '102.01-Banorte',
-      },
-      rrhh: {
-        numeroEmpleado: 'EMP-0294',
-        departamento: 'Operaciones',
-        estatus: 'Activo',
-        puesto: 'Analista de Inventarios',
-      },
-    }
-    return JSON.stringify(samples[resource], null, 2)
+      null,
+      2
+    )
+  }
+
+  const getDefaultRoleForIntegration = (): RoleKey => {
+    const ecommerceRole = roleDefinitions.find((r) => r.id === 'role_integracion_ecommerce')
+    if (ecommerceRole) return ecommerceRole.id
+    const nonAdmin = roleDefinitions.find((r) => !isGeneralAdminRole(r))
+    return nonAdmin?.id || roleDefinitions[0]?.id || 'Ventas'
   }
 
   const handleOpenCreateExternalInteg = () => {
+    const defaultRoleId = getDefaultRoleForIntegration()
+    const roleObj = roleDefinitions.find((r) => r.id === defaultRoleId)
     setExtEditingId(null)
+    setExtRoleMode('existing')
+    setExtNewRoleName('')
+    setRoleMatrixFilter('')
+    setExtRolePermsDraft(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
     setExtDraft({
       name: '',
       systemType: 'Ecommerce',
       description: '',
       environment: 'production',
       status: 'active',
+      roleId: defaultRoleId,
       webhookCallbackUrl: '',
       ipAllowlist: '',
       rateLimitPerMin: 120,
-      permissions: {
-        ...cloneExtPermissions(EMPTY_EXTERNAL_PERMISSIONS),
-        clientes: ['read', 'create'],
-        productos: ['read'],
-      },
     })
     setExtModalOpen(true)
   }
 
   const handleOpenEditExternalInteg = (rec: ExternalIntegrationRecord) => {
     setExtEditingId(rec.id)
+    const fallbackRoleId = getDefaultRoleForIntegration()
+    const validRoleId = roleDefinitions.some((r) => r.id === rec.roleId) ? rec.roleId : fallbackRoleId
+    const roleObj = roleDefinitions.find((r) => r.id === validRoleId)
+    setExtRoleMode('existing')
+    setExtNewRoleName('')
+    setRoleMatrixFilter('')
+    setExtRolePermsDraft(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
     setExtDraft({
       name: rec.name,
       systemType: rec.systemType,
       description: rec.description,
       environment: rec.environment,
       status: rec.status,
+      roleId: validRoleId,
       webhookCallbackUrl: rec.webhookCallbackUrl,
       ipAllowlist: rec.ipAllowlist,
       rateLimitPerMin: rec.rateLimitPerMin,
-      permissions: cloneExtPermissions(rec.permissions),
     })
     setExtModalOpen(true)
   }
 
-  const handleToggleExtPermission = (
-    resource: ExternalApiResource,
-    action: ExternalApiAction
-  ) => {
-    setExtDraft((prev) => {
-      const current = prev.permissions[resource]
-      const exists = current.includes(action)
-      const nextActions = exists
-        ? current.filter((a) => a !== action)
-        : [...current, action]
+  const commitIntegrationAndRoleToGlobal = (params: {
+    targetIntegrationId: string | null
+    name: string
+    systemType: ExternalSystemType
+    description: string
+    environment: 'production' | 'sandbox'
+    status: 'active' | 'paused' | 'revoked'
+    webhookCallbackUrl: string
+    ipAllowlist: string
+    rateLimitPerMin: number
+    roleMode: 'existing' | 'newRole'
+    roleId: RoleKey
+    newRoleName: string
+    perms: RoleSectionPermissions
+  }): { ok: boolean; savedIntegrationId?: string; savedRoleId?: RoleKey } => {
+    const cleanName = params.name.trim()
+    if (!cleanName) {
+      toast.warning(
+        'Ingresa el nombre de la integración o sistema externo.',
+        'Integraciones API'
+      )
+      return { ok: false }
+    }
+
+    let nextRolesList = roleDefinitions
+    let resolvedRole: RoleDefinition | undefined
+    let effectivePerms: RoleSectionPermissions = cloneSectionPermissions(params.perms)
+
+    if (params.roleMode === 'newRole') {
+      const cleanRoleName = params.newRoleName.trim() || `API · ${cleanName}`
+      const normalized = cleanRoleName.toLowerCase()
+      const duplicate = roleDefinitions.some(
+        (r) =>
+          r.id.toLowerCase() === normalized ||
+          r.name.toLowerCase() === normalized ||
+          getRoleLabel(r.id).toLowerCase() === normalized ||
+          getRoleCardTitle(r).toLowerCase() === normalized
+      )
+      if (duplicate) {
+        toast.warning(
+          `Ya existe un rol llamado "${cleanRoleName}". Elige otro nombre o selecciona el rol existente.`,
+          'Rol duplicado'
+        )
+        return { ok: false }
+      }
+      const enabledCount = getEnabledSectionEntries(effectivePerms).length
+      if (enabledCount === 0) {
+        toast.warning(
+          'Asigna al menos una sección con nivel Ver, Crear, Editar o Completo antes de guardar.',
+          'Permisos requeridos'
+        )
+        return { ok: false }
+      }
+      const newRoleId = `role_integ_${Date.now().toString(36)}`
+      const newRoleDef: RoleDefinition = {
+        id: newRoleId,
+        name: cleanRoleName,
+        description: `Rol dedicado para la integración "${cleanName}" (${enabledCount} secciones configuradas sin consumo de usuario).`,
+        forApiIntegration: true,
+        capabilities: deriveCapabilitiesFromSectionPermissions(effectivePerms),
+        sectionPermissions: effectivePerms,
+      }
+      nextRolesList = [newRoleDef, ...roleDefinitions]
+      resolvedRole = newRoleDef
+    } else {
+      const existingRole = roleDefinitions.find((r) => r.id === params.roleId)
+      if (!existingRole) {
+        toast.warning('Selecciona un rol válido para vincular a la integración.', 'Rol requerido')
+        return { ok: false }
+      }
+      if (isGeneralAdminRole(existingRole)) {
+        effectivePerms = cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Administrador)
+        resolvedRole = existingRole
+      } else {
+        const enabledCount = getEnabledSectionEntries(effectivePerms).length
+        if (enabledCount === 0) {
+          toast.warning(
+            `El rol "${getRoleCardTitle(existingRole)}" debe tener al menos una sección con nivel Ver, Crear, Editar o Completo.`,
+            'Permisos requeridos'
+          )
+          return { ok: false }
+        }
+        const updatedRole: RoleDefinition = {
+          ...existingRole,
+          sectionPermissions: effectivePerms,
+          capabilities: deriveCapabilitiesFromSectionPermissions(effectivePerms),
+        }
+        nextRolesList = roleDefinitions.map((r) =>
+          r.id === existingRole.id ? updatedRole : r
+        )
+        resolvedRole = updatedRole
+      }
+    }
+
+    persistRoleDefinitions(nextRolesList)
+
+    const enabledCount = getEnabledSectionEntries(effectivePerms).length
+    const derivedLegacyPerms = deriveLegacyCrudSummaryFromRole(effectivePerms)
+    const roleDisplay = resolvedRole ? getRoleCardTitle(resolvedRole) : params.roleId
+    const resolvedRoleId = resolvedRole?.id || params.roleId
+    const cleanRate = Math.min(5000, Math.max(10, Number(params.rateLimitPerMin) || 120))
+    const nowIso = new Date().toISOString()
+
+    if (params.targetIntegrationId) {
+      const updatedIntegs = externalIntegrations.map((rec) => {
+        if (rec.id === params.targetIntegrationId) {
+          return {
+            ...rec,
+            name: cleanName,
+            systemType: params.systemType,
+            description:
+              params.description.trim() || `Integración API vinculada al rol ${roleDisplay}`,
+            environment: params.environment,
+            status: params.status,
+            roleId: resolvedRoleId,
+            webhookCallbackUrl: params.webhookCallbackUrl.trim(),
+            ipAllowlist: params.ipAllowlist.trim(),
+            rateLimitPerMin: cleanRate,
+            permissions: derivedLegacyPerms,
+          }
+        }
+        if (rec.roleId === resolvedRoleId) {
+          return {
+            ...rec,
+            permissions: derivedLegacyPerms,
+          }
+        }
+        return rec
+      })
+      persistExternalIntegrations(updatedIntegs)
+      recordAudit({
+        category: 'integrations',
+        action: 'Configuración global de integración y rol actualizada',
+        detail: `${cleanName} · Rol: ${roleDisplay} (${enabledCount} secciones, 0 usuarios consumidos)`,
+        user: 'Andrea Morales',
+      })
+      toast.success(
+        `"${cleanName}" y los permisos de "${roleDisplay}" (${enabledCount} secciones) se guardaron en la configuración global.`,
+        'Configuración global guardada'
+      )
       return {
-        ...prev,
-        permissions: {
-          ...prev.permissions,
-          [resource]: nextActions,
-        },
+        ok: true,
+        savedIntegrationId: params.targetIntegrationId,
+        savedRoleId: resolvedRoleId,
       }
+    }
+
+    const { apiKeyPrefix, apiKeySecret } = generateExternalApiKey(params.environment)
+    const newRecord: ExternalIntegrationRecord = {
+      id: `ext_${Date.now().toString(36)}`,
+      name: cleanName,
+      systemType: params.systemType,
+      origin: 'custom',
+      description:
+        params.description.trim() ||
+        `Acceso API externo (${params.systemType}) gobernado por el rol ${roleDisplay}.`,
+      environment: params.environment,
+      status: params.status,
+      roleId: resolvedRoleId,
+      apiKeyPrefix,
+      apiKeySecret,
+      webhookCallbackUrl: params.webhookCallbackUrl.trim(),
+      ipAllowlist: params.ipAllowlist.trim(),
+      rateLimitPerMin: cleanRate,
+      permissions: derivedLegacyPerms || { ...EMPTY_EXTERNAL_PERMISSIONS },
+      createdAtIso: nowIso,
+      lastUsedAtIso: '',
+      requestsCount: 0,
+      recentLogs: [],
+    }
+    const updatedOtherIntegs = externalIntegrations.map((rec) =>
+      rec.roleId === resolvedRoleId ? { ...rec, permissions: derivedLegacyPerms } : rec
+    )
+    persistExternalIntegrations([newRecord, ...updatedOtherIntegs])
+    setRevealedKeyId(newRecord.id)
+    setNewlyIssuedKeyBanner({
+      integrationId: newRecord.id,
+      integrationName: newRecord.name,
+      apiKeySecret: newRecord.apiKeySecret,
     })
+    recordAudit({
+      category: 'integrations',
+      action: 'Nueva integración API y permisos registrados globalmente',
+      detail: `${newRecord.name} (${newRecord.systemType}) · Rol: ${roleDisplay} (${enabledCount} secciones) · 0 usuarios consumidos`,
+      user: 'Andrea Morales',
+    })
+    toast.success(
+      `Integración "${newRecord.name}" vinculada a "${roleDisplay}" (${enabledCount} secciones) guardada en configuración global.`,
+      'Configuración global guardada'
+    )
+    return { ok: true, savedIntegrationId: newRecord.id, savedRoleId: resolvedRoleId }
   }
 
-  const handleApplyExtPreset = (preset: 'readonly' | 'readwrite' | 'full' | 'clear') => {
-    setExtDraft((prev) => {
-      const next = cloneExtPermissions(EMPTY_EXTERNAL_PERMISSIONS)
-      for (const res of EXTERNAL_API_RESOURCES) {
-        if (preset === 'readonly') next[res.id] = ['read']
-        else if (preset === 'readwrite') next[res.id] = ['read', 'create', 'update']
-        else if (preset === 'full') next[res.id] = ['read', 'create', 'update', 'delete']
-        else next[res.id] = []
-      }
-      return { ...prev, permissions: next }
-    })
+  const handleSelectCfgTarget = (
+    targetId: string,
+    rolesSource = roleDefinitions,
+    integsSource = externalIntegrations
+  ) => {
+    setCfgTargetId(targetId)
+    setCfgRoleMode('existing')
+    setCfgNewRoleName('')
+    if (targetId === '__new__') {
+      const defaultRoleId =
+        rolesSource.find((r) => r.id === 'role_integracion_ecommerce')?.id ||
+        rolesSource.find((r) => !isGeneralAdminRole(r))?.id ||
+        rolesSource[0]?.id ||
+        'Ventas'
+      const roleObj = rolesSource.find((r) => r.id === defaultRoleId)
+      setCfgName('')
+      setCfgSystemType('Ecommerce')
+      setCfgRoleId(defaultRoleId)
+      setCfgPerms(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
+      return
+    }
+    const rec = integsSource.find((item) => item.id === targetId)
+    if (!rec) return
+    const validRoleId = rolesSource.some((r) => r.id === rec.roleId)
+      ? rec.roleId
+      : getDefaultRoleForIntegration()
+    const roleObj = rolesSource.find((r) => r.id === validRoleId)
+    setCfgName(rec.name)
+    setCfgSystemType(rec.systemType)
+    setCfgRoleId(validRoleId)
+    setCfgPerms(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
   }
 
-  const countGrantedCrudOps = (perms: Record<ExternalApiResource, ExternalApiAction[]>) =>
-    Object.values(perms).reduce((sum, list) => sum + list.length, 0)
+  const handleSelectCfgRole = (nextRoleId: RoleKey) => {
+    setCfgRoleMode('existing')
+    setCfgRoleId(nextRoleId)
+    const roleObj = roleDefinitions.find((r) => r.id === nextRoleId)
+    setCfgPerms(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
+  }
+
+  const handleSelectModalRole = (nextRoleId: RoleKey) => {
+    setExtRoleMode('existing')
+    setExtDraft((prev) => ({ ...prev, roleId: nextRoleId }))
+    const roleObj = roleDefinitions.find((r) => r.id === nextRoleId)
+    setExtRolePermsDraft(cloneSectionPermissions(getRoleSectionPermissions(roleObj)))
+  }
+
+  const handleSaveInlineIntegrationConfig = (e: React.FormEvent) => {
+    e.preventDefault()
+    const isCreatingNew = cfgTargetId === '__new__'
+    const existingRec = !isCreatingNew
+      ? externalIntegrations.find((item) => item.id === cfgTargetId)
+      : undefined
+    const res = commitIntegrationAndRoleToGlobal({
+      targetIntegrationId: existingRec ? existingRec.id : null,
+      name: cfgName,
+      systemType: cfgSystemType,
+      description: existingRec?.description || '',
+      environment: existingRec?.environment || 'production',
+      status: existingRec?.status || 'active',
+      webhookCallbackUrl: existingRec?.webhookCallbackUrl || '',
+      ipAllowlist: existingRec?.ipAllowlist || '',
+      rateLimitPerMin: existingRec?.rateLimitPerMin || 120,
+      roleMode: cfgRoleMode,
+      roleId: cfgRoleId,
+      newRoleName: cfgNewRoleName,
+      perms: cfgPerms,
+    })
+    if (res.ok && res.savedIntegrationId && res.savedRoleId) {
+      setCfgTargetId(res.savedIntegrationId)
+      setCfgRoleMode('existing')
+      setCfgNewRoleName('')
+      setCfgRoleId(res.savedRoleId)
+    }
+  }
 
   const handleSaveExternalIntegration = (e: React.FormEvent) => {
     e.preventDefault()
-    const cleanName = extDraft.name.trim()
-    if (!cleanName) {
-      toast.warning('Ingresa el nombre del sistema externo a integrar.', 'Registro de integraciones API')
-      return
-    }
-    const totalPerms = countGrantedCrudOps(extDraft.permissions)
-    if (totalPerms === 0) {
-      toast.warning(
-        'Asigna al menos un permiso CRUD (Consultar, Insertar, Editar o Borrar) en la matriz.',
-        'Matriz de permisos CRUD'
-      )
-      return
-    }
-    const cleanRate = Math.min(5000, Math.max(10, Number(extDraft.rateLimitPerMin) || 120))
-    const nowIso = new Date().toISOString()
-
-    if (extEditingId) {
-      const updated = externalIntegrations.map((rec) =>
-        rec.id === extEditingId
-          ? {
-              ...rec,
-              name: cleanName,
-              systemType: extDraft.systemType,
-              description: extDraft.description.trim() || `Integración API para ${cleanName}`,
-              environment: extDraft.environment,
-              status: extDraft.status,
-              webhookCallbackUrl: extDraft.webhookCallbackUrl.trim(),
-              ipAllowlist: extDraft.ipAllowlist.trim(),
-              rateLimitPerMin: cleanRate,
-              permissions: cloneExtPermissions(extDraft.permissions),
-            }
-          : rec
-      )
-      persistExternalIntegrations(updated)
-      recordAudit({
-        category: 'integrations',
-        action: 'Integración API externa actualizada',
-        detail: `${cleanName} · ${totalPerms} permisos CRUD (${extDraft.environment})`,
-        user: 'Andrea Morales',
-      })
-      toast.success(
-        `Permisos y configuración de "${cleanName}" actualizados.`,
-        'Integraciones API'
-      )
-    } else {
-      const { apiKeyPrefix, apiKeySecret } = generateExternalApiKey(extDraft.environment)
-      const newRecord: ExternalIntegrationRecord = {
-        id: `ext_${Date.now().toString(36)}`,
-        name: cleanName,
-        systemType: extDraft.systemType,
-        description:
-          extDraft.description.trim() ||
-          `Acceso API externo (${extDraft.systemType}) con permisos granulares en AES Nexus.`,
-        environment: extDraft.environment,
-        status: extDraft.status,
-        apiKeyPrefix,
-        apiKeySecret,
-        webhookCallbackUrl: extDraft.webhookCallbackUrl.trim(),
-        ipAllowlist: extDraft.ipAllowlist.trim(),
-        rateLimitPerMin: cleanRate,
-        permissions: cloneExtPermissions(extDraft.permissions),
-        createdAtIso: nowIso,
-        lastUsedAtIso: '',
-        requestsCount: 0,
-        recentLogs: [],
+    const res = commitIntegrationAndRoleToGlobal({
+      targetIntegrationId: extEditingId,
+      name: extDraft.name,
+      systemType: extDraft.systemType,
+      description: extDraft.description,
+      environment: extDraft.environment,
+      status: extDraft.status,
+      webhookCallbackUrl: extDraft.webhookCallbackUrl,
+      ipAllowlist: extDraft.ipAllowlist,
+      rateLimitPerMin: extDraft.rateLimitPerMin,
+      roleMode: extRoleMode,
+      roleId: extDraft.roleId,
+      newRoleName: extNewRoleName,
+      perms: extRolePermsDraft,
+    })
+    if (res.ok) {
+      if (res.savedIntegrationId && (cfgTargetId === res.savedIntegrationId || cfgTargetId === '__new__')) {
+        setCfgTargetId(res.savedIntegrationId)
+        setCfgName(extDraft.name.trim())
+        setCfgSystemType(extDraft.systemType)
+        if (res.savedRoleId) setCfgRoleId(res.savedRoleId)
+        setCfgRoleMode('existing')
+        setCfgNewRoleName('')
+        setCfgPerms(cloneSectionPermissions(extRolePermsDraft))
       }
-      persistExternalIntegrations([newRecord, ...externalIntegrations])
-      setRevealedKeyId(newRecord.id)
-      setNewlyIssuedKeyBanner({
-        integrationId: newRecord.id,
-        integrationName: newRecord.name,
-        apiKeySecret: newRecord.apiKeySecret,
-      })
-      recordAudit({
-        category: 'integrations',
-        action: 'Nueva integración API registrada',
-        detail: `${newRecord.name} (${newRecord.systemType}) · ${totalPerms} operaciones CRUD habilitadas`,
-        user: 'Andrea Morales',
-      })
-      toast.success(
-        `Integración "${newRecord.name}" creada con llave Bearer lista para usar.`,
-        'Integraciones API'
-      )
+      setExtModalOpen(false)
     }
-    setExtModalOpen(false)
   }
 
   const handleRotateExternalKey = (rec: ExternalIntegrationRecord) => {
@@ -1568,6 +1932,9 @@ export function SettingsSection({
     persistExternalIntegrations(remaining)
     if (newlyIssuedKeyBanner?.integrationId === rec.id) setNewlyIssuedKeyBanner(null)
     if (simIntegrationId === rec.id) setSimIntegrationId(null)
+    if (cfgTargetId === rec.id) {
+      handleSelectCfgTarget(remaining[0]?.id || '__new__', roleDefinitions, remaining)
+    }
     recordAudit({
       category: 'integrations',
       action: 'Registro de integración API eliminado',
@@ -1585,37 +1952,31 @@ export function SettingsSection({
   }
 
   const handleOpenCrudSimulator = (rec: ExternalIntegrationRecord) => {
-    const firstEnabledResource =
-      EXTERNAL_API_RESOURCES.find((r) => rec.permissions[r.id].length > 0)?.id || 'clientes'
-    const allowedActions = rec.permissions[firstEnabledResource]
-    const defaultAction = allowedActions[0] || 'read'
-    const methodMap: Record<ExternalApiAction, 'GET' | 'POST' | 'PUT' | 'DELETE'> = {
-      read: 'GET',
-      create: 'POST',
-      update: 'PUT',
-      delete: 'DELETE',
-    }
-    const defaultMethod = methodMap[defaultAction]
+    const role = roleDefinitions.find((r) => r.id === rec.roleId)
+    const perms = getRoleSectionPermissions(role)
+    const enabledEntries = getEnabledSectionEntries(perms)
+    const first = enabledEntries[0] || { moduleName: 'CRM', sectionName: 'Clientes', level: 'view' as SectionAccessLevel }
     setSimIntegrationId(rec.id)
-    setSimResource(firstEnabledResource)
-    setSimMethod(defaultMethod)
-    setSimPayload(getSamplePayloadForCrud(firstEnabledResource, defaultMethod))
+    setSimModule(first.moduleName)
+    setSimSection(first.sectionName)
+    setSimMethod('GET')
+    setSimPayload(getSamplePayloadForSection(first.moduleName, first.sectionName, 'GET'))
     setSimResult(null)
   }
 
-  const handleRunCrudSimulation = () => {
-    const rec = externalIntegrations.find((item) => item.id === simIntegrationId)
+  const handleRunCrudSimulation = (overrideIntegrationId?: unknown) => {
+    const targetId =
+      typeof overrideIntegrationId === 'string' && overrideIntegrationId
+        ? overrideIntegrationId
+        : simIntegrationId || analyzerIntegrationId || externalIntegrations[0]?.id
+    const rec = externalIntegrations.find((item) => item.id === targetId)
     if (!rec) return
-    const actionMap: Record<'GET' | 'POST' | 'PUT' | 'DELETE', ExternalApiAction> = {
-      GET: 'read',
-      POST: 'create',
-      PUT: 'update',
-      DELETE: 'delete',
-    }
-    const requiredAction = actionMap[simMethod]
-    const hasPermission = rec.permissions[simResource].includes(requiredAction)
-    const resourceMeta =
-      EXTERNAL_API_RESOURCES.find((r) => r.id === simResource) || EXTERNAL_API_RESOURCES[0]
+    const linkedRole = roleDefinitions.find((r) => r.id === rec.roleId)
+    const roleName = linkedRole ? getRoleCardTitle(linkedRole) : rec.roleId
+    const perms = getRoleSectionPermissions(linkedRole)
+    const sectionLevel: SectionAccessLevel = perms[simModule]?.[simSection] || 'none'
+    const allowedByRole = levelAllowsHttpMethod(sectionLevel, simMethod)
+    const endpoint = getSectionApiEndpoint(simModule, simSection)
     const nowIso = new Date().toISOString()
     const latencyMs = 28 + Math.floor(Math.random() * 54)
 
@@ -1623,9 +1984,16 @@ export function SettingsSection({
     let summary = ''
     let bodyObj: Record<string, unknown>
 
+    const requiredLevelMap: Record<'GET' | 'POST' | 'PUT' | 'DELETE', SectionAccessLevel> = {
+      GET: 'view',
+      POST: 'create',
+      PUT: 'edit',
+      DELETE: 'full',
+    }
+
     if (rec.status === 'revoked') {
       statusCode = 401
-      summary = `Petición ${simMethod} ${resourceMeta.endpoint} rechazada: credencial revocada`
+      summary = `Petición ${simMethod} ${endpoint} rechazada: credencial revocada`
       bodyObj = {
         ok: false,
         error: 'TOKEN_REVOKED',
@@ -1633,78 +2001,95 @@ export function SettingsSection({
       }
     } else if (rec.status === 'paused') {
       statusCode = 403
-      summary = `Petición ${simMethod} ${resourceMeta.endpoint} bloqueada: integración pausada`
+      summary = `Petición ${simMethod} ${endpoint} bloqueada: integración pausada`
       bodyObj = {
         ok: false,
         error: 'INTEGRATION_PAUSED',
         message: 'La integración está temporalmente pausada por el administrador.',
       }
-    } else if (!hasPermission) {
+    } else if (!allowedByRole) {
       statusCode = 403
-      const actionLabel =
-        EXTERNAL_API_ACTIONS.find((a) => a.id === requiredAction)?.label || requiredAction
-      summary = `Acceso denegado a ${simMethod} ${resourceMeta.endpoint} (falta permiso ${actionLabel})`
+      const reqLevelLabel = getLevelLabel(requiredLevelMap[simMethod])
+      const currLevelLabel = getLevelLabel(sectionLevel)
+      summary = `Denegado ${simMethod} ${endpoint} · Rol "${roleName}" tiene nivel "${currLevelLabel}"`
       bodyObj = {
         ok: false,
-        error: 'INSUFFICIENT_CRUD_SCOPE',
-        requiredScope: `${simResource}:${requiredAction}`,
-        grantedScopesForResource: rec.permissions[simResource],
-        message: `El sistema "${rec.name}" no tiene permiso de "${actionLabel}" sobre ${resourceMeta.label}.`,
+        error: 'ROLE_SECTION_ACCESS_DENIED',
+        linkedRole: roleName,
+        module: simModule,
+        section: simSection,
+        currentLevel: currLevelLabel,
+        requiredLevel: reqLevelLabel,
+        message: `El rol "${roleName}" tiene nivel "${currLevelLabel}" en ${simModule} › ${simSection}. Se requiere al menos nivel "${reqLevelLabel}" para ejecutar ${simMethod}.`,
       }
     } else {
       statusCode = simMethod === 'POST' ? 201 : 200
       if (simMethod === 'GET') {
-        summary = `Consulta ${resourceMeta.endpoint} ejecutada (25 registros devueltos)`
+        summary = `Consulta ${simModule} › ${simSection} permitida (Rol: ${roleName} · ${getLevelLabel(sectionLevel)})`
         bodyObj = {
           ok: true,
-          resource: simResource,
+          linkedRole: roleName,
+          accessLevel: getLevelLabel(sectionLevel),
+          endpoint,
           total: 25,
-          page: 1,
           data: [
             {
-              id: `${simResource.slice(0, 3).toUpperCase()}-1001`,
-              estado: 'activo',
+              id: `${simModule.slice(0, 3).toUpperCase()}-1001`,
+              modulo: simModule,
+              seccion: simSection,
               actualizadoEn: nowIso,
             },
           ],
         }
       } else if (simMethod === 'POST') {
-        const createdId = `${simResource.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 8999)}`
-        summary = `Registro ${createdId} insertado vía API en ${resourceMeta.label}`
+        const createdId = `${simModule.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 8999)}`
+        summary = `Registro ${createdId} insertado en ${simModule} › ${simSection}`
         bodyObj = {
           ok: true,
           operation: 'INSERT',
+          linkedRole: roleName,
+          accessLevel: getLevelLabel(sectionLevel),
           id: createdId,
           createdAt: nowIso,
-          message: `Registro creado correctamente en ${resourceMeta.label}.`,
+          message: `Registro insertado correctamente en ${simModule} › ${simSection}.`,
         }
       } else if (simMethod === 'PUT') {
-        summary = `Registro actualizado vía API en ${resourceMeta.label}`
+        summary = `Registro editado en ${simModule} › ${simSection} (Rol: ${roleName})`
         bodyObj = {
           ok: true,
           operation: 'UPDATE',
+          linkedRole: roleName,
+          accessLevel: getLevelLabel(sectionLevel),
           updatedAt: nowIso,
           affectedRows: 1,
-          message: `Cambios aplicados en ${resourceMeta.label}.`,
+          message: `Cambios aplicados en ${simModule} › ${simSection}.`,
         }
       } else {
-        summary = `Registro eliminado vía API en ${resourceMeta.label}`
+        summary = `Registro eliminado en ${simModule} › ${simSection} (Acceso Completo)`
         bodyObj = {
           ok: true,
           operation: 'DELETE',
+          linkedRole: roleName,
+          accessLevel: getLevelLabel(sectionLevel),
           deletedAt: nowIso,
           affectedRows: 1,
-          message: `Registro dado de baja correctamente en ${resourceMeta.label}.`,
+          message: `Registro eliminado correctamente en ${simModule} › ${simSection}.`,
         }
       }
     }
 
+    const responseJson = JSON.stringify(bodyObj, null, 2)
     const newLog: ExternalIntegrationLog = {
       id: `extlog_${Date.now().toString(36)}`,
       method: simMethod,
-      resource: simResource,
+      resource: mapModuleToLegacyResource(simModule),
+      moduleName: simModule,
+      sectionName: simSection,
+      endpoint,
       statusCode,
+      latencyMs,
       summary,
+      responsePayload: responseJson,
       timestampIso: nowIso,
     }
 
@@ -1714,34 +2099,146 @@ export function SettingsSection({
             ...item,
             lastUsedAtIso: nowIso,
             requestsCount: item.requestsCount + 1,
-            recentLogs: [newLog, ...item.recentLogs].slice(0, 12),
+            recentLogs: [newLog, ...item.recentLogs].slice(0, 25),
           }
         : item
     )
     persistExternalIntegrations(updated)
+    setExpandedIntegLogIds((prev) => ({ ...prev, [newLog.id]: true }))
     setSimResult({
       statusCode,
       latencyMs,
-      body: JSON.stringify(bodyObj, null, 2),
+      body: responseJson,
     })
     recordAudit({
       category: 'integrations',
-      action: `API Externa · ${simMethod} ${resourceMeta.endpoint}`,
+      action: `API Externa (${roleName}) · ${simMethod} ${endpoint}`,
       detail: `${rec.name} → HTTP ${statusCode} (${summary})`,
       user: 'Andrea Morales',
     })
   }
 
-  const filteredExternalIntegrations = useMemo(() => {
+  const handleClearIntegrationLogs = () => {
+    const targetIntegrationId = integLogIntegrationFilter
+    const updated = externalIntegrations.map((item) => {
+      if (targetIntegrationId !== 'all' && item.id !== targetIntegrationId) return item
+      return {
+        ...item,
+        recentLogs: [],
+      }
+    })
+    persistExternalIntegrations(updated)
+    setExpandedIntegLogIds({})
+    toast.info(
+      targetIntegrationId === 'all'
+        ? 'Se limpió el historial de llamadas API registradas.'
+        : 'Se limpiaron los logs de la integración seleccionada.',
+      'Logs de Integración'
+    )
+  }
+
+  const allIntegrationLogs = useMemo(() => {
+    return externalIntegrations
+      .flatMap((rec) =>
+        (rec.recentLogs || []).map((log) => {
+          const resolvedEndpoint =
+            log.endpoint ||
+            (log.moduleName && log.sectionName
+              ? getSectionApiEndpoint(log.moduleName, log.sectionName)
+              : `/api/v1/${log.resource}`)
+          const resolvedPayload =
+            log.responsePayload ||
+            JSON.stringify(
+              {
+                ok: log.statusCode < 400,
+                statusCode: log.statusCode,
+                method: log.method,
+                endpoint: resolvedEndpoint,
+                summary: log.summary,
+                timestamp: log.timestampIso,
+              },
+              null,
+              2
+            )
+          return {
+            ...log,
+            endpoint: resolvedEndpoint,
+            responsePayload: resolvedPayload,
+            latencyMs: log.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
+            integrationId: rec.id,
+            integrationName: rec.name,
+            integrationEnv: rec.environment,
+          }
+        })
+      )
+      .sort((a, b) => new Date(b.timestampIso).getTime() - new Date(a.timestampIso).getTime())
+  }, [externalIntegrations])
+
+  const filteredIntegrationLogs = useMemo(() => {
+    const q = integLogSearch.trim().toLowerCase()
+    return allIntegrationLogs.filter((log) => {
+      if (integLogIntegrationFilter !== 'all' && log.integrationId !== integLogIntegrationFilter) {
+        return false
+      }
+      const isError = log.statusCode >= 400
+      if (integLogStatusFilter === 'success' && isError) return false
+      if (integLogStatusFilter === 'error' && !isError) return false
+      if (integLogMethodFilter !== 'all' && log.method !== integLogMethodFilter) return false
+      if (!q) return true
+      return `${log.integrationName} ${log.method} ${log.endpoint} ${log.moduleName || ''} ${log.sectionName || ''} ${log.summary} ${log.responsePayload}`
+        .toLowerCase()
+        .includes(q)
+    })
+  }, [
+    allIntegrationLogs,
+    integLogSearch,
+    integLogIntegrationFilter,
+    integLogStatusFilter,
+    integLogMethodFilter,
+  ])
+
+  const commercialExternalIntegrations = useMemo(
+    () => externalIntegrations.filter((rec) => rec.origin === 'commercial'),
+    [externalIntegrations]
+  )
+
+  const customExternalIntegrations = useMemo(
+    () => externalIntegrations.filter((rec) => rec.origin !== 'commercial'),
+    [externalIntegrations]
+  )
+
+  const filteredCustomIntegrations = useMemo(() => {
     const q = extSearch.trim().toLowerCase()
-    return externalIntegrations.filter((rec) => {
+    return customExternalIntegrations.filter((rec) => {
       if (extStatusFilter !== 'all' && rec.status !== extStatusFilter) return false
       if (!q) return true
       return `${rec.name} ${rec.systemType} ${rec.description} ${rec.apiKeyPrefix}`
         .toLowerCase()
         .includes(q)
     })
-  }, [externalIntegrations, extSearch, extStatusFilter])
+  }, [customExternalIntegrations, extSearch, extStatusFilter])
+
+  const commercialNativeIntegrations = useMemo(
+    () => integrations.filter((integ) => integ.id !== 'webhooks'),
+    [integrations]
+  )
+
+  const customNativeWebhooks = useMemo(
+    () => integrations.filter((integ) => integ.id === 'webhooks'),
+    [integrations]
+  )
+
+  const integrationLogMetrics = useMemo(() => {
+    const total = allIntegrationLogs.length
+    const successCount = allIntegrationLogs.filter((l) => l.statusCode < 400).length
+    const errorCount = total - successCount
+    const successRate = total > 0 ? Math.round((successCount / total) * 100) : 100
+    const avgLatencyMs =
+      total > 0
+        ? Math.round(allIntegrationLogs.reduce((sum, l) => sum + l.latencyMs, 0) / total)
+        : 0
+    return { total, successCount, errorCount, successRate, avgLatencyMs }
+  }, [allIntegrationLogs])
 
   const activeSimulatorIntegration = useMemo(
     () => externalIntegrations.find((item) => item.id === simIntegrationId) || null,
@@ -2036,11 +2533,263 @@ export function SettingsSection({
     },
   ]
 
+  const renderRoleSectionMatrix = (
+    perms: RoleSectionPermissions,
+    onChange: (next: RoleSectionPermissions) => void,
+    options?: {
+      readOnly?: boolean
+      readOnlyNotice?: string
+      filterValue?: string
+      onFilterChange?: (next: string) => void
+    }
+  ) => {
+    const isReadOnly = Boolean(options?.readOnly)
+    const activeFilter = options?.filterValue ?? roleMatrixFilter
+    const handleFilterChange = options?.onFilterChange ?? setRoleMatrixFilter
+    const enabledCount = getEnabledSectionEntries(perms).length
+    const totalSectionsCount = Object.values(SYSTEM_MODULE_SECTIONS).reduce(
+      (sum, secs) => sum + secs.length,
+      0
+    )
+
+    const setModuleLevel = (moduleName: string, level: SectionAccessLevel) => {
+      if (isReadOnly) return
+      const next = cloneSectionPermissions(perms)
+      const sections = SYSTEM_MODULE_SECTIONS[moduleName as keyof typeof SYSTEM_MODULE_SECTIONS] || []
+      for (const sec of sections) {
+        next[moduleName][sec] = level
+      }
+      onChange(next)
+    }
+
+    const setSectionLevel = (
+      moduleName: string,
+      sectionName: string,
+      level: SectionAccessLevel
+    ) => {
+      if (isReadOnly) return
+      const next = cloneSectionPermissions(perms)
+      next[moduleName][sectionName] = level
+      onChange(next)
+    }
+
+    const query = activeFilter.trim().toLowerCase()
+    const filteredModuleEntries = Object.entries(SYSTEM_MODULE_SECTIONS)
+      .map(([moduleName, sections]) => {
+        if (!query) return [moduleName, sections] as const
+        const moduleMatch = moduleName.toLowerCase().includes(query)
+        const matchingSections = moduleMatch
+          ? sections
+          : sections.filter((sec) => sec.toLowerCase().includes(query))
+        return [moduleName, matchingSections] as const
+      })
+      .filter(([, sections]) => sections.length > 0)
+
+    const accessLevelOptions = SECTION_ACCESS_LEVELS.filter((lvl) => lvl.id !== 'none')
+
+    const toggleModuleAccordion = (moduleName: string) => {
+      setOpenModuleAccordions((prev) => ({
+        ...prev,
+        [moduleName]: !prev[moduleName],
+      }))
+    }
+
+    const allExpanded =
+      filteredModuleEntries.length > 0 &&
+      filteredModuleEntries.every(([moduleName]) => Boolean(openModuleAccordions[moduleName]))
+
+    const toggleAllAccordions = () => {
+      const nextState = !allExpanded
+      setOpenModuleAccordions((prev) => {
+        const updated = { ...prev }
+        for (const [moduleName] of filteredModuleEntries) {
+          updated[moduleName] = nextState
+        }
+        return updated
+      })
+    }
+
+    return (
+      <div className="role-hierarchy-builder">
+        {isReadOnly && options?.readOnlyNotice && (
+          <div className="ext-matrix-readonly-note" role="status">
+            <LockKeyhole size={14} />
+            <span>{options.readOnlyNotice}</span>
+          </div>
+        )}
+        <div className="role-hierarchy-legend">
+          <div className="role-hierarchy-legend-items">
+            <span><strong>Ver</strong>: Visualizar</span>
+            <span><strong>Crear</strong>: Ver + Crear</span>
+            <span><strong>Editar</strong>: Ver + Crear + Editar</span>
+            <span><strong>Completo</strong>: Todo + Borrar</span>
+          </div>
+          <div className="role-hierarchy-global-actions">
+            <span className="tabular-nums">
+              {enabledCount} / {totalSectionsCount} secciones activas
+            </span>
+            <button
+              type="button"
+              className="button button-ghost button-sm"
+              onClick={toggleAllAccordions}
+            >
+              {allExpanded ? 'Contraer módulos' : 'Expandir módulos'}
+            </button>
+            <button
+              type="button"
+              className="button button-ghost button-sm"
+              disabled={isReadOnly}
+              onClick={() => onChange(buildSectionPermissionsMap('view'))}
+            >
+              Todo en Ver
+            </button>
+            <button
+              type="button"
+              className="button button-ghost button-sm"
+              disabled={isReadOnly}
+              onClick={() => onChange(buildSectionPermissionsMap('none'))}
+            >
+              Limpiar todo
+            </button>
+          </div>
+        </div>
+
+        <label className="audit-search-wrap">
+          <Search size={13} />
+          <input
+            type="search"
+            value={activeFilter}
+            onChange={(e) => handleFilterChange(e.target.value)}
+            placeholder="Filtrar módulo o sección (ej. Ventas, Facturas, Inventario, Cobros)..."
+            aria-label="Filtrar módulos y secciones"
+          />
+        </label>
+
+        <div className="role-modules-accordion-list">
+          {filteredModuleEntries.length === 0 ? (
+            <div className="ext-role-preview-empty">
+              Ningún módulo o sección coincide con «{activeFilter}».
+            </div>
+          ) : (
+            filteredModuleEntries.map(([moduleName, sections]) => {
+              const allSectionsForModule =
+                SYSTEM_MODULE_SECTIONS[moduleName as keyof typeof SYSTEM_MODULE_SECTIONS] || []
+              const activeInModule = allSectionsForModule.filter(
+                (sec) => (perms[moduleName]?.[sec] || 'none') !== 'none'
+              ).length
+              const isExpanded = Boolean(query) || Boolean(openModuleAccordions[moduleName])
+              return (
+                <div
+                  key={moduleName}
+                  className={`role-module-block ${isExpanded ? 'is-open' : 'is-collapsed'}`}
+                >
+                  <div className="role-module-block-head">
+                    <button
+                      type="button"
+                      className="role-accordion-trigger"
+                      aria-expanded={isExpanded}
+                      onClick={() => toggleModuleAccordion(moduleName)}
+                    >
+                      <span className="role-accordion-chevron" aria-hidden="true">
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </span>
+                      <div className="role-module-block-title">
+                        <strong>{moduleName}</strong>
+                        <span className={`tabular-nums ${activeInModule > 0 ? 'has-active' : ''}`}>
+                          {activeInModule} / {allSectionsForModule.length} secciones activas
+                        </span>
+                      </div>
+                    </button>
+
+                    <div
+                      className="role-module-bulk-select-wrap"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <select
+                        className="role-module-bulk-select"
+                        value=""
+                        disabled={isReadOnly}
+                        aria-label={`Aplicar nivel de acceso a todo ${moduleName}`}
+                        onChange={(e) => {
+                          const nextLevel = e.target.value as SectionAccessLevel
+                          if (!nextLevel) return
+                          setModuleLevel(moduleName, nextLevel)
+                          setOpenModuleAccordions((prev) => ({ ...prev, [moduleName]: true }))
+                        }}
+                      >
+                        <option value="" disabled>
+                          Nivel para todo {moduleName}…
+                        </option>
+                        <option value="none">Sin acceso</option>
+                        <optgroup label="4 niveles de acceso">
+                          {accessLevelOptions.map((lvl) => (
+                            <option key={lvl.id} value={lvl.id}>
+                              {lvl.label} — {lvl.description}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="role-sections-rows">
+                      {sections.map((sectionName) => {
+                        const currentLevel = perms[moduleName]?.[sectionName] || 'none'
+                        return (
+                          <div key={sectionName} className="role-section-row">
+                            <div className="role-section-name">
+                              <span>{sectionName}</span>
+                              <code>{getSectionApiEndpoint(moduleName, sectionName)}</code>
+                            </div>
+                            <select
+                              className={`role-level-select level-${currentLevel}`}
+                              value={currentLevel}
+                              disabled={isReadOnly}
+                              aria-label={`Nivel de acceso en ${moduleName} ${sectionName}`}
+                              onChange={(e) =>
+                                setSectionLevel(
+                                  moduleName,
+                                  sectionName,
+                                  e.target.value as SectionAccessLevel
+                                )
+                              }
+                            >
+                              <option value="none">Sin acceso</option>
+                              <optgroup label="4 niveles de acceso">
+                                {accessLevelOptions.map((lvl) => (
+                                  <option key={lvl.id} value={lvl.id}>
+                                    {lvl.label} — {lvl.description}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            </select>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const settingsGroups = rawSettingsGroups
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        canAccessSection('Configuración', item.name, effectiveCaps, isFullAdmin, isAccountActive)
+        canAccessSection(
+          'Configuración',
+          item.name,
+          effectiveCaps,
+          isFullAdmin,
+          isAccountActive,
+          activeSectionAccess
+        )
       ),
     }))
     .filter((group) => group.items.length > 0)
@@ -2976,7 +3725,9 @@ export function SettingsSection({
                 const selectedDefaultDef =
                   roleDefinitions.find((r) => r.id === defaultNewUserRole) || roleDefinitions[0]
                 const isDefaultAdmin = isGeneralAdminRole(selectedDefaultDef)
-                const capsCount = selectedDefaultDef?.capabilities?.length || 0
+                const sectionsCount = selectedDefaultDef
+                  ? getEnabledSectionEntries(getRoleSectionPermissions(selectedDefaultDef)).length
+                  : 0
                 return (
                   <div className="settings-section-card default-role-config-card">
                     <div className="default-role-config-body">
@@ -3001,11 +3752,16 @@ export function SettingsSection({
                             aria-label="Rol predeterminado para usuarios nuevos"
                             onChange={(e) => handleChangeDefaultNewUserRole(e.target.value)}
                           >
-                            {roleDefinitions.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {getRoleCardTitle(r)} ({r.capabilities.length} permisos)
-                              </option>
-                            ))}
+                            {roleDefinitions.map((r) => {
+                              const activeSecs = getEnabledSectionEntries(
+                                getRoleSectionPermissions(r)
+                              ).length
+                              return (
+                                <option key={r.id} value={r.id}>
+                                  {getRoleCardTitle(r)} ({activeSecs} secciones)
+                                </option>
+                              )
+                            })}
                           </select>
                           <button
                             type="button"
@@ -3027,7 +3783,7 @@ export function SettingsSection({
                           </span>
                         </span>
                         <span className="default-role-preview-meta tabular-nums">
-                          {capsCount} permisos incluidos · {getRoleCardDesc(selectedDefaultDef)}
+                          {sectionsCount} secciones habilitadas · {getRoleCardDesc(selectedDefaultDef)}
                         </span>
                       </div>
                     )}
@@ -3229,128 +3985,166 @@ export function SettingsSection({
           )}
 
           {/* 6. ROLES Y PERMISOS */}
-          {activeSetting === 'Roles y permisos' && (
-            <div className="settings-form-container">
-              <div className="settings-panel-heading">
-                <div>
-                  <h2>{t('settings.roles.heading')}</h2>
-                  <p>{t('settings.roles.subheading')}</p>
-                </div>
-                <button
-                  type="button"
-                  className="button button-primary"
-                  onClick={handleOpenCreateRoleModal}
-                >
-                  <Plus size={14} /> {t('settings.roles.createBtn')}
-                </button>
-              </div>
-
-              <div className="default-role-roles-strip">
-                <div className="default-role-roles-strip-info">
-                  <ShieldCheck size={15} />
+          {activeSetting === 'Roles y permisos' && (() => {
+            const canCreateRoles = canCreateInSection(
+              'Configuración',
+              'Roles y permisos',
+              activeSectionAccess,
+              isFullAdmin,
+              isAccountActive
+            )
+            const canEditRoles = canEditInSection(
+              'Configuración',
+              'Roles y permisos',
+              activeSectionAccess,
+              isFullAdmin,
+              isAccountActive
+            )
+            const canDeleteRoles = canDeleteInSection(
+              'Configuración',
+              'Roles y permisos',
+              activeSectionAccess,
+              isFullAdmin,
+              isAccountActive
+            )
+            return (
+              <div className="settings-form-container">
+                <div className="settings-panel-heading">
                   <div>
-                    <strong>Rol predeterminado para usuarios nuevos</strong>
-                    <span>
-                      Se preselecciona al invitar miembros o registrar empleados nuevos.
-                    </span>
+                    <h2>{t('settings.roles.heading')}</h2>
+                    <p>{t('settings.roles.subheading')}</p>
+                  </div>
+                  {canCreateRoles && (
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={handleOpenCreateRoleModal}
+                    >
+                      <Plus size={14} /> {t('settings.roles.createBtn')}
+                    </button>
+                  )}
+                </div>
+
+                <div className="default-role-roles-strip">
+                  <div className="default-role-roles-strip-info">
+                    <ShieldCheck size={15} />
+                    <div>
+                      <strong>Rol predeterminado para usuarios nuevos</strong>
+                      <span>
+                        Se preselecciona al invitar miembros o registrar empleados nuevos.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="default-role-roles-strip-control">
+                    <select
+                      aria-label="Seleccionar rol predeterminado para nuevos usuarios"
+                      className="default-role-select compact"
+                      value={defaultNewUserRole}
+                      disabled={!isFullAdmin}
+                      onChange={(e) => handleChangeDefaultNewUserRole(e.target.value)}
+                    >
+                      {roleDefinitions.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {getRoleCardTitle(r)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-                <div className="default-role-roles-strip-control">
-                  <select
-                    aria-label="Seleccionar rol predeterminado para nuevos usuarios"
-                    className="default-role-select compact"
-                    value={defaultNewUserRole}
-                    disabled={!isFullAdmin}
-                    onChange={(e) => handleChangeDefaultNewUserRole(e.target.value)}
-                  >
-                    {roleDefinitions.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {getRoleCardTitle(r)}
-                      </option>
-                    ))}
-                  </select>
+
+                <div className="roles-grid">
+                  {roleDefinitions.map((role) => {
+                    const usersCount = users.filter((u) =>
+                      getWorkspaceUserRoleIds(u).includes(role.id)
+                    ).length
+                    const integCount = externalIntegrations.filter(
+                      (ext) => ext.roleId === role.id
+                    ).length
+                    const roleTitle = getRoleCardTitle(role)
+                    const roleDesc = getRoleCardDesc(role)
+                    const isDefaultRole = role.id === defaultNewUserRole
+                    return (
+                      <div
+                        key={role.id}
+                        className={`role-profile-card ${isDefaultRole ? 'is-default-role' : ''}`}
+                      >
+                        <div className="role-header">
+                          <div>
+                            <div className="role-title-inline">
+                              <h3>{roleTitle}</h3>
+                              {isDefaultRole && (
+                                <span className="role-default-tag">Predeterminado</span>
+                              )}
+                              {role.forApiIntegration && (
+                                <span className="role-integ-count-tag">
+                                  <Plug size={10} /> Rol API
+                                </span>
+                              )}
+                            </div>
+                            <div className="role-assigned-counters">
+                              <span className="role-users-tag">
+                                {t('settings.roles.usersAssigned', { count: usersCount })}
+                              </span>
+                              {integCount > 0 && (
+                                <span className="role-integ-count-tag">
+                                  <Plug size={10} /> {integCount}{' '}
+                                  {integCount === 1 ? 'integración API' : 'integraciones API'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <ShieldCheck size={18} className="role-icon" />
+                        </div>
+                        <p className="role-desc">{roleDesc}</p>
+                        <div className="role-card-footer">
+                          {isGeneralAdminRole(role) ? (
+                            <>
+                              <span className="role-locked-meta">
+                                <LockKeyhole size={12} /> {t('settings.roles.protectedLabel')}
+                              </span>
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={() => handleOpenRoleModal(role)}
+                              >
+                                Ver permisos &rarr;
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {canDeleteRoles ? (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm role-delete-btn"
+                                  onClick={() => handleDeleteRole(role)}
+                                  aria-label={`${t('settings.roles.deleteBtn')} ${roleTitle}`}
+                                >
+                                  <Trash2 size={13} /> {t('settings.roles.deleteBtn')}
+                                </button>
+                              ) : (
+                                <span className="role-protected-meta">
+                                  {canEditRoles ? 'Solo edición' : 'Solo lectura'}
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={() => handleOpenRoleModal(role)}
+                              >
+                                {canEditRoles
+                                  ? `${t('settings.roles.editPermissionsBtn')} →`
+                                  : 'Ver permisos →'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
-
-              <div className="roles-grid">
-                {roleDefinitions.map((role) => {
-                  const usersCount = users.filter((u) =>
-                    getWorkspaceUserRoleIds(u).includes(role.id)
-                  ).length
-                  const assignedCaps = role.capabilities || []
-                  const roleTitle = getRoleCardTitle(role)
-                  const roleDesc = getRoleCardDesc(role)
-                  const isDefaultRole = role.id === defaultNewUserRole
-                  return (
-                    <div
-                      key={role.id}
-                      className={`role-profile-card ${isDefaultRole ? 'is-default-role' : ''}`}
-                    >
-                      <div className="role-header">
-                        <div>
-                          <div className="role-title-inline">
-                            <h3>{roleTitle}</h3>
-                            {isDefaultRole && (
-                              <span className="role-default-tag">Predeterminado</span>
-                            )}
-                          </div>
-                          <span className="role-users-tag">
-                            {t('settings.roles.usersAssigned', { count: usersCount })}
-                          </span>
-                        </div>
-                        <ShieldCheck size={18} className="role-icon" />
-                      </div>
-                      <p className="role-desc">{roleDesc}</p>
-                      <div className="role-caps-list">
-                        {assignedCaps.length === 0 ? (
-                          <span className="role-users-tag">{t('settings.roles.modal.noCaps')}</span>
-                        ) : (
-                          assignedCaps.slice(0, 6).map((capId) => (
-                            <span key={capId} className="role-cap-item">
-                              <Check size={11} /> {getCapabilityLabel(capId)}
-                            </span>
-                          ))
-                        )}
-                        {assignedCaps.length > 6 && (
-                          <span className="role-users-tag">+{assignedCaps.length - 6}</span>
-                        )}
-                      </div>
-                      <div className="role-card-footer">
-                        {isGeneralAdminRole(role) ? (
-                          <>
-                            <span className="role-protected-meta">
-                              {t('settings.roles.protectedLabel')}
-                            </span>
-                            <span className="role-locked-meta">
-                              <LockKeyhole size={12} /> {t('settings.roles.lockedPermsLabel')}
-                            </span>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="button button-ghost button-sm role-delete-btn"
-                              onClick={() => handleDeleteRole(role)}
-                              aria-label={`${t('settings.roles.deleteBtn')} ${roleTitle}`}
-                            >
-                              <Trash2 size={13} /> {t('settings.roles.deleteBtn')}
-                            </button>
-                            <button
-                              type="button"
-                              className="button button-ghost button-sm"
-                              onClick={() => handleOpenRoleModal(role)}
-                            >
-                              {t('settings.roles.editPermissionsBtn')} &rarr;
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* 7. SEGURIDAD */}
           {activeSetting === 'Seguridad' && (
@@ -3663,15 +4457,22 @@ export function SettingsSection({
                       : t('settings.plan.subheading')}
                   </p>
                 </div>
-                {activeSetting === 'Integraciones' && (
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    onClick={handleOpenCreateExternalInteg}
-                  >
-                    <Plus size={14} /> Nueva integración API
-                  </button>
-                )}
+                {activeSetting === 'Integraciones' &&
+                  canCreateInSection(
+                    'Configuración',
+                    'Integraciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    isAccountActive
+                  ) && (
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={handleOpenCreateExternalInteg}
+                    >
+                      <Plus size={14} /> Nueva integración API
+                    </button>
+                  )}
                 {activeSetting === 'Auditoría' && (
                   <button
                     type="button"
@@ -3684,376 +4485,1225 @@ export function SettingsSection({
                 )}
               </div>
 
-              {activeSetting === 'Integraciones' && (
-                <>
-                  {/* REGISTRO DE INTEGRACIONES API PARA SISTEMAS EXTERNOS (CRUD) */}
-                  <div className="settings-section-card">
-                    <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '12px' }}>
-                      <div>
-                        <div className="plan-title-row">
-                          <h3>Registro de Integraciones API para Sistemas Externos</h3>
-                          <span className="org-tax-badge">REST API v1 · Bearer Auth</span>
-                        </div>
-                        <p>
-                          Autoriza aplicaciones de terceros para consultar, insertar, editar o borrar información de AES Nexus bajo permisos granulares por módulo.
-                        </p>
-                      </div>
-                      <div className="ext-integ-kpis">
-                        <div className="ext-integ-kpi-box">
-                          <span>Activas</span>
-                          <strong>
-                            {externalIntegrations.filter((r) => r.status === 'active').length} /{' '}
-                            {externalIntegrations.length}
-                          </strong>
-                        </div>
-                        <div className="ext-integ-kpi-box">
-                          <span>Peticiones</span>
-                          <strong className="tabular-nums">
-                            {externalIntegrations
-                              .reduce((sum, r) => sum + r.requestsCount, 0)
-                              .toLocaleString('es-MX')}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
+              {activeSetting === 'Integraciones' && (() => {
+                const canCreateInteg = canCreateInSection(
+                  'Configuración',
+                  'Integraciones',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  isAccountActive
+                )
+                const canEditInteg = canEditInSection(
+                  'Configuración',
+                  'Integraciones',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  isAccountActive
+                )
+                const canDeleteInteg = canDeleteInSection(
+                  'Configuración',
+                  'Integraciones',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  isAccountActive
+                )
+                const canSaveInlineConfig =
+                  cfgTargetId === '__new__' ? canCreateInteg : canEditInteg
+                const selectedCfgRoleObj = roleDefinitions.find((r) => r.id === cfgRoleId)
+                const isCfgAdminLocked =
+                  cfgRoleMode === 'existing' && isGeneralAdminRole(selectedCfgRoleObj)
+                const sharedUsersCount =
+                  cfgRoleMode === 'existing'
+                    ? users.filter((u) => getWorkspaceUserRoleIds(u).includes(cfgRoleId)).length
+                    : 0
+                const sharedOtherIntegsCount =
+                  cfgRoleMode === 'existing'
+                    ? externalIntegrations.filter(
+                        (ext) => ext.roleId === cfgRoleId && ext.id !== cfgTargetId
+                      ).length
+                    : 0
 
-                    {newlyIssuedKeyBanner && (
-                      <div className="ext-key-banner" role="status">
-                        <div className="ext-key-banner-copy">
-                          <div className="ext-key-banner-title">
-                            <KeyRound size={14} />
-                            <strong>
-                              Llave API emitida para {newlyIssuedKeyBanner.integrationName}
-                            </strong>
-                          </div>
-                          <p>
-                            Copia e instala este token Bearer en tu sistema externo. Puedes consultarlo o rotarlo desde la tarjeta cuando lo necesites.
-                          </p>
-                          <code className="ext-key-secret-code">{newlyIssuedKeyBanner.apiKeySecret}</code>
-                        </div>
-                        <div className="ext-key-banner-actions">
-                          <button
-                            type="button"
-                            className="button button-primary button-sm"
-                            onClick={() =>
-                              handleCopyApiKey(
-                                newlyIssuedKeyBanner.apiKeySecret,
-                                newlyIssuedKeyBanner.integrationName
-                              )
-                            }
-                          >
-                            <Copy size={13} /> Copiar token
-                          </button>
-                          <button
-                            type="button"
-                            className="modal-close-btn"
-                            onClick={() => setNewlyIssuedKeyBanner(null)}
-                            aria-label="Cerrar aviso de llave"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                const resolvedAnalyzerInteg =
+                  externalIntegrations.find((r) => r.id === analyzerIntegrationId) ||
+                  externalIntegrations[0] ||
+                  null
+                const analyzerRole = resolvedAnalyzerInteg
+                  ? roleDefinitions.find((r) => r.id === resolvedAnalyzerInteg.roleId)
+                  : undefined
+                const analyzerRoleTitle = resolvedAnalyzerInteg
+                  ? analyzerRole
+                    ? getRoleCardTitle(analyzerRole)
+                    : resolvedAnalyzerInteg.roleId
+                  : ''
+                const analyzerPerms = getRoleSectionPermissions(analyzerRole)
+                const analyzerAvailableSections =
+                  SYSTEM_MODULE_SECTIONS[simModule as keyof typeof SYSTEM_MODULE_SECTIONS] || []
+                const analyzerSectionLevel: SectionAccessLevel =
+                  analyzerPerms[simModule]?.[simSection] || 'none'
+                const analyzerLevelMeta =
+                  SECTION_ACCESS_LEVELS.find((l) => l.id === analyzerSectionLevel) ||
+                  SECTION_ACCESS_LEVELS[0]
+                const analyzerAllowedByRole =
+                  Boolean(resolvedAnalyzerInteg) &&
+                  resolvedAnalyzerInteg?.status === 'active' &&
+                  levelAllowsHttpMethod(analyzerSectionLevel, simMethod)
 
-                    <div className="audit-toolbar">
-                      <label className="audit-search-wrap">
-                        <Search size={13} />
-                        <input
-                          type="search"
-                          value={extSearch}
-                          onChange={(e) => setExtSearch(e.target.value)}
-                          placeholder="Buscar por sistema, tipo o prefijo de llave..."
-                          aria-label="Buscar integraciones API"
-                        />
-                      </label>
-                      <div className="audit-filter-tabs" role="tablist" aria-label="Filtrar estado de integraciones">
-                        {[
-                          { id: 'all' as const, label: 'Todas' },
-                          { id: 'active' as const, label: 'Activas' },
-                          { id: 'paused' as const, label: 'Pausadas' },
-                          { id: 'revoked' as const, label: 'Revocadas' },
-                        ].map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            role="tab"
-                            aria-selected={extStatusFilter === tab.id}
-                            className={`audit-filter-btn ${extStatusFilter === tab.id ? 'active' : ''}`}
-                            onClick={() => setExtStatusFilter(tab.id)}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {filteredExternalIntegrations.length === 0 ? (
-                      <div className="audit-empty-state">
-                        <strong>Sin integraciones externas que coincidan</strong>
-                        <p>
-                          Crea un nuevo registro de integración API o ajusta los filtros de búsqueda.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="ext-integ-list">
-                        {filteredExternalIntegrations.map((rec) => {
-                          const isKeyRevealed = revealedKeyId === rec.id
-                          const maskedKey = `${rec.apiKeyPrefix}••••••••••••••••••••${rec.apiKeySecret.slice(-4)}`
-                          const enabledModules = EXTERNAL_API_RESOURCES.filter(
-                            (res) => rec.permissions[res.id].length > 0
-                          )
-                          const statusLabel =
-                            rec.status === 'active'
-                              ? 'Activa'
-                              : rec.status === 'paused'
-                              ? 'Pausada'
-                              : 'Revocada'
-                          const statusClass =
-                            rec.status === 'active'
-                              ? ''
-                              : rec.status === 'paused'
+                const renderNativeIntegrationCard = (integ: IntegrationConfig) => {
+                  const meta = getIntegrationMeta(integ.id)
+                  const statusLabel = !integ.enabled
+                    ? t('settings.integrations.statusPaused')
+                    : integ.environment === 'sandbox'
+                    ? t('settings.integrations.statusSandbox')
+                    : t('settings.integrations.statusConnected')
+                  const syncDisplay = integ.lastSyncAt
+                    ? t('settings.integrations.lastSyncLabel', {
+                        time: `${formatDate(new Date(integ.lastSyncAt))} · ${formatTime(new Date(integ.lastSyncAt))}`,
+                      })
+                    : t('settings.integrations.neverSynced')
+                  return (
+                    <div key={integ.id} className="integration-card">
+                      <div className="integration-header">
+                        <div>
+                          <strong>{meta.title}</strong>
+                          <span className="integ-cat">
+                            {meta.category} ·{' '}
+                            {integ.environment === 'production'
+                              ? t('settings.integrations.envProd')
+                              : t('settings.integrations.envSandbox')}
+                          </span>
+                        </div>
+                        <span
+                          className={`integ-status-pill ${
+                            !integ.enabled
                               ? 'status-paused'
-                              : 'status-revoked'
-                          return (
-                            <article key={rec.id} className="ext-integ-item">
-                              <div className="ext-integ-item-head">
-                                <div>
-                                  <div className="ext-integ-title-row">
-                                    <strong>{rec.name}</strong>
-                                    <span className="branch-type-pill">{rec.systemType}</span>
-                                    <span
-                                      className={`integ-status-pill ${
-                                        rec.environment === 'sandbox' ? 'status-sandbox' : ''
-                                      }`}
-                                    >
-                                      {rec.environment === 'production' ? 'Producción' : 'Sandbox'}
-                                    </span>
-                                    <span className={`integ-status-pill ${statusClass}`}>
-                                      {statusLabel}
-                                    </span>
-                                  </div>
-                                  <p className="ext-integ-desc">{rec.description}</p>
-                                </div>
-
-                                <div className="ext-integ-actions">
-                                  <button
-                                    type="button"
-                                    className="button button-secondary button-sm"
-                                    onClick={() => handleOpenCrudSimulator(rec)}
-                                  >
-                                    <Terminal size={13} /> Probar CRUD
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="button button-ghost button-sm"
-                                    onClick={() => handleOpenEditExternalInteg(rec)}
-                                  >
-                                    Editar permisos
-                                  </button>
-                                  {rec.status === 'active' ? (
-                                    <button
-                                      type="button"
-                                      className="button button-ghost button-sm"
-                                      onClick={() => handleSetExternalStatus(rec, 'paused')}
-                                      title="Pausar temporalmente"
-                                    >
-                                      <Pause size={13} /> Pausar
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="button button-ghost button-sm"
-                                      onClick={() => handleSetExternalStatus(rec, 'active')}
-                                      title="Reactivar acceso API"
-                                    >
-                                      <Play size={13} /> Activar
-                                    </button>
-                                  )}
-                                  {rec.status !== 'revoked' && (
-                                    <button
-                                      type="button"
-                                      className="button button-ghost button-sm"
-                                      onClick={() => handleSetExternalStatus(rec, 'revoked')}
-                                      title="Revocar credencial"
-                                    >
-                                      <ShieldAlert size={13} /> Revocar
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="icon-danger-btn"
-                                    onClick={() => handleDeleteExternalIntegration(rec)}
-                                    title="Eliminar registro de integración"
-                                    aria-label={`Eliminar ${rec.name}`}
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="ext-integ-cred-bar">
-                                <div className="ext-integ-cred-token">
-                                  <span className="ext-cred-label">Bearer Token</span>
-                                  <code>{isKeyRevealed ? rec.apiKeySecret : maskedKey}</code>
-                                </div>
-                                <div className="ext-integ-cred-btns">
-                                  <button
-                                    type="button"
-                                    className="button button-ghost button-sm"
-                                    onClick={() =>
-                                      setRevealedKeyId(isKeyRevealed ? null : rec.id)
-                                    }
-                                  >
-                                    {isKeyRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                                    {isKeyRevealed ? 'Ocultar' : 'Revelar'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="button button-ghost button-sm"
-                                    onClick={() => handleCopyApiKey(rec.apiKeySecret, rec.name)}
-                                  >
-                                    <Copy size={13} /> Copiar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="button button-ghost button-sm"
-                                    onClick={() => handleRotateExternalKey(rec)}
-                                  >
-                                    <RefreshCw size={13} /> Rotar llave
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="ext-integ-perms-grid">
-                                {enabledModules.map((mod) => {
-                                  const acts = rec.permissions[mod.id]
-                                  return (
-                                    <div key={mod.id} className="ext-perm-module-chip">
-                                      <span className="ext-perm-module-name">{mod.label}</span>
-                                      <div className="ext-perm-verbs">
-                                        {EXTERNAL_API_ACTIONS.map((act) => {
-                                          const active = acts.includes(act.id)
-                                          return (
-                                            <span
-                                              key={act.id}
-                                              className={`ext-verb-tag verb-${act.id} ${
-                                                active ? 'is-granted' : 'is-off'
-                                              }`}
-                                              title={`${act.label} (${act.httpMethod})`}
-                                            >
-                                              {act.shortTag}
-                                            </span>
-                                          )
-                                        })}
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-
-                              <div className="ext-integ-foot-meta">
-                                <span>
-                                  Límite: <strong>{rec.rateLimitPerMin} req/min</strong>
-                                </span>
-                                <span>
-                                  Peticiones:{' '}
-                                  <strong className="tabular-nums">
-                                    {rec.requestsCount.toLocaleString('es-MX')}
-                                  </strong>
-                                </span>
-                                <span>
-                                  Último uso:{' '}
-                                  <strong className="tabular-nums">
-                                    {rec.lastUsedAtIso
-                                      ? `${formatDate(new Date(rec.lastUsedAtIso))} · ${formatTime(new Date(rec.lastUsedAtIso))}`
-                                      : 'Sin peticiones aún'}
-                                  </strong>
-                                </span>
-                                {rec.ipAllowlist && (
-                                  <span>
-                                    IPs: <code className="mono">{rec.ipAllowlist}</code>
-                                  </span>
-                                )}
-                                {rec.webhookCallbackUrl && (
-                                  <span>
-                                    Callback: <code className="mono">{rec.webhookCallbackUrl}</code>
-                                  </span>
-                                )}
-                              </div>
-                            </article>
-                          )
-                        })}
+                              : integ.environment === 'sandbox'
+                              ? 'status-sandbox'
+                              : ''
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
                       </div>
-                    )}
-                  </div>
-
-                  {/* CONECTORES NATIVOS EXISTENTES */}
-                  <div className="settings-section-card">
-                    <div className="card-header-row">
-                      <div>
-                        <h3>Conectores Nativos del Sistema</h3>
-                        <p>
-                          Canales preconfigurados para timbrado fiscal SAT, dispersión bancaria STP y alertas corporativas.
-                        </p>
+                      <p>{meta.desc}</p>
+                      <div className="integration-meta-line">
+                        <code>{integ.endpointOrAccount}</code>
+                        <span>{syncDisplay}</span>
                       </div>
+                      <button
+                        type="button"
+                        className="button button-ghost button-sm"
+                        onClick={() => setEditingIntegration({ ...integ })}
+                      >
+                        {t('settings.integrations.configureBtn')} &rarr;
+                      </button>
                     </div>
-                    <div className="integrations-grid">
-                      {integrations.map((integ) => {
-                        const meta = getIntegrationMeta(integ.id)
-                        const statusLabel = !integ.enabled
-                          ? t('settings.integrations.statusPaused')
-                          : integ.environment === 'sandbox'
-                          ? t('settings.integrations.statusSandbox')
-                          : t('settings.integrations.statusConnected')
-                        const syncDisplay = integ.lastSyncAt
-                          ? t('settings.integrations.lastSyncLabel', {
-                              time: `${formatDate(new Date(integ.lastSyncAt))} · ${formatTime(new Date(integ.lastSyncAt))}`,
-                            })
-                          : t('settings.integrations.neverSynced')
-                        return (
-                          <div key={integ.id} className="integration-card">
-                            <div className="integration-header">
-                              <div>
-                                <strong>{meta.title}</strong>
-                                <span className="integ-cat">
-                                  {meta.category} ·{' '}
-                                  {integ.environment === 'production'
-                                    ? t('settings.integrations.envProd')
-                                    : t('settings.integrations.envSandbox')}
-                                </span>
-                              </div>
-                              <span
-                                className={`integ-status-pill ${
-                                  !integ.enabled
-                                    ? 'status-paused'
-                                    : integ.environment === 'sandbox'
-                                    ? 'status-sandbox'
-                                    : ''
-                                }`}
+                  )
+                }
+
+                const renderExternalIntegrationCard = (rec: ExternalIntegrationRecord) => {
+                  const isKeyRevealed = revealedKeyId === rec.id
+                  const maskedKey = `${rec.apiKeyPrefix}••••••••••••••••••••${rec.apiKeySecret.slice(-4)}`
+                  const linkedRole = roleDefinitions.find((r) => r.id === rec.roleId)
+                  const linkedRoleTitle = linkedRole ? getRoleCardTitle(linkedRole) : rec.roleId
+                  const rolePerms = getRoleSectionPermissions(linkedRole)
+                  const enabledSections = getEnabledSectionEntries(rolePerms)
+                  const statusLabel =
+                    rec.status === 'active'
+                      ? 'Activa'
+                      : rec.status === 'paused'
+                      ? 'Pausada'
+                      : 'Revocada'
+                  const statusClass =
+                    rec.status === 'active'
+                      ? ''
+                      : rec.status === 'paused'
+                      ? 'status-paused'
+                      : 'status-revoked'
+                  return (
+                    <article key={rec.id} className="ext-integ-item">
+                      <div className="ext-integ-item-head">
+                        <div>
+                          <div className="ext-integ-title-row">
+                            <strong>{rec.name}</strong>
+                            <span className="branch-type-pill">{rec.systemType}</span>
+                            <span className="ext-role-link-pill">
+                              <ShieldCheck size={11} /> Rol: {linkedRoleTitle}
+                            </span>
+                            <span className="ext-no-seat-pill">0 espacios de usuario</span>
+                            <span
+                              className={`integ-status-pill ${
+                                rec.environment === 'sandbox' ? 'status-sandbox' : ''
+                              }`}
+                            >
+                              {rec.environment === 'production' ? 'Producción' : 'Sandbox'}
+                            </span>
+                            <span className={`integ-status-pill ${statusClass}`}>{statusLabel}</span>
+                          </div>
+                          <p className="ext-integ-desc">{rec.description}</p>
+                        </div>
+
+                        <div className="ext-integ-actions">
+                          <button
+                            type="button"
+                            className="button button-secondary button-sm"
+                            onClick={() => handleOpenCrudSimulator(rec)}
+                          >
+                            <Terminal size={13} /> Probar CRUD
+                          </button>
+                          {canEditInteg && (
+                            <>
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={() => {
+                                  handleSelectCfgTarget(rec.id)
+                                  if (integViewTab !== 'all' && integViewTab !== 'custom') {
+                                    setIntegViewTab('custom')
+                                  }
+                                  window.setTimeout(() => {
+                                    document
+                                      .getElementById('ext-integ-configurator')
+                                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                                  }, 40)
+                                }}
                               >
-                                {statusLabel}
-                              </span>
-                            </div>
-                            <p>{meta.desc}</p>
-                            <div className="integration-meta-line">
-                              <code>{integ.endpointOrAccount}</code>
-                              <span>{syncDisplay}</span>
-                            </div>
+                                Configurar permisos
+                              </button>
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={() => handleOpenEditExternalInteg(rec)}
+                              >
+                                Editar rol / config
+                              </button>
+                              {rec.status === 'active' ? (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm"
+                                  onClick={() => handleSetExternalStatus(rec, 'paused')}
+                                  title="Pausar temporalmente"
+                                >
+                                  <Pause size={13} /> Pausar
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm"
+                                  onClick={() => handleSetExternalStatus(rec, 'active')}
+                                  title="Reactivar acceso API"
+                                >
+                                  <Play size={13} /> Activar
+                                </button>
+                              )}
+                              {rec.status !== 'revoked' && (
+                                <button
+                                  type="button"
+                                  className="button button-ghost button-sm"
+                                  onClick={() => handleSetExternalStatus(rec, 'revoked')}
+                                  title="Revocar credencial"
+                                >
+                                  <ShieldAlert size={13} /> Revocar
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {canDeleteInteg && rec.origin !== 'commercial' && (
+                            <button
+                              type="button"
+                              className="icon-danger-btn"
+                              onClick={() => handleDeleteExternalIntegration(rec)}
+                              title="Eliminar registro de integración"
+                              aria-label={`Eliminar ${rec.name}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="ext-integ-cred-bar">
+                        <div className="ext-integ-cred-token">
+                          <span className="ext-cred-label">Bearer Token</span>
+                          <code>{isKeyRevealed ? rec.apiKeySecret : maskedKey}</code>
+                        </div>
+                        <div className="ext-integ-cred-btns">
+                          <button
+                            type="button"
+                            className="button button-ghost button-sm"
+                            onClick={() => setRevealedKeyId(isKeyRevealed ? null : rec.id)}
+                          >
+                            {isKeyRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
+                            {isKeyRevealed ? 'Ocultar' : 'Revelar'}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button-ghost button-sm"
+                            onClick={() => handleCopyApiKey(rec.apiKeySecret, rec.name)}
+                          >
+                            <Copy size={13} /> Copiar
+                          </button>
+                          {canEditInteg && (
                             <button
                               type="button"
                               className="button button-ghost button-sm"
-                              onClick={() => setEditingIntegration({ ...integ })}
+                              onClick={() => handleRotateExternalKey(rec)}
                             >
-                              {t('settings.integrations.configureBtn')} &rarr;
+                              <RefreshCw size={13} /> Rotar llave
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="ext-integ-perms-grid">
+                        {enabledSections.slice(0, 8).map((entry) => (
+                          <div
+                            key={`${entry.moduleName}:${entry.sectionName}`}
+                            className="ext-perm-module-chip"
+                          >
+                            <span className="ext-perm-module-name">
+                              {entry.moduleName} › {entry.sectionName}
+                            </span>
+                            <div className="ext-perm-verbs">
+                              <span className={`ext-level-badge level-${entry.level}`}>
+                                {getLevelLabel(entry.level)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        {enabledSections.length > 8 && (
+                          <div className="ext-perm-module-chip ext-perm-more-chip">
+                            <span className="ext-perm-module-name">
+                              +{enabledSections.length - 8} secciones adicionales heredadas del rol
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="ext-integ-foot-meta">
+                        <span>
+                          Límite: <strong>{rec.rateLimitPerMin} req/min</strong>
+                        </span>
+                        <span>
+                          Peticiones:{' '}
+                          <strong className="tabular-nums">
+                            {rec.requestsCount.toLocaleString('es-MX')}
+                          </strong>
+                        </span>
+                        <span>
+                          Último uso:{' '}
+                          <strong className="tabular-nums">
+                            {rec.lastUsedAtIso
+                              ? `${formatDate(new Date(rec.lastUsedAtIso))} · ${formatTime(new Date(rec.lastUsedAtIso))}`
+                              : 'Sin peticiones aún'}
+                          </strong>
+                        </span>
+                        {rec.ipAllowlist && (
+                          <span>
+                            IPs: <code className="mono">{rec.ipAllowlist}</code>
+                          </span>
+                        )}
+                        {rec.webhookCallbackUrl && (
+                          <span>
+                            Callback: <code className="mono">{rec.webhookCallbackUrl}</code>
+                          </span>
+                        )}
+                      </div>
+                    </article>
+                  )
+                }
+
+                return (
+                <>
+                  {/* NAVEGACIÓN DE BLOQUES EN INTEGRACIONES */}
+                  <div className="integ-section-nav" role="tablist" aria-label="Secciones de integraciones">
+                    {(
+                      [
+                        { id: 'all' as const, label: 'Vista completa (3 secciones)' },
+                        {
+                          id: 'commercial' as const,
+                          label: `1. Integraciones comerciales (${commercialNativeIntegrations.length + commercialExternalIntegrations.length})`,
+                        },
+                        {
+                          id: 'custom' as const,
+                          label: `2. Integraciones personalizadas (${customExternalIntegrations.length + customNativeWebhooks.length})`,
+                        },
+                        {
+                          id: 'analyzer' as const,
+                          label: `3. Analizador y logs (${allIntegrationLogs.length})`,
+                        },
+                      ]
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={integViewTab === tab.id}
+                        className={`integ-section-nav-btn ${integViewTab === tab.id ? 'active' : ''}`}
+                        onClick={() => setIntegViewTab(tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* SECCIÓN 1: INTEGRACIONES COMERCIALES (PAC, ECOMMERCE, BANCA) */}
+                  {(integViewTab === 'all' || integViewTab === 'commercial') && (
+                    <section className="integ-major-section" aria-labelledby="integ-sec-commercial">
+                      <div className="integ-major-section-head">
+                        <div>
+                          <span className="integ-section-kicker">01 · Conectores oficiales</span>
+                          <h3 id="integ-sec-commercial">Integraciones comerciales</h3>
+                          <p>
+                            Integraciones listas para PAC de timbrado fiscal CFDI, dispersión bancaria SPEI, canales Ecommerce y suite corporativa.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="settings-section-card">
+                        <div className="card-header-row">
+                          <div>
+                            <h3>PAC Fiscal, Dispersión Bancaria y Productividad</h3>
+                            <p>
+                              Proveedores comerciales autorizados para facturación electrónica SAT, pagos bancarios y correo corporativo.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="integrations-grid">
+                          {commercialNativeIntegrations.map(renderNativeIntegrationCard)}
+                        </div>
+                      </div>
+
+                      <div className="settings-section-card">
+                        <div className="card-header-row">
+                          <div>
+                            <div className="plan-title-row">
+                              <h3>Ecommerce & Canales Comerciales</h3>
+                              <span className="org-tax-badge">
+                                {commercialExternalIntegrations.length} conector(es)
+                              </span>
+                            </div>
+                            <p>
+                              Tiendas en línea y canales comerciales sincronizados con inventario, pedidos y clientes mediante roles sin consumir asientos.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="ext-integ-list">
+                          {commercialExternalIntegrations.map(renderExternalIntegrationCard)}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {/* SECCIÓN 2: INTEGRACIONES PERSONALIZADAS (CREADAS POR EL ADMIN) */}
+                  {(integViewTab === 'all' || integViewTab === 'custom') && (
+                    <section className="integ-major-section" aria-labelledby="integ-sec-custom">
+                      <div className="integ-major-section-head">
+                        <div>
+                          <span className="integ-section-kicker">02 · Creadas por el administrador</span>
+                          <h3 id="integ-sec-custom">Integraciones personalizadas</h3>
+                          <p>
+                            Integraciones API, conectores a medida y webhooks creados por el administrador del sistema, asociados directamente a un rol sin gastar licencias de usuario.
+                          </p>
+                        </div>
+                        <div className="ext-integ-kpis">
+                          <div className="ext-integ-kpi-box">
+                            <span>Espacios usuario</span>
+                            <strong>0 usados</strong>
+                          </div>
+                          <div className="ext-integ-kpi-box">
+                            <span>Activas</span>
+                            <strong>
+                              {customExternalIntegrations.filter((r) => r.status === 'active').length}{' '}
+                              / {customExternalIntegrations.length}
+                            </strong>
+                          </div>
+                          <div className="ext-integ-kpi-box">
+                            <span>Peticiones</span>
+                            <strong className="tabular-nums">
+                              {customExternalIntegrations
+                                .reduce((sum, r) => sum + r.requestsCount, 0)
+                                .toLocaleString('es-MX')}
+                            </strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {newlyIssuedKeyBanner && (
+                        <div className="ext-key-banner" role="status">
+                          <div className="ext-key-banner-copy">
+                            <div className="ext-key-banner-title">
+                              <KeyRound size={14} />
+                              <strong>
+                                Llave API emitida para {newlyIssuedKeyBanner.integrationName}
+                              </strong>
+                            </div>
+                            <p>
+                              Copia e instala este token Bearer en tu sistema externo. Puedes consultarlo o rotarlo desde la tarjeta cuando lo necesites.
+                            </p>
+                            <code className="ext-key-secret-code">{newlyIssuedKeyBanner.apiKeySecret}</code>
+                          </div>
+                          <div className="ext-key-banner-actions">
+                            <button
+                              type="button"
+                              className="button button-primary button-sm"
+                              onClick={() =>
+                                handleCopyApiKey(
+                                  newlyIssuedKeyBanner.apiKeySecret,
+                                  newlyIssuedKeyBanner.integrationName
+                                )
+                              }
+                            >
+                              <Copy size={13} /> Copiar token
+                            </button>
+                            <button
+                              type="button"
+                              className="modal-close-btn"
+                              onClick={() => setNewlyIssuedKeyBanner(null)}
+                              aria-label="Cerrar aviso de llave"
+                            >
+                              <X size={14} />
                             </button>
                           </div>
-                        )
-                      })}
-                    </div>
-                  </div>
+                        </div>
+                      )}
+
+                      <div className="settings-section-card">
+                        <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '10px' }}>
+                          <div>
+                            <div className="plan-title-row">
+                              <h3>Integraciones API Personalizadas</h3>
+                              <span className="org-tax-badge">REST API v1 · Vinculada a Rol</span>
+                            </div>
+                            <p>
+                              Sistemas internos, BI, ERP legacy o middleware registrados por el administrador del sistema.
+                            </p>
+                          </div>
+                          {canCreateInteg && (
+                            <button
+                              type="button"
+                              className="button button-secondary button-sm"
+                              onClick={handleOpenCreateExternalInteg}
+                            >
+                              <Plus size={13} /> Nueva integración API
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="audit-toolbar">
+                          <label className="audit-search-wrap">
+                            <Search size={13} />
+                            <input
+                              type="search"
+                              value={extSearch}
+                              onChange={(e) => setExtSearch(e.target.value)}
+                              placeholder="Buscar por nombre, categoría o prefijo de llave..."
+                              aria-label="Buscar integraciones personalizadas"
+                            />
+                          </label>
+                          <div className="audit-filter-tabs" role="tablist" aria-label="Filtrar estado de integraciones personalizadas">
+                            {[
+                              { id: 'all' as const, label: 'Todas' },
+                              { id: 'active' as const, label: 'Activas' },
+                              { id: 'paused' as const, label: 'Pausadas' },
+                              { id: 'revoked' as const, label: 'Revocadas' },
+                            ].map((tab) => (
+                              <button
+                                key={tab.id}
+                                type="button"
+                                role="tab"
+                                aria-selected={extStatusFilter === tab.id}
+                                className={`audit-filter-btn ${extStatusFilter === tab.id ? 'active' : ''}`}
+                                onClick={() => setExtStatusFilter(tab.id)}
+                              >
+                                {tab.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {filteredCustomIntegrations.length === 0 ? (
+                          <div className="audit-empty-state">
+                            <strong>Sin integraciones personalizadas que coincidan</strong>
+                            <p>
+                              Crea una integración nueva desde el configurador inferior o el botón «+ Nueva integración API».
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="ext-integ-list">
+                            {filteredCustomIntegrations.map(renderExternalIntegrationCard)}
+                          </div>
+                        )}
+                      </div>
+
+                      {customNativeWebhooks.length > 0 && (
+                        <div className="settings-section-card">
+                          <div className="card-header-row">
+                            <div>
+                              <h3>Webhooks de Eventos Salientes</h3>
+                              <p>
+                                Endpoints personalizados configurados por el administrador para recibir notificaciones en tiempo real.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="integrations-grid">
+                            {customNativeWebhooks.map(renderNativeIntegrationCard)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CONFIGURADOR GLOBAL DE INTEGRACIÓN PERSONALIZADA, ROL Y PERMISOS */}
+                      <form
+                        id="ext-integ-configurator"
+                        className="settings-section-card ext-configurator-card"
+                        onSubmit={handleSaveInlineIntegrationConfig}
+                      >
+                        <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '12px' }}>
+                          <div>
+                            <div className="plan-title-row">
+                              <h3>Configurador de Integración, Rol y Permisos por Sección</h3>
+                              <span className="org-tax-badge">Configuración Global · 0 asientos</span>
+                            </div>
+                            <p>
+                              Define el nombre de la integración, vincula un rol operativo (o crea uno dedicado) y ajusta los permisos granulares (Ver, Crear, Editar, Completo) para cada sección de cada módulo.
+                            </p>
+                          </div>
+                          <div className="ext-config-selector-wrap">
+                            <label htmlFor="cfg-integ-target">Integración a configurar</label>
+                            <select
+                              id="cfg-integ-target"
+                              value={cfgTargetId}
+                              onChange={(e) => handleSelectCfgTarget(e.target.value)}
+                            >
+                              {externalIntegrations.map((rec) => (
+                                <option key={rec.id} value={rec.id}>
+                                  {rec.name} ({rec.systemType})
+                                </option>
+                              ))}
+                              {canCreateInteg && (
+                                <option value="__new__">+ Registrar nueva integración</option>
+                              )}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="ext-config-top-grid">
+                          <div className="form-field">
+                            <label htmlFor="cfg-integ-name">Nombre de la integración *</label>
+                            <input
+                              id="cfg-integ-name"
+                              type="text"
+                              placeholder="Ej. Sincronizador ERP Contable / WMS"
+                              value={cfgName}
+                              disabled={!canSaveInlineConfig}
+                              onChange={(e) => setCfgName(e.target.value)}
+                              required
+                            />
+                          </div>
+
+                          <div className="form-field">
+                            <label htmlFor="cfg-integ-type">Categoría del sistema</label>
+                            <select
+                              id="cfg-integ-type"
+                              value={cfgSystemType}
+                              disabled={!canSaveInlineConfig}
+                              onChange={(e) =>
+                                setCfgSystemType(e.target.value as ExternalSystemType)
+                              }
+                            >
+                              <option value="Ecommerce">Ecommerce / Tienda en Línea</option>
+                              <option value="BI / Analítica">BI / Analítica / Data Warehouse</option>
+                              <option value="Contabilidad Externa">Contabilidad Externa / SAT</option>
+                              <option value="WMS / Logística">WMS / Logística / 3PL</option>
+                              <option value="Webhook / Middleware">Middleware / iPaaS / Zapier</option>
+                              <option value="ERP / Legacy">ERP / Sistema Legacy</option>
+                              <option value="Otro">Otro sistema</option>
+                            </select>
+                          </div>
+
+                          <div className="form-field">
+                            <div className="ext-cfg-role-label-row">
+                              <label htmlFor="cfg-integ-role">Rol asociado *</label>
+                              <div className="ext-role-mode-tabs" role="tablist" aria-label="Modo de rol">
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={cfgRoleMode === 'existing'}
+                                  disabled={!canSaveInlineConfig}
+                                  className={cfgRoleMode === 'existing' ? 'active' : ''}
+                                  onClick={() => handleSelectCfgRole(cfgRoleId)}
+                                >
+                                  Rol existente
+                                </button>
+                                <button
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={cfgRoleMode === 'newRole'}
+                                  disabled={!canSaveInlineConfig}
+                                  className={cfgRoleMode === 'newRole' ? 'active' : ''}
+                                  onClick={() => {
+                                    setCfgRoleMode('newRole')
+                                    if (!cfgNewRoleName.trim()) {
+                                      setCfgNewRoleName(
+                                        cfgName.trim() ? `Rol · ${cfgName.trim()}` : ''
+                                      )
+                                    }
+                                  }}
+                                >
+                                  + Crear rol nuevo
+                                </button>
+                              </div>
+                            </div>
+                            {cfgRoleMode === 'existing' ? (
+                              <select
+                                id="cfg-integ-role"
+                                value={cfgRoleId}
+                                disabled={!canSaveInlineConfig}
+                                onChange={(e) => handleSelectCfgRole(e.target.value)}
+                              >
+                                {roleDefinitions.map((r) => {
+                                  const count = getEnabledSectionEntries(
+                                    getRoleSectionPermissions(r)
+                                  ).length
+                                  return (
+                                    <option key={r.id} value={r.id}>
+                                      {getRoleCardTitle(r)}
+                                      {r.forApiIntegration ? ' · API' : ''} ({count} secciones)
+                                    </option>
+                                  )
+                                })}
+                              </select>
+                            ) : (
+                              <input
+                                id="cfg-integ-role"
+                                type="text"
+                                placeholder="Nombre del nuevo rol (ej. API Portal Clientes)"
+                                value={cfgNewRoleName}
+                                disabled={!canSaveInlineConfig}
+                                onChange={(e) => setCfgNewRoleName(e.target.value)}
+                                required
+                              />
+                            )}
+                          </div>
+                        </div>
+
+                        {cfgRoleMode === 'existing' &&
+                          !isCfgAdminLocked &&
+                          (sharedUsersCount > 0 || sharedOtherIntegsCount > 0) && (
+                            <div className="ext-shared-role-note" role="status">
+                              <ShieldCheck size={14} />
+                              <span>
+                                Los cambios en la matriz actualizarán globalmente al rol{' '}
+                                <strong>
+                                  {selectedCfgRoleObj ? getRoleCardTitle(selectedCfgRoleObj) : cfgRoleId}
+                                </strong>{' '}
+                                (aplicado actualmente a {sharedUsersCount} usuario(s) y{' '}
+                                {sharedOtherIntegsCount} integración(es) adicional(es)). Si deseas
+                                aislar sus permisos, cambia a <strong>+ Crear rol nuevo</strong>.
+                              </span>
+                            </div>
+                          )}
+
+                        <div className="ext-config-matrix-wrap">
+                          <div className="ext-config-matrix-head">
+                            <strong>
+                              Permisos granulares por módulo y sección (Sin acceso · Ver · Crear · Editar · Completo)
+                            </strong>
+                            <span>
+                              Al guardar se actualizan simultáneamente la integración y los permisos del rol en la configuración global.
+                            </span>
+                          </div>
+                          {renderRoleSectionMatrix(cfgPerms, setCfgPerms, {
+                            readOnly: !canSaveInlineConfig || isCfgAdminLocked,
+                            readOnlyNotice: isCfgAdminLocked
+                              ? 'El rol Administrador General mantiene acceso Completo protegido. Selecciona otro rol o cambia a "+ Crear rol nuevo" para personalizar permisos granulares.'
+                              : !canSaveInlineConfig
+                              ? 'Tu sesión actual solo tiene permiso de lectura en Configuración › Integraciones.'
+                              : undefined,
+                            filterValue: cfgMatrixFilter,
+                            onFilterChange: setCfgMatrixFilter,
+                          })}
+                        </div>
+
+                        <div className="ext-config-footer">
+                          <button
+                            type="button"
+                            className="button button-ghost button-sm"
+                            onClick={() => handleSelectCfgTarget(cfgTargetId)}
+                          >
+                            <RotateCcw size={13} /> Restablecer cambios
+                          </button>
+                          {canSaveInlineConfig && (
+                            <button type="submit" className="button button-primary">
+                              <Check size={14} />{' '}
+                              {cfgTargetId === '__new__'
+                                ? 'Crear integración y guardar en configuración global'
+                                : 'Guardar en configuración global'}
+                            </button>
+                          )}
+                        </div>
+                      </form>
+                    </section>
+                  )}
+
+                  {/* SECCIÓN 3: ANALIZADOR Y LOGS DE LAS INTEGRACIONES */}
+                  {(integViewTab === 'all' || integViewTab === 'analyzer') && (
+                    <section className="integ-major-section" aria-labelledby="integ-sec-analyzer">
+                      <div className="integ-major-section-head">
+                        <div>
+                          <span className="integ-section-kicker">03 · Diagnóstico y trazabilidad</span>
+                          <h3 id="integ-sec-analyzer">Analizador y logs de las integraciones</h3>
+                          <p>
+                            Valida en tiempo real los permisos por endpoint según el rol vinculado, ejecuta llamadas de prueba y revisa el historial de respuestas para depuración.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* ANALIZADOR INTERACTIVO DE ENDPOINTS Y SALUD */}
+                      <div className="settings-section-card integ-analyzer-card">
+                        <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '10px' }}>
+                          <div>
+                            <div className="plan-title-row">
+                              <h3>Analizador de Endpoints y Permisos en Vivo</h3>
+                              <span className="org-tax-badge">Diagnóstico API</span>
+                            </div>
+                            <p>
+                              Selecciona una integración y un endpoint para comprobar si su rol permite la operación antes o después de ejecutar la petición.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="integ-analyzer-kpis">
+                          <div className="integ-analyzer-kpi">
+                            <span>Llamadas registradas</span>
+                            <strong className="tabular-nums">{integrationLogMetrics.total}</strong>
+                          </div>
+                          <div className="integ-analyzer-kpi">
+                            <span>Exitosas (2xx)</span>
+                            <strong className="tabular-nums is-success">
+                              {integrationLogMetrics.successCount}
+                            </strong>
+                          </div>
+                          <div className="integ-analyzer-kpi">
+                            <span>Errores (4xx / 5xx)</span>
+                            <strong className="tabular-nums is-error">
+                              {integrationLogMetrics.errorCount}
+                            </strong>
+                          </div>
+                          <div className="integ-analyzer-kpi">
+                            <span>Tasa de éxito</span>
+                            <strong className="tabular-nums">
+                              {integrationLogMetrics.successRate}%
+                            </strong>
+                          </div>
+                          <div className="integ-analyzer-kpi">
+                            <span>Latencia promedio</span>
+                            <strong className="tabular-nums">
+                              {integrationLogMetrics.avgLatencyMs} ms
+                            </strong>
+                          </div>
+                        </div>
+
+                        {resolvedAnalyzerInteg && (
+                          <>
+                            <div className="api-sim-controls api-sim-controls-4">
+                              <div className="form-field">
+                                <label htmlFor="analyzer-integ-select">Integración</label>
+                                <select
+                                  id="analyzer-integ-select"
+                                  value={resolvedAnalyzerInteg.id}
+                                  onChange={(e) => {
+                                    setAnalyzerIntegrationId(e.target.value)
+                                    setSimResult(null)
+                                  }}
+                                >
+                                  {externalIntegrations.map((rec) => (
+                                    <option key={rec.id} value={rec.id}>
+                                      {rec.name} ({rec.origin === 'commercial' ? 'Comercial' : 'Personalizada'})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="form-field">
+                                <label htmlFor="analyzer-method-select">Método / Acción</label>
+                                <select
+                                  id="analyzer-method-select"
+                                  value={simMethod}
+                                  onChange={(e) => {
+                                    const nextMethod = e.target.value as 'GET' | 'POST' | 'PUT' | 'DELETE'
+                                    setSimMethod(nextMethod)
+                                    setSimPayload(
+                                      getSamplePayloadForSection(simModule, simSection, nextMethod)
+                                    )
+                                    setSimResult(null)
+                                  }}
+                                >
+                                  <option value="GET">GET (Consultar · Ver)</option>
+                                  <option value="POST">POST (Insertar · Crear)</option>
+                                  <option value="PUT">PUT (Actualizar · Editar)</option>
+                                  <option value="DELETE">DELETE (Borrar · Completo)</option>
+                                </select>
+                              </div>
+                              <div className="form-field">
+                                <label htmlFor="analyzer-module-select">Módulo</label>
+                                <select
+                                  id="analyzer-module-select"
+                                  value={simModule}
+                                  onChange={(e) => {
+                                    const nextMod = e.target.value
+                                    const firstSec =
+                                      SYSTEM_MODULE_SECTIONS[
+                                        nextMod as keyof typeof SYSTEM_MODULE_SECTIONS
+                                      ]?.[0] || ''
+                                    setSimModule(nextMod)
+                                    setSimSection(firstSec)
+                                    setSimPayload(
+                                      getSamplePayloadForSection(nextMod, firstSec, simMethod)
+                                    )
+                                    setSimResult(null)
+                                  }}
+                                >
+                                  {Object.keys(SYSTEM_MODULE_SECTIONS).map((mod) => (
+                                    <option key={mod} value={mod}>
+                                      {mod}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="form-field">
+                                <label htmlFor="analyzer-section-select">Sección</label>
+                                <select
+                                  id="analyzer-section-select"
+                                  value={simSection}
+                                  onChange={(e) => {
+                                    const nextSec = e.target.value
+                                    setSimSection(nextSec)
+                                    setSimPayload(
+                                      getSamplePayloadForSection(simModule, nextSec, simMethod)
+                                    )
+                                    setSimResult(null)
+                                  }}
+                                >
+                                  {analyzerAvailableSections.map((sec) => (
+                                    <option key={sec} value={sec}>
+                                      {sec}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="api-sim-endpoint-preview">
+                              <Code2 size={14} />
+                              <code>
+                                {simMethod} https://api.aesnexus.mx
+                                {getSectionApiEndpoint(simModule, simSection)}
+                              </code>
+                              <span className={`ext-level-badge level-${analyzerSectionLevel}`}>
+                                Rol {analyzerRoleTitle}: {analyzerLevelMeta.label}
+                              </span>
+                              <span
+                                className={`integ-log-status-badge ${
+                                  analyzerAllowedByRole ? 'is-success' : 'is-error'
+                                }`}
+                              >
+                                {analyzerAllowedByRole
+                                  ? 'Autorizado'
+                                  : resolvedAnalyzerInteg.status !== 'active'
+                                  ? `Estado: ${resolvedAnalyzerInteg.status}`
+                                  : 'Sin permiso suficiente'}
+                              </span>
+                              <button
+                                type="button"
+                                className="button button-primary button-sm"
+                                style={{ marginLeft: 'auto' }}
+                                onClick={() => handleRunCrudSimulation(resolvedAnalyzerInteg.id)}
+                              >
+                                <Play size={13} /> Ejecutar y registrar log
+                              </button>
+                            </div>
+
+                            {simMethod !== 'GET' && (
+                              <div className="form-field">
+                                <label htmlFor="analyzer-payload-textarea">
+                                  Payload JSON de prueba
+                                </label>
+                                <textarea
+                                  id="analyzer-payload-textarea"
+                                  className="api-sim-textarea"
+                                  rows={3}
+                                  value={simPayload}
+                                  onChange={(e) => setSimPayload(e.target.value)}
+                                />
+                              </div>
+                            )}
+
+                            {simResult && (
+                              <div className="api-sim-response-box">
+                                <div className="api-sim-response-head">
+                                  <span
+                                    className={`integ-status-pill ${
+                                      simResult.statusCode >= 400 ? 'status-revoked' : ''
+                                    }`}
+                                  >
+                                    HTTP {simResult.statusCode}{' '}
+                                    {simResult.statusCode === 200
+                                      ? 'OK'
+                                      : simResult.statusCode === 201
+                                      ? 'Created'
+                                      : simResult.statusCode === 401
+                                      ? 'Unauthorized'
+                                      : 'Forbidden'}
+                                  </span>
+                                  <span className="tabular-nums">{simResult.latencyMs} ms</span>
+                                </div>
+                                <pre className="api-sim-pre">{simResult.body}</pre>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* LOGS DE INTEGRACIÓN PARA DEPURACIÓN API */}
+                      <div className="settings-section-card integ-logs-card">
+                        <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '10px' }}>
+                          <div>
+                            <div className="plan-title-row">
+                              <h3>Logs de Integración</h3>
+                              <span className="org-tax-badge tabular-nums">
+                                {filteredIntegrationLogs.length}{' '}
+                                {filteredIntegrationLogs.length === 1 ? 'llamada' : 'llamadas'}
+                              </span>
+                            </div>
+                            <p>
+                              Últimas llamadas API realizadas por sistemas externos con fecha, tipo de acción, endpoint, estado (éxito/error) y payload de respuesta JSON.
+                            </p>
+                          </div>
+                          <div className="ext-integ-actions">
+                            {canEditInteg && allIntegrationLogs.length > 0 && (
+                              <button
+                                type="button"
+                                className="button button-ghost button-sm"
+                                onClick={handleClearIntegrationLogs}
+                              >
+                                <Trash2 size={13} /> Limpiar logs
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="integ-logs-toolbar">
+                          <label className="audit-search-wrap">
+                            <Search size={13} />
+                            <input
+                              type="search"
+                              value={integLogSearch}
+                              onChange={(e) => setIntegLogSearch(e.target.value)}
+                              placeholder="Buscar por endpoint, integración, error o campo del payload..."
+                              aria-label="Filtrar logs de integración"
+                            />
+                          </label>
+
+                          <select
+                            className="integ-logs-filter-select"
+                            aria-label="Filtrar por integración externa"
+                            value={integLogIntegrationFilter}
+                            onChange={(e) => setIntegLogIntegrationFilter(e.target.value)}
+                          >
+                            <option value="all">Todas las integraciones</option>
+                            {externalIntegrations.map((rec) => (
+                              <option key={rec.id} value={rec.id}>
+                                {rec.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          <select
+                            className="integ-logs-filter-select"
+                            aria-label="Filtrar por tipo de acción"
+                            value={integLogMethodFilter}
+                            onChange={(e) =>
+                              setIntegLogMethodFilter(
+                                e.target.value as 'all' | 'GET' | 'POST' | 'PUT' | 'DELETE'
+                              )
+                            }
+                          >
+                            <option value="all">Todas las acciones</option>
+                            <option value="GET">GET · Consulta</option>
+                            <option value="POST">POST · Creación</option>
+                            <option value="PUT">PUT · Edición</option>
+                            <option value="DELETE">DELETE · Eliminación</option>
+                          </select>
+
+                          <select
+                            className="integ-logs-filter-select"
+                            aria-label="Filtrar por estado de respuesta"
+                            value={integLogStatusFilter}
+                            onChange={(e) =>
+                              setIntegLogStatusFilter(e.target.value as 'all' | 'success' | 'error')
+                            }
+                          >
+                            <option value="all">Todos los estados</option>
+                            <option value="success">Solo Éxito (2xx)</option>
+                            <option value="error">Solo Error (4xx / 5xx)</option>
+                          </select>
+                        </div>
+
+                        {filteredIntegrationLogs.length === 0 ? (
+                          <div className="audit-empty-state">
+                            <strong>Sin llamadas API registradas con estos filtros</strong>
+                            <p>
+                              Ejecuta una llamada desde el Analizador superior o limpia los filtros activos para revisar el historial completo.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="integ-logs-list">
+                            {filteredIntegrationLogs.map((log, index) => {
+                              const isError = log.statusCode >= 400
+                              const actionTypeLabel =
+                                log.method === 'GET'
+                                  ? 'Consulta'
+                                  : log.method === 'POST'
+                                  ? 'Creación'
+                                  : log.method === 'PUT'
+                                  ? 'Edición'
+                                  : 'Eliminación'
+                              const isExpanded =
+                                expandedIntegLogIds[log.id] !== undefined
+                                  ? expandedIntegLogIds[log.id]
+                                  : index === 0
+                              const compactPayload = log.responsePayload
+                                .replace(/\s+/g, ' ')
+                                .trim()
+                              return (
+                                <article
+                                  key={log.id}
+                                  className={`integ-log-entry ${isError ? 'is-error' : 'is-success'}`}
+                                >
+                                  <div className="integ-log-entry-grid">
+                                    <div className="integ-log-col integ-log-col-date">
+                                      <span className="integ-log-col-label">Fecha</span>
+                                      <strong className="tabular-nums">
+                                        {formatDate(new Date(log.timestampIso))} ·{' '}
+                                        {formatTime(new Date(log.timestampIso))}
+                                      </strong>
+                                      <div className="integ-log-source">
+                                        <span>{log.integrationName}</span>
+                                        <span
+                                          className={`integ-status-pill ${
+                                            log.integrationEnv === 'sandbox' ? 'status-sandbox' : ''
+                                          }`}
+                                        >
+                                          {log.integrationEnv === 'production'
+                                            ? 'Producción'
+                                            : 'Sandbox'}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="integ-log-col integ-log-col-action">
+                                      <span className="integ-log-col-label">Tipo de acción</span>
+                                      <div className="integ-log-action-row">
+                                        <span
+                                          className={`integ-method-badge method-${log.method.toLowerCase()}`}
+                                        >
+                                          {log.method}
+                                        </span>
+                                        <strong>{actionTypeLabel}</strong>
+                                      </div>
+                                      {log.moduleName && (
+                                        <span className="integ-log-submeta">
+                                          {log.moduleName}
+                                          {log.sectionName ? ` › ${log.sectionName}` : ''}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <div className="integ-log-col integ-log-col-endpoint">
+                                      <span className="integ-log-col-label">Endpoint</span>
+                                      <code className="mono integ-log-endpoint-code">
+                                        {log.endpoint}
+                                      </code>
+                                      <span className="integ-log-submeta">{log.summary}</span>
+                                    </div>
+
+                                    <div className="integ-log-col integ-log-col-status">
+                                      <span className="integ-log-col-label">Estado</span>
+                                      <span
+                                        className={`integ-log-status-badge ${
+                                          isError ? 'is-error' : 'is-success'
+                                        }`}
+                                      >
+                                        {isError ? (
+                                          <AlertTriangle size={11} />
+                                        ) : (
+                                          <CheckCircle2 size={11} />
+                                        )}
+                                        {isError ? 'Error' : 'Éxito'} · HTTP {log.statusCode}
+                                      </span>
+                                      <span className="integ-log-submeta tabular-nums">
+                                        Latencia: {log.latencyMs} ms
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="integ-log-payload-bar">
+                                    <div className="integ-log-payload-preview">
+                                      <span className="integ-log-col-label">Payload de respuesta:</span>
+                                      <code className="mono">{compactPayload}</code>
+                                    </div>
+                                    <div className="integ-log-payload-actions">
+                                      <button
+                                        type="button"
+                                        className="button button-ghost button-sm"
+                                        onClick={() =>
+                                          setExpandedIntegLogIds((prev) => ({
+                                            ...prev,
+                                            [log.id]: !isExpanded,
+                                          }))
+                                        }
+                                        aria-expanded={isExpanded}
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown size={13} />
+                                        ) : (
+                                          <ChevronRight size={13} />
+                                        )}
+                                        {isExpanded ? 'Ocultar JSON' : 'Ver payload'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="button button-ghost button-sm"
+                                        onClick={() => {
+                                          if (navigator.clipboard?.writeText) {
+                                            navigator.clipboard
+                                              .writeText(log.responsePayload)
+                                              .catch(() => {})
+                                          }
+                                          toast.success(
+                                            'Payload JSON copiado al portapapeles.',
+                                            'Logs de Integración'
+                                          )
+                                        }}
+                                      >
+                                        <Copy size={12} /> Copiar JSON
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {isExpanded && (
+                                    <pre className="integ-log-payload-pre">{log.responsePayload}</pre>
+                                  )}
+                                </article>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  )}
                 </>
-              )}
+                )
+              })()}
 
               {activeSetting === 'Auditoría' && (
                 <div className="settings-section-card">
@@ -4228,7 +5878,8 @@ export function SettingsSection({
                                 {t('settings.plan.activeUsersDetail', {
                                   active: activeUsersCount,
                                   total: users.length,
-                                })}
+                                })}{' '}
+                                · {externalIntegrations.length} integraciones API (0 asientos)
                               </span>
                             </div>
 
@@ -4906,7 +6557,7 @@ export function SettingsSection({
         </div>
       )}
 
-      {/* MODAL: CREAR NUEVO ROL */}
+      {/* MODAL: CREAR NUEVO ROL CON PERMISOS JERÁRQUICOS POR SECCIÓN */}
       {showCreateRoleModal && (
         <div
           className="modal-backdrop"
@@ -4916,8 +6567,7 @@ export function SettingsSection({
           }}
         >
           <section
-            className="create-modal"
-            style={{ maxWidth: '540px' }}
+            className="create-modal role-hierarchy-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-role-modal-title"
@@ -4926,7 +6576,9 @@ export function SettingsSection({
               <div>
                 <div className="panel-kicker">{t('settings.roles.createModal.kicker')}</div>
                 <h2 id="create-role-modal-title">{t('settings.roles.createModal.title')}</h2>
-                <p>{t('settings.roles.createModal.desc')}</p>
+                <p>
+                  Configura el nivel de acceso jerárquico para cada sección de cada módulo. Este rol puede asignarse a usuarios o vincularse directamente a integraciones API sin gastar licencias de usuario.
+                </p>
               </div>
               <button
                 type="button"
@@ -4939,60 +6591,57 @@ export function SettingsSection({
             </div>
 
             <form onSubmit={handleCreateRoleSubmit}>
-              <div className="form-field">
-                <label htmlFor="create-role-name">{t('settings.roles.createModal.nameLabel')}</label>
-                <input
-                  id="create-role-name"
-                  type="text"
-                  placeholder={t('settings.roles.createModal.namePlaceholder')}
-                  value={newRoleName}
-                  onChange={(e) => setNewRoleName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-field">
-                <label htmlFor="create-role-desc">{t('settings.roles.createModal.descLabel')}</label>
-                <input
-                  id="create-role-desc"
-                  type="text"
-                  placeholder={t('settings.roles.createModal.descPlaceholder')}
-                  value={newRoleDesc}
-                  onChange={(e) => setNewRoleDesc(e.target.value)}
-                />
-              </div>
-
-              <div className="form-field">
-                <span className="settings-field-label">
-                  {t('settings.roles.createModal.capsLabel')} ({newRoleCapsDraft.length})
-                </span>
-                <div className="role-permissions-matrix">
-                  {ALL_CAPABILITIES.map((cap) => {
-                    const checked = newRoleCapsDraft.includes(cap.id)
-                    return (
-                      <label
-                        key={cap.id}
-                        className={`role-perm-checkbox-card ${checked ? 'checked' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            setNewRoleCapsDraft((prev) =>
-                              e.target.checked
-                                ? [...prev, cap.id]
-                                : prev.filter((c) => c !== cap.id)
-                            )
-                          }}
-                        />
-                        <div>
-                          <strong>{getCapabilityLabel(cap.id)}</strong>
-                          <small>{getRoleLabel(cap.group)}</small>
-                        </div>
-                      </label>
-                    )
-                  })}
+              <div className="form-grid-2">
+                <div className="form-field">
+                  <label htmlFor="create-role-name">{t('settings.roles.createModal.nameLabel')}</label>
+                  <input
+                    id="create-role-name"
+                    type="text"
+                    placeholder={t('settings.roles.createModal.namePlaceholder')}
+                    value={newRoleName}
+                    onChange={(e) => setNewRoleName(e.target.value)}
+                    required
+                  />
                 </div>
+
+                <div className="form-field">
+                  <label htmlFor="create-role-desc">{t('settings.roles.createModal.descLabel')}</label>
+                  <input
+                    id="create-role-desc"
+                    type="text"
+                    placeholder={t('settings.roles.createModal.descPlaceholder')}
+                    value={newRoleDesc}
+                    onChange={(e) => setNewRoleDesc(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="create-role-api-usage">
+                  ¿Se usará este rol para una integración API?
+                </label>
+                <select
+                  id="create-role-api-usage"
+                  value={newRoleForApiIntegration ? 'api' : 'standard'}
+                  onChange={(e) => setNewRoleForApiIntegration(e.target.value === 'api')}
+                >
+                  <option value="standard">No — Rol operativo para usuarios del sistema</option>
+                  <option value="api">
+                    Sí — Rol dedicado para integración API (sin licencia de usuario)
+                  </option>
+                </select>
+                <span className="role-api-field-hint">
+                  {newRoleForApiIntegration
+                    ? 'Se marcará como Rol API para vincularlo directamente a conectores o webhooks sin gastar asientos de usuario.'
+                    : 'Podrás asignarlo a miembros del equipo o vincularlo después en Integraciones.'}
+                </span>
+              </div>
+
+              <div className="role-matrix-field-block">
+                <span className="settings-field-label">
+                  Matriz de acceso por módulo y sección
+                </span>
+                {renderRoleSectionMatrix(newRoleSectionDraft, setNewRoleSectionDraft)}
               </div>
 
               <div className="create-modal-actions">
@@ -5012,104 +6661,146 @@ export function SettingsSection({
         </div>
       )}
 
-      {/* MODAL: EDITAR PERMISOS DE ROL */}
-      {editingRole && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setEditingRole(null)
-          }}
-        >
-          <section
-            className="create-modal"
-            style={{ maxWidth: '540px' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="role-modal-title"
+      {/* MODAL: VISUALIZAR / EDITAR PERMISOS DE ROL POR SECCIÓN */}
+      {editingRole && (() => {
+        const canEditRoleModal = canEditInSection(
+          'Configuración',
+          'Roles y permisos',
+          activeSectionAccess,
+          isFullAdmin,
+          isAccountActive
+        )
+        const isRoleModalReadOnly = isGeneralAdminRole(editingRole) || !canEditRoleModal
+        const readOnlyReason = isGeneralAdminRole(editingRole)
+          ? t('settings.roles.protectedAdminEditToast')
+          : 'Modo solo lectura: tu cuenta no tiene permisos de edición en Roles y permisos.'
+        return (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setEditingRole(null)
+            }}
           >
-            <div className="create-modal-heading">
-              <div>
-                <div className="panel-kicker">{t('settings.roles.modal.kicker')}</div>
-                <h2 id="role-modal-title">
-                  {t('settings.roles.modal.title', { role: getRoleCardTitle(editingRole) })}
-                </h2>
-                <p>{t('settings.roles.modal.desc')}</p>
-              </div>
-              <button
-                type="button"
-                className="modal-close-btn"
-                onClick={() => setEditingRole(null)}
-                aria-label={t('settings.modal.closeAria')}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveRolePermissions}>
-              <div className="role-permissions-matrix">
-                {ALL_CAPABILITIES.map((cap) => {
-                  const checked = roleCapsDraft.includes(cap.id)
-                  return (
-                    <label
-                      key={cap.id}
-                      className={`role-perm-checkbox-card ${checked ? 'checked' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          setRoleCapsDraft((prev) =>
-                            e.target.checked ? [...prev, cap.id] : prev.filter((c) => c !== cap.id)
-                          )
-                        }}
-                      />
-                      <div>
-                        <strong>{getCapabilityLabel(cap.id)}</strong>
-                        <small>{getRoleLabel(cap.group)}</small>
-                      </div>
-                    </label>
-                  )
-                })}
-              </div>
-
-              <div className="create-modal-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+            <section
+              className="create-modal role-hierarchy-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="role-modal-title"
+            >
+              <div className="create-modal-heading">
                 <div>
-                  {Object.prototype.hasOwnProperty.call(DEFAULT_ROLE_PERMISSIONS, editingRole.id) && (
+                  <div className="panel-kicker">{t('settings.roles.modal.kicker')}</div>
+                  <h2 id="role-modal-title">
+                    {t('settings.roles.modal.title', { role: getRoleCardTitle(editingRole) })}
+                  </h2>
+                  <p>
+                    {isRoleModalReadOnly
+                      ? 'Visualización de solo lectura de los niveles de acceso asignados en cada sección de los módulos del sistema.'
+                      : 'Define el nivel de acceso en cada sección (Ver, Crear, Editar o Completo). Cualquier usuario o integración API vinculada a este rol heredará estos cambios de inmediato.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => setEditingRole(null)}
+                  aria-label={t('settings.modal.closeAria')}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveRolePermissions}>
+                {!editingRole.builtInKey && (
+                  <>
+                    <div className="form-grid-2" style={{ marginBottom: '12px' }}>
+                      <div className="form-field">
+                        <label htmlFor="edit-role-name">{t('settings.roles.createModal.nameLabel')}</label>
+                        <input
+                          id="edit-role-name"
+                          type="text"
+                          value={editRoleName}
+                          onChange={(e) => setEditRoleName(e.target.value)}
+                          disabled={isRoleModalReadOnly}
+                          required
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="edit-role-desc">{t('settings.roles.createModal.descLabel')}</label>
+                        <input
+                          id="edit-role-desc"
+                          type="text"
+                          value={editRoleDesc}
+                          onChange={(e) => setEditRoleDesc(e.target.value)}
+                          disabled={isRoleModalReadOnly}
+                        />
+                      </div>
+                    </div>
+                    <div className="form-field" style={{ marginBottom: '12px' }}>
+                      <label htmlFor="edit-role-api-usage">
+                        ¿Se usará este rol para una integración API?
+                      </label>
+                      <select
+                        id="edit-role-api-usage"
+                        value={editRoleForApiIntegration ? 'api' : 'standard'}
+                        onChange={(e) => setEditRoleForApiIntegration(e.target.value === 'api')}
+                        disabled={isRoleModalReadOnly}
+                      >
+                        <option value="standard">No — Rol operativo para usuarios del sistema</option>
+                        <option value="api">
+                          Sí — Rol dedicado para integración API (sin licencia de usuario)
+                        </option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {renderRoleSectionMatrix(roleSectionDraft, setRoleSectionDraft, {
+                  readOnly: isRoleModalReadOnly,
+                  readOnlyNotice: isRoleModalReadOnly ? readOnlyReason : undefined,
+                })}
+
+                <div className="create-modal-actions" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                  <div>
+                    {!isRoleModalReadOnly &&
+                      Object.prototype.hasOwnProperty.call(DEFAULT_ROLE_SECTION_PERMISSIONS, editingRole.id) && (
+                        <button
+                          type="button"
+                          className="button button-ghost button-sm"
+                          onClick={() => {
+                            const defaultPerms =
+                              DEFAULT_ROLE_SECTION_PERMISSIONS[editingRole.id as BuiltInRoleKey]
+                            setRoleSectionDraft(cloneSectionPermissions(defaultPerms))
+                            toast.info(
+                              t('settings.roles.modal.resetToast', { role: getRoleCardTitle(editingRole) }),
+                              t('settings.item.Roles y permisos')
+                            )
+                          }}
+                        >
+                          <RotateCcw size={13} /> {t('settings.roles.modal.resetBtn')}
+                        </button>
+                      )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                       type="button"
-                      className="button button-ghost button-sm"
-                      onClick={() => {
-                        const defaultCaps =
-                          DEFAULT_ROLE_PERMISSIONS[editingRole.id as BuiltInRoleKey]
-                        setRoleCapsDraft([...defaultCaps])
-                        toast.info(
-                          t('settings.roles.modal.resetToast', { role: getRoleCardTitle(editingRole) }),
-                          t('settings.item.Roles y permisos')
-                        )
-                      }}
+                      className="button button-secondary"
+                      onClick={() => setEditingRole(null)}
                     >
-                      <RotateCcw size={13} /> {t('settings.roles.modal.resetBtn')}
+                      {isRoleModalReadOnly ? 'Cerrar' : t('common.cancel')}
                     </button>
-                  )}
+                    {!isRoleModalReadOnly && (
+                      <button type="submit" className="button button-primary">
+                        <Check size={14} /> {t('settings.roles.modal.saveBtn')}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => setEditingRole(null)}
-                  >
-                    {t('common.cancel')}
-                  </button>
-                  <button type="submit" className="button button-primary">
-                    <Check size={14} /> {t('settings.roles.modal.saveBtn')}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </section>
-        </div>
-      )}
+              </form>
+            </section>
+          </div>
+        )
+      })()}
 
       {/* MODAL: CONFIGURAR CONECTOR DE INTEGRACIÓN */}
       {editingIntegration && (
@@ -5503,7 +7194,7 @@ export function SettingsSection({
                     : 'Registrar Nuevo Sistema Externo'}
                 </h2>
                 <p>
-                  Define las credenciales y qué operaciones puede ejecutar el sistema externo sobre cada módulo de AES Nexus.
+                  Configura las credenciales de acceso y vincula un rol operativo para heredar sus permisos por sección (Ver, Crear, Editar o Completo) sin gastar espacios de usuario.
                 </p>
               </div>
               <button
@@ -5640,93 +7331,88 @@ export function SettingsSection({
                 </div>
               </div>
 
-              <div className="crud-matrix-section">
-                <div className="crud-matrix-header">
+              <div className="ext-role-binding-box">
+                <div className="ext-role-binding-head">
                   <div>
-                    <strong>Matriz de Permisos CRUD por Módulo</strong>
-                    <span>
-                      {countGrantedCrudOps(extDraft.permissions)} operaciones autorizadas
-                    </span>
+                    <strong>Rol asociado y permisos granulares por módulo y sección</strong>
+                    <p>
+                      Selecciona un rol existente o crea uno dedicado y ajusta sus niveles (Ver, Crear, Editar, Completo). Los cambios se guardan en la configuración global de roles e integraciones sin consumir asientos de usuario.
+                    </p>
                   </div>
-                  <div className="crud-preset-btns">
+                  <div className="ext-role-mode-tabs" role="tablist" aria-label="Modo de rol en modal">
                     <button
                       type="button"
-                      className="button button-ghost button-sm"
-                      onClick={() => handleApplyExtPreset('readonly')}
+                      role="tab"
+                      aria-selected={extRoleMode === 'existing'}
+                      className={extRoleMode === 'existing' ? 'active' : ''}
+                      onClick={() => handleSelectModalRole(extDraft.roleId)}
                     >
-                      Solo consultar
+                      Rol existente
                     </button>
                     <button
                       type="button"
-                      className="button button-ghost button-sm"
-                      onClick={() => handleApplyExtPreset('readwrite')}
+                      role="tab"
+                      aria-selected={extRoleMode === 'newRole'}
+                      className={extRoleMode === 'newRole' ? 'active' : ''}
+                      onClick={() => {
+                        setExtRoleMode('newRole')
+                        if (!extNewRoleName.trim()) {
+                          setExtNewRoleName(
+                            extDraft.name.trim() ? `Rol · ${extDraft.name.trim()}` : ''
+                          )
+                        }
+                      }}
                     >
-                      Consultar + Insertar/Editar
-                    </button>
-                    <button
-                      type="button"
-                      className="button button-ghost button-sm"
-                      onClick={() => handleApplyExtPreset('full')}
-                    >
-                      CRUD completo
-                    </button>
-                    <button
-                      type="button"
-                      className="button button-ghost button-sm"
-                      onClick={() => handleApplyExtPreset('clear')}
-                    >
-                      Limpiar
+                      + Crear rol dedicado
                     </button>
                   </div>
                 </div>
 
-                <div className="crud-matrix-table-wrap">
-                  <table className="crud-matrix-table">
-                    <thead>
-                      <tr>
-                        <th>Módulo &amp; Endpoint</th>
-                        {EXTERNAL_API_ACTIONS.map((act) => (
-                          <th key={act.id} className="crud-th-center">
-                            <span>{act.label}</span>
-                            <small>{act.httpMethod}</small>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {EXTERNAL_API_RESOURCES.map((res) => (
-                        <tr key={res.id}>
-                          <td>
-                            <div className="crud-resource-cell">
-                              <strong>{res.label}</strong>
-                              <code>{res.endpoint}</code>
-                            </div>
-                          </td>
-                          {EXTERNAL_API_ACTIONS.map((act) => {
-                            const checked = extDraft.permissions[res.id].includes(act.id)
-                            return (
-                              <td key={act.id} className="crud-td-center">
-                                <label
-                                  className={`crud-check-pill ${
-                                    checked ? `is-checked verb-${act.id}` : ''
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => handleToggleExtPermission(res.id, act.id)}
-                                    aria-label={`${act.label} en ${res.label}`}
-                                  />
-                                  <span>{act.shortTag}</span>
-                                </label>
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {extRoleMode === 'existing' ? (
+                  <div className="form-field">
+                    <label htmlFor="ext-integ-role">Seleccionar rol operativo *</label>
+                    <select
+                      id="ext-integ-role"
+                      value={extDraft.roleId}
+                      onChange={(e) => handleSelectModalRole(e.target.value)}
+                      required
+                    >
+                      {roleDefinitions.map((r) => {
+                        const count = getEnabledSectionEntries(getRoleSectionPermissions(r)).length
+                        return (
+                          <option key={r.id} value={r.id}>
+                            {getRoleCardTitle(r)}
+                            {r.forApiIntegration ? ' · API' : ''} ({count} secciones habilitadas)
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="form-field">
+                    <label htmlFor="ext-integ-new-role-name">Nombre del nuevo rol dedicado *</label>
+                    <input
+                      id="ext-integ-new-role-name"
+                      type="text"
+                      placeholder="Ej. Rol · Conector WMS Externo"
+                      value={extNewRoleName}
+                      onChange={(e) => setExtNewRoleName(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+
+                {(() => {
+                  const chosenRole = roleDefinitions.find((r) => r.id === extDraft.roleId)
+                  const isModalAdminLocked =
+                    extRoleMode === 'existing' && isGeneralAdminRole(chosenRole)
+                  return renderRoleSectionMatrix(extRolePermsDraft, setExtRolePermsDraft, {
+                    readOnly: isModalAdminLocked,
+                    readOnlyNotice: isModalAdminLocked
+                      ? 'El rol Administrador General mantiene acceso Completo en todas las secciones. Cambia a otro rol o elige "+ Crear rol dedicado" para personalizar permisos.'
+                      : undefined,
+                  })
+                })()}
               </div>
 
               <div className="create-modal-actions">
@@ -5739,7 +7425,9 @@ export function SettingsSection({
                 </button>
                 <button type="submit" className="button button-primary">
                   <Check size={14} />{' '}
-                  {extEditingId ? 'Guardar permisos y cambios' : 'Crear registro y generar llave'}
+                  {extEditingId
+                    ? 'Guardar en configuración global'
+                    : 'Crear registro y guardar globalmente'}
                 </button>
               </div>
             </form>
@@ -5747,177 +7435,213 @@ export function SettingsSection({
         </div>
       )}
 
-      {/* MODAL: SIMULADOR DE PETICIONES CRUD Y DOCUMENTACIÓN DE ENDPOINTS */}
-      {activeSimulatorIntegration && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSimIntegrationId(null)
-          }}
-        >
-          <section
-            className="create-modal ext-integ-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="sim-integ-modal-title"
-          >
-            <div className="create-modal-heading">
-              <div>
-                <div className="panel-kicker">
-                  CONSOLA DE PRUEBAS API · {activeSimulatorIntegration.name.toUpperCase()}
-                </div>
-                <h2 id="sim-integ-modal-title">Simulador CRUD de Endpoints AES Nexus</h2>
-                <p>
-                  Valida en vivo cómo responde la API según los permisos de Consultar (GET), Insertar (POST), Editar (PUT) y Borrar (DELETE) asignados.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="modal-close-btn"
-                onClick={() => setSimIntegrationId(null)}
-                aria-label={t('settings.modal.closeAria')}
-              >
-                <X size={16} />
-              </button>
-            </div>
+      {/* MODAL: SIMULADOR DE PETICIONES CRUD POR MÓDULO Y SECCIÓN DEL ROL */}
+      {activeSimulatorIntegration && (() => {
+        const simLinkedRole = roleDefinitions.find((r) => r.id === activeSimulatorIntegration.roleId)
+        const simLinkedRoleTitle = simLinkedRole
+          ? getRoleCardTitle(simLinkedRole)
+          : activeSimulatorIntegration.roleId
+        const simRolePerms = getRoleSectionPermissions(simLinkedRole)
+        const simCurrentLevel: SectionAccessLevel =
+          simRolePerms[simModule]?.[simSection] || 'none'
+        const simLevelMeta =
+          SECTION_ACCESS_LEVELS.find((l) => l.id === simCurrentLevel) || SECTION_ACCESS_LEVELS[0]
+        const availableSections =
+          SYSTEM_MODULE_SECTIONS[simModule as keyof typeof SYSTEM_MODULE_SECTIONS] || []
 
-            <div className="api-sim-controls">
-              <div className="form-field">
-                <label htmlFor="sim-method-select">Operación HTTP</label>
-                <select
-                  id="sim-method-select"
-                  value={simMethod}
-                  onChange={(e) => {
-                    const nextMethod = e.target.value as 'GET' | 'POST' | 'PUT' | 'DELETE'
-                    setSimMethod(nextMethod)
-                    setSimPayload(getSamplePayloadForCrud(simResource, nextMethod))
-                    setSimResult(null)
-                  }}
-                >
-                  <option value="GET">GET · Consultar</option>
-                  <option value="POST">POST · Insertar</option>
-                  <option value="PUT">PUT · Editar</option>
-                  <option value="DELETE">DELETE · Borrar</option>
-                </select>
-              </div>
-              <div className="form-field">
-                <label htmlFor="sim-resource-select">Módulo / Recurso</label>
-                <select
-                  id="sim-resource-select"
-                  value={simResource}
-                  onChange={(e) => {
-                    const nextRes = e.target.value as ExternalApiResource
-                    setSimResource(nextRes)
-                    setSimPayload(getSamplePayloadForCrud(nextRes, simMethod))
-                    setSimResult(null)
-                  }}
-                >
-                  {EXTERNAL_API_RESOURCES.map((res) => (
-                    <option key={res.id} value={res.id}>
-                      {res.label} ({res.endpoint})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="api-sim-run-wrap">
+        return (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setSimIntegrationId(null)
+            }}
+          >
+            <section
+              className="create-modal ext-integ-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="sim-integ-modal-title"
+            >
+              <div className="create-modal-heading">
+                <div>
+                  <div className="panel-kicker">
+                    CONSOLA API · {activeSimulatorIntegration.name.toUpperCase()} · ROL: {simLinkedRoleTitle.toUpperCase()}
+                  </div>
+                  <h2 id="sim-integ-modal-title">Simulador CRUD según Rol Vinculado</h2>
+                  <p>
+                    Prueba en vivo qué peticiones permite o bloquea el nivel jerárquico del rol ({simLevelMeta.label}) en cada sección de AES Nexus.
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="button button-primary"
-                  onClick={handleRunCrudSimulation}
+                  className="modal-close-btn"
+                  onClick={() => setSimIntegrationId(null)}
+                  aria-label={t('settings.modal.closeAria')}
                 >
-                  <Play size={14} /> Ejecutar petición
+                  <X size={16} />
                 </button>
               </div>
-            </div>
 
-            <div className="api-sim-endpoint-preview">
-              <Code2 size={14} />
-              <code>
-                {simMethod} https://api.aesnexus.mx
-                {EXTERNAL_API_RESOURCES.find((r) => r.id === simResource)?.endpoint || '/api/v1/clientes'}
-              </code>
-              <span className="mono">
-                Authorization: Bearer {activeSimulatorIntegration.apiKeyPrefix}••••
-              </span>
-            </div>
-
-            {simMethod !== 'GET' && (
-              <div className="form-field" style={{ marginTop: '10px' }}>
-                <label htmlFor="sim-payload-textarea">Cuerpo JSON de la petición</label>
-                <textarea
-                  id="sim-payload-textarea"
-                  className="api-sim-textarea"
-                  rows={5}
-                  value={simPayload}
-                  onChange={(e) => setSimPayload(e.target.value)}
-                />
-              </div>
-            )}
-
-            {simResult && (
-              <div className="api-sim-response-box">
-                <div className="api-sim-response-head">
-                  <span
-                    className={`integ-status-pill ${
-                      simResult.statusCode >= 400 ? 'status-revoked' : ''
-                    }`}
+              <div className="api-sim-controls api-sim-controls-4">
+                <div className="form-field">
+                  <label htmlFor="sim-method-select">Operación HTTP</label>
+                  <select
+                    id="sim-method-select"
+                    value={simMethod}
+                    onChange={(e) => {
+                      const nextMethod = e.target.value as 'GET' | 'POST' | 'PUT' | 'DELETE'
+                      setSimMethod(nextMethod)
+                      setSimPayload(getSamplePayloadForSection(simModule, simSection, nextMethod))
+                      setSimResult(null)
+                    }}
                   >
-                    HTTP {simResult.statusCode}{' '}
-                    {simResult.statusCode === 200
-                      ? 'OK'
-                      : simResult.statusCode === 201
-                      ? 'Created'
-                      : simResult.statusCode === 401
-                      ? 'Unauthorized'
-                      : 'Forbidden'}
-                  </span>
-                  <span className="tabular-nums">{simResult.latencyMs} ms</span>
+                    <option value="GET">GET · Ver</option>
+                    <option value="POST">POST · Crear</option>
+                    <option value="PUT">PUT · Editar</option>
+                    <option value="DELETE">DELETE · Completo</option>
+                  </select>
                 </div>
-                <pre className="api-sim-pre">{simResult.body}</pre>
+                <div className="form-field">
+                  <label htmlFor="sim-module-select">Módulo</label>
+                  <select
+                    id="sim-module-select"
+                    value={simModule}
+                    onChange={(e) => {
+                      const nextMod = e.target.value
+                      const firstSec =
+                        SYSTEM_MODULE_SECTIONS[nextMod as keyof typeof SYSTEM_MODULE_SECTIONS]?.[0] ||
+                        ''
+                      setSimModule(nextMod)
+                      setSimSection(firstSec)
+                      setSimPayload(getSamplePayloadForSection(nextMod, firstSec, simMethod))
+                      setSimResult(null)
+                    }}
+                  >
+                    {Object.keys(SYSTEM_MODULE_SECTIONS).map((mod) => (
+                      <option key={mod} value={mod}>
+                        {mod}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-field">
+                  <label htmlFor="sim-section-select">Sección</label>
+                  <select
+                    id="sim-section-select"
+                    value={simSection}
+                    onChange={(e) => {
+                      const nextSec = e.target.value
+                      setSimSection(nextSec)
+                      setSimPayload(getSamplePayloadForSection(simModule, nextSec, simMethod))
+                      setSimResult(null)
+                    }}
+                  >
+                    {availableSections.map((sec) => (
+                      <option key={sec} value={sec}>
+                        {sec}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="api-sim-run-wrap">
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={handleRunCrudSimulation}
+                  >
+                    <Play size={14} /> Ejecutar
+                  </button>
+                </div>
               </div>
-            )}
 
-            <div className="api-sim-logs-section">
-              <strong>Bitácora reciente de este sistema externo</strong>
-              {activeSimulatorIntegration.recentLogs.length === 0 ? (
-                <p className="api-sim-empty-logs">
-                  Aún no hay peticiones registradas. Ejecuta una prueba arriba para ver la traza.
-                </p>
-              ) : (
-                <div className="api-sim-logs-list">
-                  {activeSimulatorIntegration.recentLogs.slice(0, 5).map((log) => (
-                    <div key={log.id} className="api-sim-log-row">
-                      <span
-                        className={`ext-verb-tag is-granted ${
-                          log.statusCode >= 400 ? 'verb-delete' : 'verb-read'
-                        }`}
-                      >
-                        {log.method} · {log.statusCode}
-                      </span>
-                      <span className="api-sim-log-summary">{log.summary}</span>
-                      <small className="tabular-nums">
-                        {formatDate(new Date(log.timestampIso))} ·{' '}
-                        {formatTime(new Date(log.timestampIso))}
-                      </small>
-                    </div>
-                  ))}
+              <div className="api-sim-endpoint-preview">
+                <Code2 size={14} />
+                <code>
+                  {simMethod} https://api.aesnexus.mx{getSectionApiEndpoint(simModule, simSection)}
+                </code>
+                <span className={`ext-level-badge level-${simCurrentLevel}`}>
+                  Rol {simLinkedRoleTitle}: {simLevelMeta.label}
+                </span>
+              </div>
+
+              {simMethod !== 'GET' && (
+                <div className="form-field" style={{ marginTop: '10px' }}>
+                  <label htmlFor="sim-payload-textarea">Cuerpo JSON de la petición</label>
+                  <textarea
+                    id="sim-payload-textarea"
+                    className="api-sim-textarea"
+                    rows={5}
+                    value={simPayload}
+                    onChange={(e) => setSimPayload(e.target.value)}
+                  />
                 </div>
               )}
-            </div>
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setSimIntegrationId(null)}
-              >
-                Cerrar consola
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+              {simResult && (
+                <div className="api-sim-response-box">
+                  <div className="api-sim-response-head">
+                    <span
+                      className={`integ-status-pill ${
+                        simResult.statusCode >= 400 ? 'status-revoked' : ''
+                      }`}
+                    >
+                      HTTP {simResult.statusCode}{' '}
+                      {simResult.statusCode === 200
+                        ? 'OK'
+                        : simResult.statusCode === 201
+                        ? 'Created'
+                        : simResult.statusCode === 401
+                        ? 'Unauthorized'
+                        : 'Forbidden'}
+                    </span>
+                    <span className="tabular-nums">{simResult.latencyMs} ms</span>
+                  </div>
+                  <pre className="api-sim-pre">{simResult.body}</pre>
+                </div>
+              )}
+
+              <div className="api-sim-logs-section">
+                <strong>Bitácora reciente de este sistema externo</strong>
+                {activeSimulatorIntegration.recentLogs.length === 0 ? (
+                  <p className="api-sim-empty-logs">
+                    Aún no hay peticiones registradas. Ejecuta una prueba arriba para ver la traza.
+                  </p>
+                ) : (
+                  <div className="api-sim-logs-list">
+                    {activeSimulatorIntegration.recentLogs.slice(0, 5).map((log) => (
+                      <div key={log.id} className="api-sim-log-row">
+                        <span
+                          className={`ext-verb-tag is-granted ${
+                            log.statusCode >= 400 ? 'verb-delete' : 'verb-read'
+                          }`}
+                        >
+                          {log.method} · {log.statusCode}
+                        </span>
+                        <span className="api-sim-log-summary">{log.summary}</span>
+                        <small className="tabular-nums">
+                          {formatDate(new Date(log.timestampIso))} ·{' '}
+                          {formatTime(new Date(log.timestampIso))}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="create-modal-actions">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setSimIntegrationId(null)}
+                >
+                  Cerrar consola
+                </button>
+              </div>
+            </section>
+          </div>
+        )
+      })()}
     </section>
   )
 }

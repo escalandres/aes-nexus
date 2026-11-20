@@ -24,12 +24,155 @@ export interface CapabilityDefinition {
   group: BuiltInRoleKey
 }
 
+export type SectionAccessLevel = 'none' | 'view' | 'create' | 'edit' | 'full'
+
+export type RoleSectionPermissions = Record<string, Record<string, SectionAccessLevel>>
+
+export const SYSTEM_MODULE_SECTIONS = {
+  CRM: ['Resumen', 'Clientes', 'Proveedores', 'Empleados', 'Nómina', 'Oportunidades', 'Actividades'],
+  Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Resumen'],
+  Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas'],
+  Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
+  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
+  Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
+  Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
+  Configuración: [
+    'General',
+    'Organización',
+    'Idioma y región',
+    'Usuarios',
+    'Roles y permisos',
+    'Seguridad',
+    'Apariencia',
+    'Notificaciones',
+    'Auditoría',
+    'Integraciones',
+    'Plan y facturación',
+  ],
+} as const
+
+export type SystemModuleName = keyof typeof SYSTEM_MODULE_SECTIONS
+
+export const SECTION_ACCESS_LEVELS: Array<{
+  id: SectionAccessLevel
+  rank: number
+  label: string
+  shortLabel: string
+  description: string
+  httpMethods: Array<'GET' | 'POST' | 'PUT' | 'DELETE'>
+}> = [
+  {
+    id: 'none',
+    rank: 0,
+    label: 'Sin acceso',
+    shortLabel: 'Sin acceso',
+    description: 'Módulo o sección bloqueada y oculta',
+    httpMethods: [],
+  },
+  {
+    id: 'view',
+    rank: 1,
+    label: 'Ver',
+    shortLabel: 'Ver',
+    description: 'Visualizar registros (GET)',
+    httpMethods: ['GET'],
+  },
+  {
+    id: 'create',
+    rank: 2,
+    label: 'Crear',
+    shortLabel: 'Crear',
+    description: 'Puede crear y visualizar (GET · POST)',
+    httpMethods: ['GET', 'POST'],
+  },
+  {
+    id: 'edit',
+    rank: 3,
+    label: 'Editar',
+    shortLabel: 'Editar',
+    description: 'Hereda Ver + Crear y edita registros (GET · POST · PUT)',
+    httpMethods: ['GET', 'POST', 'PUT'],
+  },
+  {
+    id: 'full',
+    rank: 4,
+    label: 'Completo',
+    shortLabel: 'Completo',
+    description: 'Hace todo + borrar registros (GET · POST · PUT · DELETE)',
+    httpMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+  },
+]
+
+export const SECTION_LEVEL_RANK: Record<SectionAccessLevel, number> = {
+  none: 0,
+  view: 1,
+  create: 2,
+  edit: 3,
+  full: 4,
+}
+
+export function maxSectionAccessLevel(
+  a: SectionAccessLevel | undefined,
+  b: SectionAccessLevel | undefined
+): SectionAccessLevel {
+  const levelA = a || 'none'
+  const levelB = b || 'none'
+  return SECTION_LEVEL_RANK[levelA] >= SECTION_LEVEL_RANK[levelB] ? levelA : levelB
+}
+
+export function levelAllowsHttpMethod(
+  level: SectionAccessLevel | undefined,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+): boolean {
+  const rank = SECTION_LEVEL_RANK[level || 'none']
+  if (method === 'GET') return rank >= 1
+  if (method === 'POST') return rank >= 2
+  if (method === 'PUT') return rank >= 3
+  return rank >= 4
+}
+
+function slugifySegment(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+export function getSectionApiEndpoint(moduleName: string, sectionName: string): string {
+  return `/api/v1/${slugifySegment(moduleName)}/${slugifySegment(sectionName)}`
+}
+
+export function buildSectionPermissionsMap(
+  defaultLevel: SectionAccessLevel = 'none',
+  overrides?: RoleSectionPermissions
+): RoleSectionPermissions {
+  const map: RoleSectionPermissions = {}
+  for (const [mod, sections] of Object.entries(SYSTEM_MODULE_SECTIONS)) {
+    map[mod] = {}
+    const modOverrides = overrides?.[mod]
+    for (const sec of sections) {
+      map[mod][sec] = modOverrides?.[sec] ?? defaultLevel
+    }
+  }
+  return map
+}
+
+export function cloneSectionPermissions(
+  perms?: RoleSectionPermissions
+): RoleSectionPermissions {
+  return buildSectionPermissionsMap('none', perms)
+}
+
 export interface RoleDefinition {
   id: RoleKey
   name: string
   description: string
   capabilities: RoleCapabilityId[]
+  sectionPermissions?: RoleSectionPermissions
   builtInKey?: 'admin' | 'ops' | 'sales' | 'fin'
+  forApiIntegration?: boolean
 }
 
 export const ALL_CAPABILITIES: CapabilityDefinition[] = [
@@ -75,12 +218,211 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<BuiltInRoleKey, RoleCapabilityId[]
   Finanzas: ['manageReceivables', 'schedulePayments', 'balanceReports', 'expenseControl', 'fullReports'],
 }
 
+export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectionPermissions> = {
+  Administrador: buildSectionPermissionsMap('full'),
+  Operaciones: buildSectionPermissionsMap('none', {
+    Compras: {
+      Resumen: 'view',
+      Requisiciones: 'create',
+      'Órdenes de compra': 'edit',
+      Recepciones: 'edit',
+      Facturas: 'view',
+    },
+    Operaciones: {
+      Inventario: 'edit',
+      Traslados: 'edit',
+      Compras: 'view',
+      Entregas: 'edit',
+      Resumen: 'view',
+    },
+    Reportes: {
+      'Compras e Inventario': 'view',
+    },
+    Configuración: {
+      'Idioma y región': 'edit',
+      Apariencia: 'edit',
+      Notificaciones: 'view',
+    },
+  }),
+  Ventas: buildSectionPermissionsMap('none', {
+    CRM: {
+      Resumen: 'view',
+      Clientes: 'edit',
+      Proveedores: 'view',
+      Oportunidades: 'full',
+      Actividades: 'full',
+    },
+    Ventas: {
+      Catálogo: 'view',
+      Cotizaciones: 'full',
+      Pedidos: 'edit',
+      Facturas: 'create',
+      Resumen: 'view',
+    },
+    Reportes: {
+      'Resumen ejecutivo': 'view',
+      'Ventas y CxC': 'view',
+    },
+    Configuración: {
+      'Idioma y región': 'edit',
+      Apariencia: 'edit',
+    },
+  }),
+  Finanzas: buildSectionPermissionsMap('none', {
+    CRM: {
+      Nómina: 'edit',
+    },
+    Compras: {
+      Resumen: 'view',
+      Facturas: 'edit',
+    },
+    Finanzas: {
+      Cobros: 'full',
+      Pagos: 'full',
+      'Pagos Bancarios': 'edit',
+      Gastos: 'edit',
+      'Cuentas contables': 'edit',
+      Resumen: 'view',
+    },
+    Reportes: {
+      'Resumen ejecutivo': 'view',
+      'Finanzas y Tesorería': 'view',
+      'CxP y Pagos EBP': 'view',
+      'Nómina y RRHH': 'view',
+    },
+    Configuración: {
+      'Idioma y región': 'edit',
+      Apariencia: 'edit',
+    },
+  }),
+}
+
+const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapabilityId[]>> = {
+  CRM: {
+    Clientes: ['crmClients'],
+    Proveedores: ['crmClients'],
+    Empleados: ['manageUsers'],
+    Nómina: ['schedulePayments'],
+    Oportunidades: ['pipelineReports'],
+    Actividades: ['crmClients'],
+    Resumen: ['crmClients'],
+  },
+  Ventas: {
+    Catálogo: ['createQuotes'],
+    Cotizaciones: ['createQuotes'],
+    Pedidos: ['issueOrders'],
+    Facturas: ['issueOrders'],
+    Resumen: ['pipelineReports'],
+  },
+  Compras: {
+    Resumen: ['approvePurchases'],
+    Requisiciones: ['approvePurchases'],
+    'Órdenes de compra': ['approvePurchases'],
+    Recepciones: ['receiveGoods'],
+    Facturas: ['approvePurchases'],
+  },
+  Operaciones: {
+    Inventario: ['inventoryControl', 'stockLedger'],
+    Traslados: ['inventoryControl'],
+    Compras: ['approvePurchases'],
+    Entregas: ['receiveGoods'],
+    Resumen: ['inventoryControl'],
+  },
+  Finanzas: {
+    Cobros: ['manageReceivables'],
+    Pagos: ['schedulePayments'],
+    'Pagos Bancarios': ['schedulePayments'],
+    Gastos: ['expenseControl'],
+    'Cuentas contables': ['balanceReports'],
+    Resumen: ['balanceReports'],
+  },
+  Reportes: {
+    'Resumen ejecutivo': ['fullReports'],
+    'Finanzas y Tesorería': ['balanceReports'],
+    'CxP y Pagos EBP': ['schedulePayments'],
+    'Ventas y CxC': ['pipelineReports'],
+    'Compras e Inventario': ['inventoryControl'],
+    'Nómina y RRHH': ['manageUsers'],
+  },
+  Administración: {
+    Departamentos: ['sysConfig'],
+    Ubicaciones: ['sysConfig'],
+    Resumen: ['sysConfig'],
+    'Historial de Auditoría': ['fullReports'],
+  },
+  Configuración: {
+    General: ['sysConfig'],
+    Organización: ['sysConfig'],
+    Usuarios: ['manageUsers'],
+    'Roles y permisos': ['manageUsers'],
+    Seguridad: ['sysConfig'],
+    Notificaciones: ['adjustThresholds'],
+    Auditoría: ['sysConfig'],
+    Integraciones: ['sysConfig'],
+    'Plan y facturación': ['sysConfig'],
+  },
+}
+
+export function deriveCapabilitiesFromSectionPermissions(
+  perms: RoleSectionPermissions
+): RoleCapabilityId[] {
+  const caps = new Set<RoleCapabilityId>()
+  for (const [mod, sections] of Object.entries(perms)) {
+    for (const [sec, level] of Object.entries(sections)) {
+      if (level === 'none') continue
+      const mapped = SECTION_TO_CAPABILITY_BRIDGE[mod]?.[sec] || []
+      for (const cap of mapped) caps.add(cap)
+    }
+  }
+  return Array.from(caps)
+}
+
+export function deriveSectionPermissionsFromCapabilities(
+  caps: RoleCapabilityId[],
+  builtInKey?: 'admin' | 'ops' | 'sales' | 'fin'
+): RoleSectionPermissions {
+  if (builtInKey === 'admin') return cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Administrador)
+  if (builtInKey === 'ops') return cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Operaciones)
+  if (builtInKey === 'sales') return cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Ventas)
+  if (builtInKey === 'fin') return cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Finanzas)
+
+  const capSet = new Set(caps)
+  const result = buildSectionPermissionsMap('none')
+  for (const [mod, secMap] of Object.entries(SECTION_TO_CAPABILITY_BRIDGE)) {
+    for (const [sec, reqCaps] of Object.entries(secMap)) {
+      if (reqCaps.some((c) => capSet.has(c))) {
+        result[mod][sec] = 'edit'
+      }
+    }
+  }
+  result.Configuración['Idioma y región'] = 'edit'
+  result.Configuración.Apariencia = 'edit'
+  return result
+}
+
+export const ECOMMERCE_INTEGRATION_SECTION_PERMISSIONS = buildSectionPermissionsMap('none', {
+  CRM: {
+    Clientes: 'edit',
+  },
+  Ventas: {
+    Catálogo: 'view',
+    Cotizaciones: 'create',
+    Pedidos: 'create',
+    Facturas: 'view',
+  },
+  Operaciones: {
+    Inventario: 'edit',
+    Entregas: 'create',
+  },
+})
+
 export const DEFAULT_ROLE_DEFINITIONS: RoleDefinition[] = [
   {
     id: 'Administrador',
     name: 'Administrador General',
     description: 'Control total de la configuración, usuarios, facturación, auditorías y módulos.',
     capabilities: [...DEFAULT_ROLE_PERMISSIONS.Administrador],
+    sectionPermissions: cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Administrador),
     builtInKey: 'admin',
   },
   {
@@ -88,6 +430,7 @@ export const DEFAULT_ROLE_DEFINITIONS: RoleDefinition[] = [
     name: 'Gerencia de Operaciones',
     description: 'Gestión integral de almacenes, existencias mínimas, recepciones y transferencias.',
     capabilities: [...DEFAULT_ROLE_PERMISSIONS.Operaciones],
+    sectionPermissions: cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Operaciones),
     builtInKey: 'ops',
   },
   {
@@ -95,6 +438,7 @@ export const DEFAULT_ROLE_DEFINITIONS: RoleDefinition[] = [
     name: 'Equipo Comercial & Ventas',
     description: 'Administración del catálogo, cotizaciones, órdenes de venta y seguimiento en CRM.',
     capabilities: [...DEFAULT_ROLE_PERMISSIONS.Ventas],
+    sectionPermissions: cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Ventas),
     builtInKey: 'sales',
   },
   {
@@ -102,7 +446,15 @@ export const DEFAULT_ROLE_DEFINITIONS: RoleDefinition[] = [
     name: 'Finanzas & Contabilidad',
     description: 'Conciliación bancaria, cuentas por cobrar, pagos a proveedores y flujo de caja.',
     capabilities: [...DEFAULT_ROLE_PERMISSIONS.Finanzas],
+    sectionPermissions: cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Finanzas),
     builtInKey: 'fin',
+  },
+  {
+    id: 'role_integracion_ecommerce',
+    name: 'Conector Ecommerce API',
+    description: 'Rol operativo exclusivo para sincronización externa de catálogo, clientes, pedidos e inventario sin consumir usuario.',
+    capabilities: deriveCapabilitiesFromSectionPermissions(ECOMMERCE_INTEGRATION_SECTION_PERMISSIONS),
+    sectionPermissions: cloneSectionPermissions(ECOMMERCE_INTEGRATION_SECTION_PERMISSIONS),
   },
 ]
 
@@ -180,8 +532,13 @@ export interface ExternalIntegrationLog {
   id: string
   method: 'GET' | 'POST' | 'PUT' | 'DELETE'
   resource: ExternalApiResource
-  statusCode: 200 | 201 | 401 | 403
+  moduleName?: string
+  sectionName?: string
+  endpoint?: string
+  statusCode: 200 | 201 | 400 | 401 | 403 | 404 | 429 | 500
+  latencyMs?: number
   summary: string
+  responsePayload?: string
   timestampIso: string
 }
 
@@ -189,9 +546,11 @@ export interface ExternalIntegrationRecord {
   id: string
   name: string
   systemType: ExternalSystemType
+  origin?: 'commercial' | 'custom'
   description: string
   environment: 'production' | 'sandbox'
   status: 'active' | 'paused' | 'revoked'
+  roleId: RoleKey
   apiKeyPrefix: string
   apiKeySecret: string
   webhookCallbackUrl: string
@@ -291,9 +650,11 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
     id: 'ext_shopify_mx',
     name: 'Sincronizador Shopify MX',
     systemType: 'Ecommerce',
+    origin: 'commercial',
     description: 'Sincroniza catálogo de SKUs, pedidos en línea y altas de clientes desde tienda web.',
     environment: 'production',
     status: 'active',
+    roleId: 'role_integracion_ecommerce',
     apiKeyPrefix: 'nexus_live_8Kp',
     apiKeySecret: 'nexus_live_8Kp92VmQx4RtN7wL3YzH5BcJ6DfA',
     webhookCallbackUrl: 'https://hooks.brujulaestudio.mx/shopify-sync',
@@ -315,17 +676,77 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
         id: 'log_seed_1',
         method: 'POST',
         resource: 'ventas',
+        moduleName: 'Ventas',
+        sectionName: 'Pedidos',
+        endpoint: '/api/v1/ventas/pedidos',
         statusCode: 201,
+        latencyMs: 42,
         summary: 'Pedido #VTA-9841 insertado desde checkout web',
+        responsePayload: JSON.stringify(
+          {
+            ok: true,
+            operation: 'INSERT',
+            orderId: 'VTA-9841',
+            channel: 'Shopify MX',
+            totalMxn: 14850.0,
+            status: 'confirmed',
+            createdAt: '2026-11-16T14:22:00.000Z',
+          },
+          null,
+          2
+        ),
         timestampIso: '2026-11-16T14:22:00.000Z',
       },
       {
         id: 'log_seed_2',
         method: 'PUT',
         resource: 'productos',
+        moduleName: 'Operaciones',
+        sectionName: 'Inventario',
+        endpoint: '/api/v1/operaciones/inventario',
         statusCode: 200,
+        latencyMs: 36,
         summary: 'Stock reservado para 4 SKUs en Almacén Vallejo',
+        responsePayload: JSON.stringify(
+          {
+            ok: true,
+            operation: 'UPDATE',
+            warehouse: 'Almacén Vallejo',
+            updatedSkus: 4,
+            reservedUnits: 18,
+            updatedAt: '2026-11-16T14:19:00.000Z',
+          },
+          null,
+          2
+        ),
         timestampIso: '2026-11-16T14:19:00.000Z',
+      },
+      {
+        id: 'log_seed_5',
+        method: 'DELETE',
+        resource: 'clientes',
+        moduleName: 'CRM',
+        sectionName: 'Clientes',
+        endpoint: '/api/v1/crm/clientes',
+        statusCode: 403,
+        latencyMs: 19,
+        summary: 'Eliminación denegada: el rol vinculado tiene nivel Crear en CRM › Clientes',
+        responsePayload: JSON.stringify(
+          {
+            ok: false,
+            error: 'ROLE_SECTION_ACCESS_DENIED',
+            linkedRole: 'Integración Ecommerce',
+            module: 'CRM',
+            section: 'Clientes',
+            currentLevel: 'Crear',
+            requiredLevel: 'Completo',
+            message:
+              'El rol vinculado solo permite Crear/Visualizar en CRM › Clientes. Se requiere nivel Completo para ejecutar DELETE.',
+          },
+          null,
+          2
+        ),
+        timestampIso: '2026-11-16T13:45:00.000Z',
       },
     ],
   },
@@ -333,9 +754,11 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
     id: 'ext_powerbi_dwh',
     name: 'Conector Power BI / Data Warehouse',
     systemType: 'BI / Analítica',
-    description: 'Extracción programada de solo lectura para tableros directivos y márgenes por sucursal.',
+    origin: 'custom',
+    description: 'Extracción programada vinculada al rol de Finanzas & Contabilidad sin consumir licencia de usuario.',
     environment: 'production',
     status: 'active',
+    roleId: 'Finanzas',
     apiKeyPrefix: 'nexus_live_4Tx',
     apiKeySecret: 'nexus_live_4Tx71MnPq8WvZ2yK9HcR3BgF5EsU',
     webhookCallbackUrl: '',
@@ -357,8 +780,24 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
         id: 'log_seed_3',
         method: 'GET',
         resource: 'finanzas',
+        moduleName: 'Reportes',
+        sectionName: 'Finanzas y Tesorería',
+        endpoint: '/api/v1/reportes/finanzas-y-tesoreria',
         statusCode: 200,
+        latencyMs: 61,
         summary: 'Consulta paginada de pólizas y flujo mensual (250 registros)',
+        responsePayload: JSON.stringify(
+          {
+            ok: true,
+            page: 1,
+            pageSize: 250,
+            totalRecords: 1420,
+            currency: 'MXN',
+            extractedAt: '2026-11-16T12:00:00.000Z',
+          },
+          null,
+          2
+        ),
         timestampIso: '2026-11-16T12:00:00.000Z',
       },
     ],
@@ -367,9 +806,11 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
     id: 'ext_wms_sandbox',
     name: 'Middleware Logístico 3PL (Pruebas)',
     systemType: 'WMS / Logística',
-    description: 'Integración de pruebas para alta, actualización y depuración de órdenes de surtido.',
+    origin: 'custom',
+    description: 'Integración de pruebas vinculada al rol Gerencia de Operaciones para surtido y recepciones.',
     environment: 'sandbox',
     status: 'paused',
+    roleId: 'Operaciones',
     apiKeyPrefix: 'nexus_sbx_6Mn',
     apiKeySecret: 'nexus_sbx_6Mn29QrLp5ZtW8vD4JkY7ChG1NxB',
     webhookCallbackUrl: 'https://sandbox.logistica3pl.mx/nexus/callback',
@@ -384,15 +825,54 @@ export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
       rrhh: [],
     },
     createdAtIso: '2026-11-01T09:05:00.000Z',
-    lastUsedAtIso: '2026-11-14T18:10:00.000Z',
+    lastUsedAtIso: '2026-11-15T09:30:00.000Z',
     requestsCount: 412,
     recentLogs: [
       {
+        id: 'log_seed_6',
+        method: 'POST',
+        resource: 'compras',
+        moduleName: 'Compras',
+        sectionName: 'Órdenes de compra',
+        endpoint: '/api/v1/compras/ordenes-de-compra',
+        statusCode: 403,
+        latencyMs: 14,
+        summary: 'Llamada bloqueada: la integración Sandbox está pausada temporalmente',
+        responsePayload: JSON.stringify(
+          {
+            ok: false,
+            error: 'INTEGRATION_PAUSED',
+            environment: 'sandbox',
+            message:
+              'La integración "Middleware Logístico 3PL (Pruebas)" está pausada y no acepta escrituras.',
+          },
+          null,
+          2
+        ),
+        timestampIso: '2026-11-15T09:30:00.000Z',
+      },
+      {
         id: 'log_seed_4',
-        method: 'DELETE',
+        method: 'PUT',
         resource: 'productos',
+        moduleName: 'Operaciones',
+        sectionName: 'Inventario',
+        endpoint: '/api/v1/operaciones/inventario',
         statusCode: 200,
-        summary: 'Depuración de SKU temporal de prueba WMS-TEST-09',
+        latencyMs: 49,
+        summary: 'Ajuste de inventario en Almacén Vallejo vía API',
+        responsePayload: JSON.stringify(
+          {
+            ok: true,
+            operation: 'UPDATE',
+            warehouse: 'Almacén Vallejo',
+            adjustedItems: 12,
+            reference: '3PL-ADJ-409',
+            updatedAt: '2026-11-14T18:10:00.000Z',
+          },
+          null,
+          2
+        ),
         timestampIso: '2026-11-14T18:10:00.000Z',
       },
     ],
@@ -802,6 +1282,7 @@ export function writeStoredJson<T>(key: string, value: T): void {
 export const ROLES_CHANGED_EVENT = 'aes_nexus_roles_changed'
 export const USERS_CHANGED_EVENT = 'aes_nexus_users_changed'
 export const AUDIT_CHANGED_EVENT = 'aes_nexus_audit_changed'
+export const INTEGRATIONS_CHANGED_EVENT = 'aes_nexus_integrations_changed'
 export const DEFAULT_NEW_USER_ROLE_CHANGED_EVENT = 'aes_nexus_default_role_changed'
 export const FALLBACK_DEFAULT_NEW_USER_ROLE: RoleKey = 'Operaciones'
 
@@ -908,21 +1389,38 @@ export function loadStoredWorkspaceUsers(): WorkspaceUserRecord[] {
   return DEFAULT_WORKSPACE_USERS
 }
 
+export function normalizeRoleDefinition(role: RoleDefinition): RoleDefinition {
+  if (isGeneralAdminRole(role)) {
+    return {
+      ...role,
+      builtInKey: 'admin' as const,
+      forApiIntegration: false,
+      capabilities: [...DEFAULT_ROLE_PERMISSIONS.Administrador],
+      sectionPermissions: cloneSectionPermissions(DEFAULT_ROLE_SECTION_PERMISSIONS.Administrador),
+    }
+  }
+  const sectionPermissions = role.sectionPermissions
+    ? cloneSectionPermissions(role.sectionPermissions)
+    : deriveSectionPermissionsFromCapabilities(role.capabilities || [], role.builtInKey)
+  const capabilities =
+    Array.isArray(role.capabilities) && role.capabilities.length > 0 && !role.sectionPermissions
+      ? role.capabilities
+      : deriveCapabilitiesFromSectionPermissions(sectionPermissions)
+  return {
+    ...role,
+    forApiIntegration: Boolean(role.forApiIntegration),
+    capabilities,
+    sectionPermissions,
+  }
+}
+
 export function loadStoredRoleDefinitions(): RoleDefinition[] {
   try {
     const savedProfiles = window.localStorage.getItem(STORAGE_KEYS.roleDefinitions)
     if (savedProfiles) {
       const parsed = JSON.parse(savedProfiles) as RoleDefinition[]
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const normalized = parsed.map((role) =>
-          isGeneralAdminRole(role)
-            ? {
-                ...role,
-                builtInKey: 'admin' as const,
-                capabilities: [...DEFAULT_ROLE_PERMISSIONS.Administrador],
-              }
-            : role
-        )
+        const normalized = parsed.map(normalizeRoleDefinition)
         const hasAdmin = normalized.some((r) => isGeneralAdminRole(r))
         return hasAdmin ? normalized : [DEFAULT_ROLE_DEFINITIONS[0], ...normalized]
       }
@@ -930,17 +1428,75 @@ export function loadStoredRoleDefinitions(): RoleDefinition[] {
     const legacyPerms = window.localStorage.getItem(STORAGE_KEYS.roles)
     if (legacyPerms) {
       const parsedLegacy = JSON.parse(legacyPerms) as Record<string, RoleCapabilityId[]>
-      return DEFAULT_ROLE_DEFINITIONS.map((role) => ({
-        ...role,
-        capabilities: isGeneralAdminRole(role)
+      return DEFAULT_ROLE_DEFINITIONS.map((role) => {
+        const caps = isGeneralAdminRole(role)
           ? [...DEFAULT_ROLE_PERMISSIONS.Administrador]
-          : parsedLegacy[role.id] || role.capabilities,
-      }))
+          : parsedLegacy[role.id] || role.capabilities
+        return normalizeRoleDefinition({
+          ...role,
+          capabilities: caps,
+          sectionPermissions: deriveSectionPermissionsFromCapabilities(caps, role.builtInKey),
+        })
+      })
     }
   } catch {
     // fallback to defaults
   }
   return DEFAULT_ROLE_DEFINITIONS
+}
+
+export function loadStoredExternalIntegrations(roles?: RoleDefinition[]): ExternalIntegrationRecord[] {
+  const resolvedRoles = roles && roles.length > 0 ? roles : loadStoredRoleDefinitions()
+  const validRoleIds = new Set(resolvedRoles.map((r) => r.id))
+  const fallbackRoleId =
+    resolvedRoles.find((r) => !isGeneralAdminRole(r))?.id || resolvedRoles[0]?.id || 'Ventas'
+
+  const stored = readStoredJson<ExternalIntegrationRecord[]>(
+    STORAGE_KEYS.externalIntegrations,
+    DEFAULT_EXTERNAL_INTEGRATIONS
+  )
+  return stored.map((rec) => {
+    const seedMatch = DEFAULT_EXTERNAL_INTEGRATIONS.find((d) => d.id === rec.id)
+    const candidateRoleId = rec.roleId || seedMatch?.roleId || fallbackRoleId
+    const resolvedRoleId = validRoleIds.has(candidateRoleId) ? candidateRoleId : fallbackRoleId
+    const rawLogs = Array.isArray(rec.recentLogs) ? rec.recentLogs : seedMatch?.recentLogs || []
+    const hydratedLogs: ExternalIntegrationLog[] = rawLogs.map((log) => {
+      const seedLog = seedMatch?.recentLogs.find((sl) => sl.id === log.id)
+      const resolvedEndpoint =
+        log.endpoint ||
+        seedLog?.endpoint ||
+        (log.moduleName && log.sectionName
+          ? getSectionApiEndpoint(log.moduleName, log.sectionName)
+          : EXTERNAL_API_RESOURCES.find((r) => r.id === log.resource)?.endpoint || `/api/v1/${log.resource}`)
+      const resolvedPayload =
+        log.responsePayload ||
+        seedLog?.responsePayload ||
+        JSON.stringify(
+          {
+            ok: log.statusCode < 400,
+            statusCode: log.statusCode,
+            method: log.method,
+            endpoint: resolvedEndpoint,
+            summary: log.summary,
+            timestamp: log.timestampIso,
+          },
+          null,
+          2
+        )
+      return {
+        ...log,
+        endpoint: resolvedEndpoint,
+        latencyMs: log.latencyMs ?? seedLog?.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
+        responsePayload: resolvedPayload,
+      }
+    })
+    return {
+      ...rec,
+      origin: rec.origin || seedMatch?.origin || 'custom',
+      roleId: resolvedRoleId,
+      recentLogs: hydratedLogs,
+    }
+  })
 }
 
 export function loadDefaultNewUserRole(roles?: RoleDefinition[]): RoleKey {
