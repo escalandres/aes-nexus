@@ -32,6 +32,10 @@ import {
   RefreshCw,
   PlusCircle,
   ArrowLeftRight,
+  Landmark,
+  Pencil,
+  Trash2,
+  Check,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -57,6 +61,20 @@ import {
 } from '../data/settings'
 import type { EmployeeRecord } from '../data/employees'
 
+export interface SubsidiaryRecord {
+  id: string
+  code: string
+  name: string
+  legalName: string
+  taxId: string
+  country: string
+  currency: string
+  legalRep?: string
+  fiscalAddress?: string
+  isHolding?: boolean
+  active: boolean
+}
+
 export interface DepartmentRecord {
   id: string
   code: string
@@ -64,6 +82,7 @@ export interface DepartmentRecord {
   leader: string
   costCenter?: string
   description?: string
+  subsidiaryIds: string[]
   active: boolean
 }
 
@@ -84,23 +103,38 @@ export interface PhysicalLocationRecord {
   state: string
   country: string
   manager?: string
+  subsidiaryIds: string[]
   active: boolean
 }
 
-export type AdminSectionTab = 'Departamentos' | 'Ubicaciones' | 'Resumen' | 'Historial de Auditoría'
+export type AdminSectionTab =
+  | 'Subsidiarias'
+  | 'Departamentos'
+  | 'Ubicaciones'
+  | 'Resumen'
+  | 'Historial de Auditoría'
 
 interface AdministrationSectionProps {
+  subsidiaries: SubsidiaryRecord[]
   departments: DepartmentRecord[]
   locations: PhysicalLocationRecord[]
   employees?: EmployeeRecord[]
+  onAddSubsidiary: (sub: SubsidiaryRecord) => void
+  onUpdateSubsidiaries: (subs: SubsidiaryRecord[]) => void
+  onDeleteSubsidiary?: (subsidiaryId: string) => void
   onAddDepartment: (dep: DepartmentRecord) => void
   onAddLocation: (loc: PhysicalLocationRecord) => void
   onUpdateDepartments: (deps: DepartmentRecord[]) => void
+  onDeleteDepartment?: (departmentId: string) => void
   onUpdateLocations: (locs: PhysicalLocationRecord[]) => void
+  onDeleteLocation?: (locationId: string) => void
   adminSection: AdminSectionTab
   onNavigateSection: (sec: AdminSectionTab) => void
   allowedSections?: AdminSectionTab[]
   currentUserName?: string
+  canCreateInTab?: (tab: AdminSectionTab) => boolean
+  canEditInTab?: (tab: AdminSectionTab) => boolean
+  canDeleteInTab?: (tab: AdminSectionTab) => boolean
 }
 
 const LOCATION_TYPES: LocationType[] = [
@@ -200,25 +234,50 @@ function renderAuditModuleIcon(category: AuditCategory) {
 }
 
 export function AdministrationSection({
+  subsidiaries,
   departments,
   locations,
   employees = [],
+  onAddSubsidiary,
+  onUpdateSubsidiaries,
+  onDeleteSubsidiary,
   onAddDepartment,
   onAddLocation,
   onUpdateDepartments,
+  onDeleteDepartment,
   onUpdateLocations,
+  onDeleteLocation,
   adminSection,
   onNavigateSection,
   allowedSections,
   currentUserName = 'Andrea Morales',
+  canCreateInTab,
+  canEditInTab,
+  canDeleteInTab,
 }: AdministrationSectionProps) {
   const toast = useToast()
   const { t, formatDate, formatTime } = useI18n()
 
-  // Search queries
+  const canCreateSub = canCreateInTab ? canCreateInTab('Subsidiarias') : true
+  const canEditSub = canEditInTab ? canEditInTab('Subsidiarias') : true
+  const canDeleteSub = (canDeleteInTab ? canDeleteInTab('Subsidiarias') : true) && Boolean(onDeleteSubsidiary)
+
+  const canCreateDept = canCreateInTab ? canCreateInTab('Departamentos') : true
+  const canEditDept = canEditInTab ? canEditInTab('Departamentos') : true
+  const canDeleteDept = (canDeleteInTab ? canDeleteInTab('Departamentos') : true) && Boolean(onDeleteDepartment)
+
+  const canCreateLoc = canCreateInTab ? canCreateInTab('Ubicaciones') : true
+  const canEditLoc = canEditInTab ? canEditInTab('Ubicaciones') : true
+  const canDeleteLoc = (canDeleteInTab ? canDeleteInTab('Ubicaciones') : true) && Boolean(onDeleteLocation)
+
+  // Search queries & filters
+  const [subsidiarySearch, setSubsidiarySearch] = useState('')
+  const [subsidiaryStatusFilter, setSubsidiaryStatusFilter] = useState<'Todas' | 'Activas' | 'Inactivas'>('Todas')
   const [departmentSearch, setDepartmentSearch] = useState('')
+  const [deptSubsidiaryFilter, setDeptSubsidiaryFilter] = useState<string>('Todas')
   const [locationSearch, setLocationSearch] = useState('')
   const [locationTypeFilter, setLocationTypeFilter] = useState<string>('Todos')
+  const [locSubsidiaryFilter, setLocSubsidiaryFilter] = useState<string>('Todas')
 
   // Audit history state (synchronized with global audit store & workspace users)
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>(() =>
@@ -254,8 +313,30 @@ export function AdministrationSection({
   }, [])
 
   // Modals state
+  const [isSubsidiaryModalOpen, setIsSubsidiaryModalOpen] = useState(false)
+  const [editingSubsidiary, setEditingSubsidiary] = useState<SubsidiaryRecord | null>(null)
+  const [confirmingDeleteSubsidiary, setConfirmingDeleteSubsidiary] = useState(false)
+
   const [isDeptModalOpen, setIsDeptModalOpen] = useState(false)
+  const [editingDepartment, setEditingDepartment] = useState<DepartmentRecord | null>(null)
+  const [confirmingDeleteDept, setConfirmingDeleteDept] = useState(false)
+
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false)
+  const [editingLocation, setEditingLocation] = useState<PhysicalLocationRecord | null>(null)
+  const [confirmingDeleteLoc, setConfirmingDeleteLoc] = useState(false)
+
+  // Subsidiary form state
+  const [subCode, setSubCode] = useState('')
+  const [subName, setSubName] = useState('')
+  const [subLegalName, setSubLegalName] = useState('')
+  const [subTaxId, setSubTaxId] = useState('')
+  const [subCountry, setSubCountry] = useState('México')
+  const [subCurrency, setSubCurrency] = useState('MXN')
+  const [subLegalRep, setSubLegalRep] = useState('')
+  const [subFiscalAddress, setSubFiscalAddress] = useState('')
+  const [subIsHolding, setSubIsHolding] = useState(false)
+  const [subLinkedDeptIds, setSubLinkedDeptIds] = useState<string[]>([])
+  const [subLinkedLocationIds, setSubLinkedLocationIds] = useState<string[]>([])
 
   // Department form state
   const [deptCode, setDeptCode] = useState('')
@@ -263,6 +344,7 @@ export function AdministrationSection({
   const [deptLeader, setDeptLeader] = useState('')
   const [deptCostCenter, setDeptCostCenter] = useState('')
   const [deptDescription, setDeptDescription] = useState('')
+  const [deptSubsidiaryIds, setDeptSubsidiaryIds] = useState<string[]>([])
 
   // Location form state
   const [locCode, setLocCode] = useState('')
@@ -273,26 +355,63 @@ export function AdministrationSection({
   const [locState, setLocState] = useState('')
   const [locCountry, setLocCountry] = useState('México')
   const [locManager, setLocManager] = useState('')
+  const [locSubsidiaryIds, setLocSubsidiaryIds] = useState<string[]>([])
+
+  const subsidiaryById = useMemo(() => {
+    const map = new Map<string, SubsidiaryRecord>()
+    subsidiaries.forEach((s) => map.set(s.id, s))
+    return map
+  }, [subsidiaries])
+
+  const filteredSubsidiaries = useMemo(() => {
+    const q = subsidiarySearch.toLowerCase().trim()
+    return subsidiaries.filter((s) => {
+      const matchStatus =
+        subsidiaryStatusFilter === 'Todas' ||
+        (subsidiaryStatusFilter === 'Activas' ? s.active : !s.active)
+      const matchQuery =
+        !q ||
+        s.code.toLowerCase().includes(q) ||
+        s.name.toLowerCase().includes(q) ||
+        s.legalName.toLowerCase().includes(q) ||
+        s.taxId.toLowerCase().includes(q) ||
+        s.country.toLowerCase().includes(q) ||
+        s.currency.toLowerCase().includes(q) ||
+        (s.legalRep && s.legalRep.toLowerCase().includes(q))
+      return matchStatus && matchQuery
+    })
+  }, [subsidiaries, subsidiarySearch, subsidiaryStatusFilter])
 
   // Filtered departments
   const filteredDepartments = useMemo(() => {
     const q = departmentSearch.toLowerCase().trim()
-    if (!q) return departments
-    return departments.filter(
-      (d) =>
+    return departments.filter((d) => {
+      const matchSub =
+        deptSubsidiaryFilter === 'Todas' ||
+        (deptSubsidiaryFilter === 'unassigned'
+          ? (d.subsidiaryIds || []).length === 0
+          : (d.subsidiaryIds || []).includes(deptSubsidiaryFilter))
+      const matchQuery =
+        !q ||
         d.code.toLowerCase().includes(q) ||
         d.name.toLowerCase().includes(q) ||
         d.leader.toLowerCase().includes(q) ||
         (d.costCenter && d.costCenter.toLowerCase().includes(q)) ||
         (d.description && d.description.toLowerCase().includes(q))
-    )
-  }, [departments, departmentSearch])
+      return matchSub && matchQuery
+    })
+  }, [departments, departmentSearch, deptSubsidiaryFilter])
 
   // Filtered locations
   const filteredLocations = useMemo(() => {
     const q = locationSearch.toLowerCase().trim()
     return locations.filter((loc) => {
       const matchType = locationTypeFilter === 'Todos' || loc.type === locationTypeFilter
+      const matchSub =
+        locSubsidiaryFilter === 'Todas' ||
+        (locSubsidiaryFilter === 'unassigned'
+          ? (loc.subsidiaryIds || []).length === 0
+          : (loc.subsidiaryIds || []).includes(locSubsidiaryFilter))
       const matchQuery =
         !q ||
         loc.code.toLowerCase().includes(q) ||
@@ -301,9 +420,9 @@ export function AdministrationSection({
         loc.state.toLowerCase().includes(q) ||
         loc.address.toLowerCase().includes(q) ||
         (loc.manager && loc.manager.toLowerCase().includes(q))
-      return matchType && matchQuery
+      return matchType && matchSub && matchQuery
     })
-  }, [locations, locationSearch, locationTypeFilter])
+  }, [locations, locationSearch, locationTypeFilter, locSubsidiaryFilter])
 
   const resolveEventText = (ev: AuditEventRecord) => ({
     actionText: ev.seedKey ? t(`settings.audit.${ev.seedKey}.action` as const) : ev.action,
@@ -770,70 +889,377 @@ export function AdministrationSection({
   const isTabVisible = (tab: AdminSectionTab) =>
     !allowedSections || allowedSections.includes(tab)
 
-  // Handle department creation
-  const handleCreateDepartment = (e: React.FormEvent) => {
+  const toggleIdInList = (list: string[], id: string) =>
+    list.includes(id) ? list.filter((item) => item !== id) : [...list, id]
+
+  const getDefaultSubsidiarySelection = () => {
+    const holding = subsidiaries.find((s) => s.active && s.isHolding) || subsidiaries.find((s) => s.active) || subsidiaries[0]
+    return holding ? [holding.id] : []
+  }
+
+  // Subsidiary modal helpers
+  const openNewSubsidiaryModal = () => {
+    setEditingSubsidiary(null)
+    setConfirmingDeleteSubsidiary(false)
+    setSubCode('')
+    setSubName('')
+    setSubLegalName('')
+    setSubTaxId('')
+    setSubCountry('México')
+    setSubCurrency('MXN')
+    setSubLegalRep('')
+    setSubFiscalAddress('')
+    setSubIsHolding(subsidiaries.length === 0)
+    setSubLinkedDeptIds([])
+    setSubLinkedLocationIds([])
+    setIsSubsidiaryModalOpen(true)
+  }
+
+  const openEditSubsidiaryModal = (sub: SubsidiaryRecord) => {
+    setEditingSubsidiary(sub)
+    setConfirmingDeleteSubsidiary(false)
+    setSubCode(sub.code)
+    setSubName(sub.name)
+    setSubLegalName(sub.legalName)
+    setSubTaxId(sub.taxId)
+    setSubCountry(sub.country)
+    setSubCurrency(sub.currency)
+    setSubLegalRep(sub.legalRep || '')
+    setSubFiscalAddress(sub.fiscalAddress || '')
+    setSubIsHolding(Boolean(sub.isHolding))
+    setSubLinkedDeptIds(
+      departments.filter((d) => (d.subsidiaryIds || []).includes(sub.id)).map((d) => d.id)
+    )
+    setSubLinkedLocationIds(
+      locations.filter((l) => (l.subsidiaryIds || []).includes(sub.id)).map((l) => l.id)
+    )
+    setIsSubsidiaryModalOpen(true)
+  }
+
+  const handleSaveSubsidiary = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!deptCode.trim() || !deptName.trim() || !deptLeader.trim()) {
-      toast.error('Indica el código, nombre y líder del departamento.', 'Campos requeridos')
+    if (!subCode.trim() || !subName.trim() || !subLegalName.trim() || !subTaxId.trim()) {
+      toast.error(
+        'Indica el código, nombre comercial, razón social y RFC / Tax ID de la subsidiaria.',
+        'Campos requeridos'
+      )
+      return
+    }
+    const cleanCode = subCode.trim().toUpperCase()
+    const duplicateCode = subsidiaries.some(
+      (s) =>
+        s.id !== editingSubsidiary?.id &&
+        s.code.trim().toLowerCase() === cleanCode.toLowerCase()
+    )
+    if (duplicateCode) {
+      toast.warning(`Ya existe una subsidiaria con el código ${cleanCode}.`, 'Código duplicado')
       return
     }
 
-    if (departments.some((d) => d.code.trim().toLowerCase() === deptCode.trim().toLowerCase())) {
-      toast.warning(`Ya existe un departamento con el código ${deptCode.trim()}.`, 'Código duplicado')
-      return
+    const subId = editingSubsidiary ? editingSubsidiary.id : `sub_${Date.now()}`
+    const payload: SubsidiaryRecord = {
+      id: subId,
+      code: cleanCode,
+      name: subName.trim(),
+      legalName: subLegalName.trim(),
+      taxId: subTaxId.trim().toUpperCase(),
+      country: subCountry.trim() || 'México',
+      currency: subCurrency.trim().toUpperCase() || 'MXN',
+      legalRep: subLegalRep.trim() || undefined,
+      fiscalAddress: subFiscalAddress.trim() || undefined,
+      isHolding: subIsHolding,
+      active: editingSubsidiary ? editingSubsidiary.active : true,
     }
 
-    const newDept: DepartmentRecord = {
-      id: `dep_${Date.now()}`,
-      code: deptCode.trim().toUpperCase(),
-      name: deptName.trim(),
-      leader: deptLeader.trim(),
-      costCenter: deptCostCenter.trim() || undefined,
-      description: deptDescription.trim() || undefined,
-      active: true,
+    if (editingSubsidiary) {
+      const updatedSubs = subsidiaries.map((s) => {
+        if (s.id === subId) return payload
+        if (subIsHolding && s.isHolding) return { ...s, isHolding: false }
+        return s
+      })
+      onUpdateSubsidiaries(updatedSubs)
+      appendAuditLog({
+        category: 'admin',
+        action: 'Actualización de subsidiaria',
+        detail: `${payload.code} · ${payload.name} (${payload.taxId}) · ${subLinkedDeptIds.length} deptos. / ${subLinkedLocationIds.length} sedes`,
+        user: currentUserName,
+      })
+      toast.success(`Subsidiaria “${payload.name}” actualizada.`, 'Subsidiaria actualizada')
+    } else {
+      if (subIsHolding) {
+        onUpdateSubsidiaries(
+          subsidiaries.map((s) => (s.isHolding ? { ...s, isHolding: false } : s))
+        )
+      }
+      onAddSubsidiary(payload)
+      toast.success(`Subsidiaria “${payload.name}” creada exitosamente.`, 'Subsidiaria registrada')
     }
 
-    onAddDepartment(newDept)
-    toast.success(`Departamento “${newDept.name}” creado exitosamente.`, 'Departamento registrado')
+    // Sync department & location links for this subsidiary
+    const nextDepts = departments.map((d) => {
+      const current = d.subsidiaryIds || []
+      const shouldLink = subLinkedDeptIds.includes(d.id)
+      const isLinked = current.includes(subId)
+      if (shouldLink && !isLinked) {
+        return { ...d, subsidiaryIds: [...current, subId] }
+      }
+      if (!shouldLink && isLinked) {
+        return { ...d, subsidiaryIds: current.filter((id) => id !== subId) }
+      }
+      return d
+    })
+    onUpdateDepartments(nextDepts)
 
-    setIsDeptModalOpen(false)
+    const nextLocs = locations.map((l) => {
+      const current = l.subsidiaryIds || []
+      const shouldLink = subLinkedLocationIds.includes(l.id)
+      const isLinked = current.includes(subId)
+      if (shouldLink && !isLinked) {
+        return { ...l, subsidiaryIds: [...current, subId] }
+      }
+      if (!shouldLink && isLinked) {
+        return { ...l, subsidiaryIds: current.filter((id) => id !== subId) }
+      }
+      return l
+    })
+    onUpdateLocations(nextLocs)
+
+    setIsSubsidiaryModalOpen(false)
+    setEditingSubsidiary(null)
+    setConfirmingDeleteSubsidiary(false)
+  }
+
+  const handleDeleteSubsidiaryConfirmed = () => {
+    if (!editingSubsidiary || !onDeleteSubsidiary) return
+    onDeleteSubsidiary(editingSubsidiary.id)
+    setIsSubsidiaryModalOpen(false)
+    setEditingSubsidiary(null)
+    setConfirmingDeleteSubsidiary(false)
+  }
+
+  const toggleSubsidiaryStatus = (id: string) => {
+    const sub = subsidiaries.find((s) => s.id === id)
+    if (!sub) return
+    const updated = subsidiaries.map((s) => (s.id === id ? { ...s, active: !s.active } : s))
+    onUpdateSubsidiaries(updated)
+    appendAuditLog({
+      category: 'admin',
+      action: 'Cambio de estado de subsidiaria',
+      detail: `${sub.code} · ${sub.name} → ${sub.active ? 'Inactiva' : 'Activa'}`,
+      user: currentUserName,
+    })
+    toast.info(
+      `Subsidiaria ${sub.name} ahora está ${sub.active ? 'Inactiva' : 'Activa'}.`,
+      'Estado actualizado'
+    )
+  }
+
+  // Department modal helpers
+  const openNewDeptModal = () => {
+    setEditingDepartment(null)
+    setConfirmingDeleteDept(false)
     setDeptCode('')
     setDeptName('')
     setDeptLeader('')
     setDeptCostCenter('')
     setDeptDescription('')
+    setDeptSubsidiaryIds(getDefaultSubsidiarySelection())
+    setIsDeptModalOpen(true)
   }
 
-  // Handle location creation
-  const handleCreateLocation = (e: React.FormEvent) => {
+  const openEditDeptModal = (dep: DepartmentRecord) => {
+    setEditingDepartment(dep)
+    setConfirmingDeleteDept(false)
+    setDeptCode(dep.code)
+    setDeptName(dep.name)
+    setDeptLeader(dep.leader)
+    setDeptCostCenter(dep.costCenter || '')
+    setDeptDescription(dep.description || '')
+    setDeptSubsidiaryIds(dep.subsidiaryIds || [])
+    setIsDeptModalOpen(true)
+  }
+
+  // Handle department create / update
+  const handleSaveDepartment = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!deptCode.trim() || !deptName.trim() || !deptLeader.trim()) {
+      toast.error('Indica el código, nombre y líder del departamento.', 'Campos requeridos')
+      return
+    }
+    if (subsidiaries.length > 0 && deptSubsidiaryIds.length === 0) {
+      toast.error(
+        'Relaciona el departamento con al menos una subsidiaria.',
+        'Subsidiaria requerida'
+      )
+      return
+    }
+
+    const cleanCode = deptCode.trim().toUpperCase()
+    if (
+      departments.some(
+        (d) =>
+          d.id !== editingDepartment?.id &&
+          d.code.trim().toLowerCase() === cleanCode.toLowerCase()
+      )
+    ) {
+      toast.warning(`Ya existe un departamento con el código ${cleanCode}.`, 'Código duplicado')
+      return
+    }
+
+    if (editingDepartment) {
+      const updatedDept: DepartmentRecord = {
+        ...editingDepartment,
+        code: cleanCode,
+        name: deptName.trim(),
+        leader: deptLeader.trim(),
+        costCenter: deptCostCenter.trim() || undefined,
+        description: deptDescription.trim() || undefined,
+        subsidiaryIds: deptSubsidiaryIds,
+      }
+      onUpdateDepartments(
+        departments.map((d) => (d.id === editingDepartment.id ? updatedDept : d))
+      )
+      appendAuditLog({
+        category: 'admin',
+        action: 'Actualización de departamento',
+        detail: `${updatedDept.code} · ${updatedDept.name} (${deptSubsidiaryIds.length} subsidiaria(s))`,
+        user: currentUserName,
+      })
+      toast.success(`Departamento “${updatedDept.name}” actualizado.`, 'Departamento actualizado')
+    } else {
+      const newDept: DepartmentRecord = {
+        id: `dep_${Date.now()}`,
+        code: cleanCode,
+        name: deptName.trim(),
+        leader: deptLeader.trim(),
+        costCenter: deptCostCenter.trim() || undefined,
+        description: deptDescription.trim() || undefined,
+        subsidiaryIds: deptSubsidiaryIds,
+        active: true,
+      }
+      onAddDepartment(newDept)
+      toast.success(`Departamento “${newDept.name}” creado exitosamente.`, 'Departamento registrado')
+    }
+
+    setIsDeptModalOpen(false)
+    setEditingDepartment(null)
+    setConfirmingDeleteDept(false)
+    setDeptCode('')
+    setDeptName('')
+    setDeptLeader('')
+    setDeptCostCenter('')
+    setDeptDescription('')
+    setDeptSubsidiaryIds([])
+  }
+
+  const handleDeleteDeptConfirmed = () => {
+    if (!editingDepartment || !onDeleteDepartment) return
+    onDeleteDepartment(editingDepartment.id)
+    setIsDeptModalOpen(false)
+    setEditingDepartment(null)
+    setConfirmingDeleteDept(false)
+  }
+
+  // Location modal helpers
+  const openNewLocationModal = () => {
+    setEditingLocation(null)
+    setConfirmingDeleteLoc(false)
+    setLocCode('')
+    setLocName('')
+    setLocType('Sucursal')
+    setLocAddress('')
+    setLocCity('')
+    setLocState('')
+    setLocCountry('México')
+    setLocManager('')
+    setLocSubsidiaryIds(getDefaultSubsidiarySelection())
+    setIsLocationModalOpen(true)
+  }
+
+  const openEditLocationModal = (loc: PhysicalLocationRecord) => {
+    setEditingLocation(loc)
+    setConfirmingDeleteLoc(false)
+    setLocCode(loc.code)
+    setLocName(loc.name)
+    setLocType(loc.type)
+    setLocAddress(loc.address)
+    setLocCity(loc.city)
+    setLocState(loc.state)
+    setLocCountry(loc.country)
+    setLocManager(loc.manager || '')
+    setLocSubsidiaryIds(loc.subsidiaryIds || [])
+    setIsLocationModalOpen(true)
+  }
+
+  // Handle location create / update
+  const handleSaveLocation = (e: React.FormEvent) => {
     e.preventDefault()
     if (!locCode.trim() || !locName.trim() || !locAddress.trim() || !locCity.trim()) {
       toast.error('Completa el código, nombre, dirección y ciudad de la sede.', 'Campos requeridos')
       return
     }
-
-    if (locations.some((l) => l.code.trim().toLowerCase() === locCode.trim().toLowerCase())) {
-      toast.warning(`Ya existe una ubicación con el código ${locCode.trim()}.`, 'Código duplicado')
+    if (subsidiaries.length > 0 && locSubsidiaryIds.length === 0) {
+      toast.error(
+        'Relaciona la ubicación física con al menos una subsidiaria.',
+        'Subsidiaria requerida'
+      )
       return
     }
 
-    const newLocation: PhysicalLocationRecord = {
-      id: `loc_${Date.now()}`,
-      code: locCode.trim().toUpperCase(),
-      name: locName.trim(),
-      type: locType,
-      address: locAddress.trim(),
-      city: locCity.trim(),
-      state: locState.trim() || locCity.trim(),
-      country: locCountry.trim() || 'México',
-      manager: locManager.trim() || undefined,
-      active: true,
+    const cleanCode = locCode.trim().toUpperCase()
+    if (
+      locations.some(
+        (l) =>
+          l.id !== editingLocation?.id &&
+          l.code.trim().toLowerCase() === cleanCode.toLowerCase()
+      )
+    ) {
+      toast.warning(`Ya existe una ubicación con el código ${cleanCode}.`, 'Código duplicado')
+      return
     }
 
-    onAddLocation(newLocation)
-    toast.success(`Ubicación física “${newLocation.name}” agregada al sistema.`, 'Ubicación registrada')
+    if (editingLocation) {
+      const updatedLoc: PhysicalLocationRecord = {
+        ...editingLocation,
+        code: cleanCode,
+        name: locName.trim(),
+        type: locType,
+        address: locAddress.trim(),
+        city: locCity.trim(),
+        state: locState.trim() || locCity.trim(),
+        country: locCountry.trim() || 'México',
+        manager: locManager.trim() || undefined,
+        subsidiaryIds: locSubsidiaryIds,
+      }
+      onUpdateLocations(locations.map((l) => (l.id === editingLocation.id ? updatedLoc : l)))
+      appendAuditLog({
+        category: 'admin',
+        action: 'Actualización de ubicación física',
+        detail: `${updatedLoc.code} · ${updatedLoc.name} (${locSubsidiaryIds.length} subsidiaria(s))`,
+        user: currentUserName,
+      })
+      toast.success(`Ubicación “${updatedLoc.name}” actualizada.`, 'Ubicación actualizada')
+    } else {
+      const newLocation: PhysicalLocationRecord = {
+        id: `loc_${Date.now()}`,
+        code: cleanCode,
+        name: locName.trim(),
+        type: locType,
+        address: locAddress.trim(),
+        city: locCity.trim(),
+        state: locState.trim() || locCity.trim(),
+        country: locCountry.trim() || 'México',
+        manager: locManager.trim() || undefined,
+        subsidiaryIds: locSubsidiaryIds,
+        active: true,
+      }
+      onAddLocation(newLocation)
+      toast.success(`Ubicación física “${newLocation.name}” agregada al sistema.`, 'Ubicación registrada')
+    }
 
     setIsLocationModalOpen(false)
+    setEditingLocation(null)
+    setConfirmingDeleteLoc(false)
     setLocCode('')
     setLocName('')
     setLocType('Sucursal')
@@ -841,6 +1267,15 @@ export function AdministrationSection({
     setLocCity('')
     setLocState('')
     setLocManager('')
+    setLocSubsidiaryIds([])
+  }
+
+  const handleDeleteLocationConfirmed = () => {
+    if (!editingLocation || !onDeleteLocation) return
+    onDeleteLocation(editingLocation.id)
+    setIsLocationModalOpen(false)
+    setEditingLocation(null)
+    setConfirmingDeleteLoc(false)
   }
 
   const toggleDepartmentStatus = (id: string) => {
@@ -879,6 +1314,29 @@ export function AdministrationSection({
     )
   }
 
+  const renderSubsidiaryTags = (ids: string[] | undefined) => {
+    const resolved = (ids || [])
+      .map((id) => subsidiaryById.get(id))
+      .filter((s): s is SubsidiaryRecord => Boolean(s))
+    if (resolved.length === 0) {
+      return <span className="admin-subsidiary-empty">Sin subsidiaria</span>
+    }
+    return (
+      <div className="admin-subsidiary-pills">
+        {resolved.map((sub) => (
+          <span
+            key={sub.id}
+            className={`admin-subsidiary-pill ${sub.active ? '' : 'inactive'}`}
+            title={`${sub.name} (${sub.legalName})`}
+          >
+            <strong>{sub.code}</strong>
+            <span>{sub.name}</span>
+          </span>
+        ))}
+      </div>
+    )
+  }
+
   const getLocationTypeBadgeClass = (type: LocationType) => {
     switch (type) {
       case 'Oficina corporativa':
@@ -904,13 +1362,22 @@ export function AdministrationSection({
           </div>
           <h1 id="admin-title">Administración</h1>
           <p>
-            Configuración y estructura de la organización: gestión de departamentos, líderes, centros de costos y sedes físicas.
+            Configuración y estructura de la organización: gestión de subsidiarias, departamentos, líderes, centros de costos y sedes físicas.
           </p>
         </div>
       </div>
 
       {/* Navigation tabs */}
       <nav className="crm-tabs" aria-label="Secciones de Administración">
+        {isTabVisible('Subsidiarias') && (
+          <button
+            className={adminSection === 'Subsidiarias' ? 'active' : ''}
+            onClick={() => onNavigateSection('Subsidiarias')}
+          >
+            <Landmark size={13} />
+            Subsidiarias <span>{subsidiaries.length}</span>
+          </button>
+        )}
         {isTabVisible('Departamentos') && (
           <button
             className={adminSection === 'Departamentos' ? 'active' : ''}
@@ -949,6 +1416,202 @@ export function AdministrationSection({
         )}
       </nav>
 
+      {/* Section 0: Subsidiarias */}
+      {adminSection === 'Subsidiarias' && (
+        <div className="finance-section-container">
+          <div className="ops-header-strip">
+            <div className="ops-header-left">
+              <div className="ops-icon-box fin-icon-box">
+                <Landmark size={20} />
+              </div>
+              <div>
+                <h2>Subsidiarias y Entidades Legales</h2>
+                <p>
+                  Razones sociales del grupo empresarial vinculadas con sus departamentos operativos y sedes físicas.
+                </p>
+              </div>
+            </div>
+
+            <div className="ops-header-right">
+              <div className="ops-stat-item">
+                <span className="ops-stat-label">Total subsidiarias</span>
+                <strong className="ops-stat-val">{subsidiaries.length}</strong>
+              </div>
+              <div className="ops-stat-item">
+                <span className="ops-stat-label">Subsidiarias activas</span>
+                <span className="ops-stat-pill ok">
+                  {subsidiaries.filter((s) => s.active).length} activas
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="ops-toolbar">
+            <div className="ops-filter-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div className="ops-search-input-wrap" style={{ minWidth: '300px' }}>
+                <Search size={14} />
+                <input
+                  type="text"
+                  placeholder="Buscar por código, nombre, razón social, RFC o país..."
+                  value={subsidiarySearch}
+                  onChange={(e) => setSubsidiarySearch(e.target.value)}
+                />
+                {subsidiarySearch && (
+                  <button
+                    className="search-clear-btn"
+                    onClick={() => setSubsidiarySearch('')}
+                    title="Limpiar búsqueda"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              <div className="accounting-select-wrap">
+                <label htmlFor="filter-sub-status">Estado:</label>
+                <select
+                  id="filter-sub-status"
+                  className="accounting-filter-select"
+                  value={subsidiaryStatusFilter}
+                  onChange={(e) =>
+                    setSubsidiaryStatusFilter(e.target.value as 'Todas' | 'Activas' | 'Inactivas')
+                  }
+                >
+                  <option value="Todas">Todas ({subsidiaries.length})</option>
+                  <option value="Activas">
+                    Activas ({subsidiaries.filter((s) => s.active).length})
+                  </option>
+                  <option value="Inactivas">
+                    Inactivas ({subsidiaries.filter((s) => !s.active).length})
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div className="ops-actions-group">
+              {canCreateSub && (
+                <button
+                  className="button button-primary"
+                  onClick={openNewSubsidiaryModal}
+                >
+                  <Plus size={14} /> Nueva subsidiaria
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="table-wrap ops-table-wrap">
+            <table className="data-table ops-data-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '110px' }}>CÓDIGO</th>
+                  <th>SUBSIDIARIA / RAZÓN SOCIAL</th>
+                  <th>RFC / TAX ID</th>
+                  <th>PAÍS Y DIVISA</th>
+                  <th>DEPARTAMENTOS Y SEDES</th>
+                  <th>ESTADO</th>
+                  <th style={{ textAlign: 'right', width: '150px' }}>ACCIONES</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSubsidiaries.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="empty-cell">
+                      No se encontraron subsidiarias registradas con los criterios seleccionados.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredSubsidiaries.map((sub) => {
+                    const linkedDepts = departments.filter((d) =>
+                      (d.subsidiaryIds || []).includes(sub.id)
+                    )
+                    const linkedLocs = locations.filter((l) =>
+                      (l.subsidiaryIds || []).includes(sub.id)
+                    )
+                    return (
+                      <tr key={sub.id}>
+                        <td>
+                          <span className="accounting-code-badge">{sub.code}</span>
+                        </td>
+                        <td>
+                          <div className="prod-cell">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <strong>{sub.name}</strong>
+                              {sub.isHolding && (
+                                <span className="admin-holding-pill">Matriz</span>
+                              )}
+                            </div>
+                            <small>{sub.legalName}</small>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="location-bin-tag mono">{sub.taxId}</span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <span style={{ fontSize: '9.5px', color: '#2f3e35' }}>{sub.country}</span>
+                            <small style={{ color: '#7f8f84' }}>
+                              Divisa base: <strong>{sub.currency}</strong>
+                            </small>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="admin-subsidiary-pills">
+                            <span className="admin-subsidiary-pill">
+                              <strong>{linkedDepts.length}</strong>
+                              <span>deptos.</span>
+                            </span>
+                            <span className="admin-subsidiary-pill">
+                              <strong>{linkedLocs.length}</strong>
+                              <span>ubicaciones</span>
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          {sub.active ? (
+                            <span className="stock-ok-badge">
+                              <CheckCircle2 size={11} /> Activa
+                            </span>
+                          ) : (
+                            <span className="stock-alert-badge">
+                              <AlertCircle size={11} /> Inactiva
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
+                            {canEditSub && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="button-icon-action"
+                                  onClick={() => openEditSubsidiaryModal(sub)}
+                                  title="Editar subsidiaria y relaciones"
+                                >
+                                  <Pencil size={11} /> Editar
+                                </button>
+                                <button
+                                  type="button"
+                                  className="button-icon-action"
+                                  onClick={() => toggleSubsidiaryStatus(sub.id)}
+                                  title={sub.active ? 'Inhabilitar subsidiaria' : 'Reactivar subsidiaria'}
+                                >
+                                  {sub.active ? 'Inhabilitar' : 'Reactivar'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Section 1: Departamentos */}
       {adminSection === 'Departamentos' && (
         <div className="finance-section-container">
@@ -960,7 +1623,7 @@ export function AdministrationSection({
               </div>
               <div>
                 <h2>Departamentos y Unidades de Negocio</h2>
-                <p>Estructura departamental, responsables de área y asignación de centros de costos.</p>
+                <p>Estructura departamental, responsables de área, centros de costos y subsidiarias asociadas.</p>
               </div>
             </div>
 
@@ -980,8 +1643,8 @@ export function AdministrationSection({
 
           {/* Toolbar */}
           <div className="ops-toolbar">
-            <div className="ops-filter-group">
-              <div className="ops-search-input-wrap" style={{ minWidth: '320px' }}>
+            <div className="ops-filter-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div className="ops-search-input-wrap" style={{ minWidth: '280px' }}>
                 <Search size={14} />
                 <input
                   type="text"
@@ -999,15 +1662,38 @@ export function AdministrationSection({
                   </button>
                 )}
               </div>
+
+              <div className="accounting-select-wrap">
+                <label htmlFor="filter-dept-sub">Subsidiaria:</label>
+                <select
+                  id="filter-dept-sub"
+                  className="accounting-filter-select"
+                  value={deptSubsidiaryFilter}
+                  onChange={(e) => setDeptSubsidiaryFilter(e.target.value)}
+                >
+                  <option value="Todas">Todas las subsidiarias ({departments.length})</option>
+                  {subsidiaries.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.code} · {sub.name} (
+                      {departments.filter((d) => (d.subsidiaryIds || []).includes(sub.id)).length})
+                    </option>
+                  ))}
+                  <option value="unassigned">
+                    Sin subsidiaria ({departments.filter((d) => (d.subsidiaryIds || []).length === 0).length})
+                  </option>
+                </select>
+              </div>
             </div>
 
             <div className="ops-actions-group">
-              <button
-                className="button button-primary"
-                onClick={() => setIsDeptModalOpen(true)}
-              >
-                <Plus size={14} /> Nuevo departamento
-              </button>
+              {canCreateDept && (
+                <button
+                  className="button button-primary"
+                  onClick={openNewDeptModal}
+                >
+                  <Plus size={14} /> Nuevo departamento
+                </button>
+              )}
             </div>
           </div>
 
@@ -1016,18 +1702,19 @@ export function AdministrationSection({
             <table className="data-table ops-data-table">
               <thead>
                 <tr>
-                  <th style={{ width: '120px' }}>CÓDIGO</th>
+                  <th style={{ width: '110px' }}>CÓDIGO</th>
                   <th>DEPARTAMENTO / ÁREA</th>
                   <th>LÍDER / RESPONSABLE</th>
+                  <th>SUBSIDIARIAS RELACIONADAS</th>
                   <th>CENTRO DE COSTOS</th>
                   <th>ESTADO</th>
-                  <th style={{ textAlign: 'right', width: '110px' }}>ACCIONES</th>
+                  <th style={{ textAlign: 'right', width: '150px' }}>ACCIONES</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredDepartments.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="empty-cell">
+                    <td colSpan={7} className="empty-cell">
                       No se encontraron departamentos registrados con los criterios de búsqueda.
                     </td>
                   </tr>
@@ -1049,6 +1736,7 @@ export function AdministrationSection({
                           <span>{d.leader}</span>
                         </div>
                       </td>
+                      <td>{renderSubsidiaryTags(d.subsidiaryIds)}</td>
                       <td>
                         {d.costCenter ? (
                           <span className="location-bin-tag">{d.costCenter}</span>
@@ -1068,14 +1756,28 @@ export function AdministrationSection({
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="button-icon-action"
-                          onClick={() => toggleDepartmentStatus(d.id)}
-                          title={d.active ? 'Desactivar departamento' : 'Activar departamento'}
-                        >
-                          {d.active ? 'Desactivar' : 'Reactivar'}
-                        </button>
+                        <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
+                          {canEditDept && (
+                            <>
+                              <button
+                                type="button"
+                                className="button-icon-action"
+                                onClick={() => openEditDeptModal(d)}
+                                title="Editar departamento y subsidiarias"
+                              >
+                                <Pencil size={11} /> Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="button-icon-action"
+                                onClick={() => toggleDepartmentStatus(d.id)}
+                                title={d.active ? 'Desactivar departamento' : 'Activar departamento'}
+                              >
+                                {d.active ? 'Desactivar' : 'Reactivar'}
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1097,7 +1799,7 @@ export function AdministrationSection({
               </div>
               <div>
                 <h2>Sedes y Ubicaciones Físicas</h2>
-                <p>Direcciones de oficinas, almacenes, sucursales y puntos de operación de la entidad.</p>
+                <p>Direcciones de oficinas, almacenes, sucursales y su vinculación con una o más subsidiarias.</p>
               </div>
             </div>
 
@@ -1118,7 +1820,7 @@ export function AdministrationSection({
           {/* Toolbar */}
           <div className="ops-toolbar">
             <div className="ops-filter-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <div className="ops-search-input-wrap" style={{ minWidth: '280px' }}>
+              <div className="ops-search-input-wrap" style={{ minWidth: '250px' }}>
                 <Search size={14} />
                 <input
                   type="text"
@@ -1153,15 +1855,38 @@ export function AdministrationSection({
                   ))}
                 </select>
               </div>
+
+              <div className="accounting-select-wrap">
+                <label htmlFor="filter-loc-sub">Subsidiaria:</label>
+                <select
+                  id="filter-loc-sub"
+                  className="accounting-filter-select"
+                  value={locSubsidiaryFilter}
+                  onChange={(e) => setLocSubsidiaryFilter(e.target.value)}
+                >
+                  <option value="Todas">Todas las subsidiarias ({locations.length})</option>
+                  {subsidiaries.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.code} · {sub.name} (
+                      {locations.filter((l) => (l.subsidiaryIds || []).includes(sub.id)).length})
+                    </option>
+                  ))}
+                  <option value="unassigned">
+                    Sin subsidiaria ({locations.filter((l) => (l.subsidiaryIds || []).length === 0).length})
+                  </option>
+                </select>
+              </div>
             </div>
 
             <div className="ops-actions-group">
-              <button
-                className="button button-primary"
-                onClick={() => setIsLocationModalOpen(true)}
-              >
-                <Plus size={14} /> Nueva ubicación
-              </button>
+              {canCreateLoc && (
+                <button
+                  className="button button-primary"
+                  onClick={openNewLocationModal}
+                >
+                  <Plus size={14} /> Nueva ubicación
+                </button>
+              )}
             </div>
           </div>
 
@@ -1170,19 +1895,20 @@ export function AdministrationSection({
             <table className="data-table ops-data-table">
               <thead>
                 <tr>
-                  <th style={{ width: '120px' }}>CÓDIGO</th>
+                  <th style={{ width: '110px' }}>CÓDIGO</th>
                   <th>SEDE / UBICACIÓN</th>
                   <th>TIPO</th>
+                  <th>SUBSIDIARIAS RELACIONADAS</th>
                   <th>DIRECCIÓN Y CIUDAD</th>
                   <th>ENCARGADO</th>
                   <th>ESTADO</th>
-                  <th style={{ textAlign: 'right', width: '110px' }}>ACCIONES</th>
+                  <th style={{ textAlign: 'right', width: '150px' }}>ACCIONES</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredLocations.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="empty-cell">
+                    <td colSpan={8} className="empty-cell">
                       No se encontraron ubicaciones físicas registradas.
                     </td>
                   </tr>
@@ -1203,6 +1929,7 @@ export function AdministrationSection({
                           {loc.type}
                         </span>
                       </td>
+                      <td>{renderSubsidiaryTags(loc.subsidiaryIds)}</td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                           <span style={{ fontSize: '9px', color: '#2f3e35' }}>{loc.address}</span>
@@ -1228,14 +1955,28 @@ export function AdministrationSection({
                         )}
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="button-icon-action"
-                          onClick={() => toggleLocationStatus(loc.id)}
-                          title={loc.active ? 'Inhabilitar sede' : 'Habilitar sede'}
-                        >
-                          {loc.active ? 'Inhabilitar' : 'Habilitar'}
-                        </button>
+                        <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
+                          {canEditLoc && (
+                            <>
+                              <button
+                                type="button"
+                                className="button-icon-action"
+                                onClick={() => openEditLocationModal(loc)}
+                                title="Editar ubicación y subsidiarias"
+                              >
+                                <Pencil size={11} /> Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="button-icon-action"
+                                onClick={() => toggleLocationStatus(loc.id)}
+                                title={loc.active ? 'Inhabilitar sede' : 'Habilitar sede'}
+                              >
+                                {loc.active ? 'Inhabilitar' : 'Habilitar'}
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1249,6 +1990,49 @@ export function AdministrationSection({
       {/* Section 3: Resumen Organizacional */}
       {adminSection === 'Resumen' && (
         <div className="finance-section-container">
+          <div className="ops-panel-card" style={{ marginBottom: '14px' }}>
+            <div className="ops-panel-header">
+              <div>
+                <div className="panel-kicker">ENTIDADES LEGALES Y GRUPO</div>
+                <h3>Subsidiarias Registradas</h3>
+              </div>
+              <button
+                className="button button-secondary"
+                onClick={() => onNavigateSection('Subsidiarias')}
+              >
+                Ver todas ({subsidiaries.length}) <ArrowRight size={13} />
+              </button>
+            </div>
+
+            <div className="admin-summary-subs-grid">
+              {subsidiaries.map((sub) => {
+                const deptCount = departments.filter((d) =>
+                  (d.subsidiaryIds || []).includes(sub.id)
+                ).length
+                const locCount = locations.filter((l) =>
+                  (l.subsidiaryIds || []).includes(sub.id)
+                ).length
+                return (
+                  <div key={sub.id} className="admin-summary-item-card">
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <strong style={{ fontSize: '10.5px', color: '#2a3830' }}>{sub.name}</strong>
+                        {sub.isHolding && <span className="admin-holding-pill">Matriz</span>}
+                      </div>
+                      <small style={{ fontSize: '8.5px', color: '#7a8980', display: 'block', marginTop: '2px' }}>
+                        {sub.legalName} · {sub.taxId} · {sub.country} ({sub.currency})
+                      </small>
+                      <small style={{ fontSize: '8.5px', color: '#456a61', display: 'block', marginTop: '4px' }}>
+                        {deptCount} departamento(s) · {locCount} ubicación(es)
+                      </small>
+                    </div>
+                    <span className="accounting-code-badge">{sub.code}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="ops-overview-split" style={{ marginBottom: '14px' }}>
             <div className="ops-panel-card">
               <div className="ops-panel-header">
@@ -1272,6 +2056,7 @@ export function AdministrationSection({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
+                      gap: '8px',
                       padding: '8px 10px',
                       background: '#fafbfa',
                       border: '1px solid #edf1eb',
@@ -1282,8 +2067,9 @@ export function AdministrationSection({
                       <strong style={{ fontSize: '10px', color: '#2a3830', display: 'block' }}>
                         {d.name}
                       </strong>
-                      <small style={{ fontSize: '8.5px', color: '#7a8980' }}>
-                        Líder: {d.leader} {d.costCenter && `· CC: ${d.costCenter}`}
+                      <small style={{ fontSize: '8.5px', color: '#7a8980', display: 'block' }}>
+                        Líder: {d.leader} {d.costCenter && `· CC: ${d.costCenter}`} ·{' '}
+                        {(d.subsidiaryIds || []).length} subsidiaria(s)
                       </small>
                     </div>
                     <span className="accounting-code-badge">{d.code}</span>
@@ -1314,6 +2100,7 @@ export function AdministrationSection({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
+                      gap: '8px',
                       padding: '8px 10px',
                       background: '#fafbfa',
                       border: '1px solid #edf1eb',
@@ -1324,8 +2111,8 @@ export function AdministrationSection({
                       <strong style={{ fontSize: '10px', color: '#2a3830', display: 'block' }}>
                         {l.name}
                       </strong>
-                      <small style={{ fontSize: '8.5px', color: '#7a8980' }}>
-                        {l.city}, {l.state} · {l.type}
+                      <small style={{ fontSize: '8.5px', color: '#7a8980', display: 'block' }}>
+                        {l.city}, {l.state} · {l.type} · {(l.subsidiaryIds || []).length} subsidiaria(s)
                       </small>
                     </div>
                     <span className="accounting-code-badge">{l.code}</span>
@@ -1355,23 +2142,35 @@ export function AdministrationSection({
                   Estructura organizacional configurada
                 </strong>
                 <span style={{ fontSize: '9px', color: '#68776e' }}>
-                  Los departamentos y ubicaciones registrados alimentan los centros de costos y almacenes operativos del sistema.
+                  Las subsidiarias, departamentos y ubicaciones registrados articulan centros de costos y operaciones multi-entidad.
                 </span>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className="button button-secondary"
-                onClick={() => setIsDeptModalOpen(true)}
-              >
-                <Plus size={13} /> Agregar departamento
-              </button>
-              <button
-                className="button button-primary"
-                onClick={() => setIsLocationModalOpen(true)}
-              >
-                <Plus size={13} /> Agregar ubicación
-              </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {canCreateSub && (
+                <button
+                  className="button button-secondary"
+                  onClick={openNewSubsidiaryModal}
+                >
+                  <Plus size={13} /> Agregar subsidiaria
+                </button>
+              )}
+              {canCreateDept && (
+                <button
+                  className="button button-secondary"
+                  onClick={openNewDeptModal}
+                >
+                  <Plus size={13} /> Agregar departamento
+                </button>
+              )}
+              {canCreateLoc && (
+                <button
+                  className="button button-primary"
+                  onClick={openNewLocationModal}
+                >
+                  <Plus size={13} /> Agregar ubicación
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2207,32 +3006,325 @@ export function AdministrationSection({
         </div>
       )}
 
-      {/* Modal: Crear Departamento */}
-      {isDeptModalOpen && (
+      {/* Modal: Crear / Editar Subsidiaria */}
+      {isSubsidiaryModalOpen && (
         <div
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setIsDeptModalOpen(false)
+            if (e.target === e.currentTarget) {
+              setIsSubsidiaryModalOpen(false)
+              setConfirmingDeleteSubsidiary(false)
+            }
           }}
         >
-          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="modal-dept-title">
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="modal-sub-title">
             <div className="create-modal-heading">
               <div>
-                <div className="panel-kicker">ADMINISTRACIÓN · ESTRUCTURA</div>
-                <h2 id="modal-dept-title">Nuevo Departamento</h2>
-                <p>Crea una nueva unidad funcional en la organización para asignación de personal y centros de costos.</p>
+                <div className="panel-kicker">ADMINISTRACIÓN · ENTIDAD LEGAL</div>
+                <h2 id="modal-sub-title">
+                  {editingSubsidiary ? `Editar Subsidiaria · ${editingSubsidiary.code}` : 'Nueva Subsidiaria'}
+                </h2>
+                <p>
+                  Registra una razón social o entidad operativa y define qué departamentos y ubicaciones físicas operan bajo ella.
+                </p>
               </div>
               <button
                 className="icon-button"
-                onClick={() => setIsDeptModalOpen(false)}
+                onClick={() => {
+                  setIsSubsidiaryModalOpen(false)
+                  setConfirmingDeleteSubsidiary(false)
+                }}
                 aria-label="Cerrar modal"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateDepartment}>
+            <form onSubmit={handleSaveSubsidiary}>
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>Código de subsidiaria *</span>
+                  <input
+                    required
+                    autoFocus
+                    placeholder="Ej. SUB-MX o SUB-NTE"
+                    value={subCode}
+                    onChange={(e) => setSubCode(e.target.value)}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>RFC / Tax ID *</span>
+                  <input
+                    required
+                    placeholder="Ej. ANM210412KX8"
+                    value={subTaxId}
+                    onChange={(e) => setSubTaxId(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>Nombre comercial *</span>
+                  <input
+                    required
+                    placeholder="Ej. AES Nexus Norte"
+                    value={subName}
+                    onChange={(e) => setSubName(e.target.value)}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Razón social completa *</span>
+                  <input
+                    required
+                    placeholder="Ej. AES Nexus Norte Operaciones S.A.P.I. de C.V."
+                    value={subLegalName}
+                    onChange={(e) => setSubLegalName(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>País *</span>
+                  <input
+                    required
+                    placeholder="Ej. México"
+                    value={subCountry}
+                    onChange={(e) => setSubCountry(e.target.value)}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Divisa contable *</span>
+                  <select
+                    required
+                    value={subCurrency}
+                    onChange={(e) => setSubCurrency(e.target.value)}
+                  >
+                    <option value="MXN">MXN · Peso Mexicano</option>
+                    <option value="USD">USD · Dólar Estadounidense</option>
+                    <option value="EUR">EUR · Euro</option>
+                    <option value="COP">COP · Peso Colombiano</option>
+                    <option value="CLP">CLP · Peso Chileno</option>
+                    <option value="BRL">BRL · Real Brasileño</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>Representante legal / Director</span>
+                  <input
+                    placeholder="Ej. Andrea Morales"
+                    value={subLegalRep}
+                    onChange={(e) => setSubLegalRep(e.target.value)}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Domicilio fiscal</span>
+                  <input
+                    placeholder="Ej. Paseo de la Reforma 222, CDMX"
+                    value={subFiscalAddress}
+                    onChange={(e) => setSubFiscalAddress(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <label className="admin-holding-checkbox">
+                <input
+                  type="checkbox"
+                  checked={subIsHolding}
+                  onChange={(e) => setSubIsHolding(e.target.checked)}
+                />
+                <span>Marcar como entidad matriz / holding principal del grupo</span>
+              </label>
+
+              {departments.length > 0 && (
+                <div className="admin-sub-multiselect">
+                  <div className="admin-sub-multiselect-head">
+                    <span>
+                      Departamentos relacionados ({subLinkedDeptIds.length} de {departments.length})
+                    </span>
+                    <div className="admin-sub-multiselect-tools">
+                      <button
+                        type="button"
+                        onClick={() => setSubLinkedDeptIds(departments.map((d) => d.id))}
+                      >
+                        Todos
+                      </button>
+                      <button type="button" onClick={() => setSubLinkedDeptIds([])}>
+                        Ninguno
+                      </button>
+                    </div>
+                  </div>
+                  <div className="admin-sub-multiselect-grid">
+                    {departments.map((d) => {
+                      const selected = subLinkedDeptIds.includes(d.id)
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          className={`admin-sub-option ${selected ? 'selected' : ''}`}
+                          onClick={() => setSubLinkedDeptIds((prev) => toggleIdInList(prev, d.id))}
+                        >
+                          <span className="admin-sub-option-check">
+                            {selected && <Check size={11} />}
+                          </span>
+                          <span className="admin-sub-option-copy">
+                            <strong>{d.code} · {d.name}</strong>
+                            <small>Líder: {d.leader}</small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {locations.length > 0 && (
+                <div className="admin-sub-multiselect">
+                  <div className="admin-sub-multiselect-head">
+                    <span>
+                      Ubicaciones físicas relacionadas ({subLinkedLocationIds.length} de {locations.length})
+                    </span>
+                    <div className="admin-sub-multiselect-tools">
+                      <button
+                        type="button"
+                        onClick={() => setSubLinkedLocationIds(locations.map((l) => l.id))}
+                      >
+                        Todas
+                      </button>
+                      <button type="button" onClick={() => setSubLinkedLocationIds([])}>
+                        Ninguna
+                      </button>
+                    </div>
+                  </div>
+                  <div className="admin-sub-multiselect-grid">
+                    {locations.map((l) => {
+                      const selected = subLinkedLocationIds.includes(l.id)
+                      return (
+                        <button
+                          key={l.id}
+                          type="button"
+                          className={`admin-sub-option ${selected ? 'selected' : ''}`}
+                          onClick={() =>
+                            setSubLinkedLocationIds((prev) => toggleIdInList(prev, l.id))
+                          }
+                        >
+                          <span className="admin-sub-option-check">
+                            {selected && <Check size={11} />}
+                          </span>
+                          <span className="admin-sub-option-copy">
+                            <strong>{l.code} · {l.name}</strong>
+                            <small>{l.city} · {l.type}</small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div
+                className={`create-modal-actions ${
+                  editingSubsidiary && canDeleteSub ? 'has-delete-action' : ''
+                }`}
+              >
+                {editingSubsidiary && canDeleteSub && (
+                  <div className="modal-delete-slot">
+                    {confirmingDeleteSubsidiary ? (
+                      <div className="modal-delete-confirm">
+                        <span>¿Eliminar subsidiaria?</span>
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          onClick={() => setConfirmingDeleteSubsidiary(false)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-danger-solid button-sm"
+                          onClick={handleDeleteSubsidiaryConfirmed}
+                        >
+                          <Trash2 size={12} /> Confirmar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDeleteSubsidiary(true)}
+                      >
+                        <Trash2 size={13} /> Eliminar subsidiaria
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      setIsSubsidiaryModalOpen(false)
+                      setConfirmingDeleteSubsidiary(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    {editingSubsidiary ? <Check size={14} /> : <Plus size={14} />}
+                    {editingSubsidiary ? 'Guardar cambios' : 'Guardar subsidiaria'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Crear / Editar Departamento */}
+      {isDeptModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsDeptModalOpen(false)
+              setConfirmingDeleteDept(false)
+            }
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="modal-dept-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">ADMINISTRACIÓN · ESTRUCTURA</div>
+                <h2 id="modal-dept-title">
+                  {editingDepartment ? `Editar Departamento · ${editingDepartment.code}` : 'Nuevo Departamento'}
+                </h2>
+                <p>
+                  Configura la unidad funcional, su centro de costos y las subsidiarias con las que opera.
+                </p>
+              </div>
+              <button
+                className="icon-button"
+                onClick={() => {
+                  setIsDeptModalOpen(false)
+                  setConfirmingDeleteDept(false)
+                }}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveDepartment}>
               <div className="form-grid">
                 <label className="form-field">
                   <span>Código de departamento *</span>
@@ -2286,49 +3378,151 @@ export function AdministrationSection({
                 />
               </label>
 
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setIsDeptModalOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <Plus size={14} /> Guardar departamento
-                </button>
+              <div className="admin-sub-multiselect">
+                <div className="admin-sub-multiselect-head">
+                  <span>
+                    Subsidiarias relacionadas * ({deptSubsidiaryIds.length} de {subsidiaries.length})
+                  </span>
+                  {subsidiaries.length > 0 && (
+                    <div className="admin-sub-multiselect-tools">
+                      <button
+                        type="button"
+                        onClick={() => setDeptSubsidiaryIds(subsidiaries.map((s) => s.id))}
+                      >
+                        Todas
+                      </button>
+                      <button type="button" onClick={() => setDeptSubsidiaryIds([])}>
+                        Limpiar
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {subsidiaries.length === 0 ? (
+                  <p className="admin-sub-multiselect-empty">
+                    No hay subsidiarias registradas aún. Crea una en la pestaña Subsidiarias para vincular este departamento.
+                  </p>
+                ) : (
+                  <div className="admin-sub-multiselect-grid">
+                    {subsidiaries.map((sub) => {
+                      const selected = deptSubsidiaryIds.includes(sub.id)
+                      return (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          className={`admin-sub-option ${selected ? 'selected' : ''}`}
+                          onClick={() =>
+                            setDeptSubsidiaryIds((prev) => toggleIdInList(prev, sub.id))
+                          }
+                        >
+                          <span className="admin-sub-option-check">
+                            {selected && <Check size={11} />}
+                          </span>
+                          <span className="admin-sub-option-copy">
+                            <strong>{sub.code} · {sub.name}</strong>
+                            <small>{sub.country} · {sub.currency}</small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={`create-modal-actions ${
+                  editingDepartment && canDeleteDept ? 'has-delete-action' : ''
+                }`}
+              >
+                {editingDepartment && canDeleteDept && (
+                  <div className="modal-delete-slot">
+                    {confirmingDeleteDept ? (
+                      <div className="modal-delete-confirm">
+                        <span>¿Eliminar departamento?</span>
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          onClick={() => setConfirmingDeleteDept(false)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-danger-solid button-sm"
+                          onClick={handleDeleteDeptConfirmed}
+                        >
+                          <Trash2 size={12} /> Confirmar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDeleteDept(true)}
+                      >
+                        <Trash2 size={13} /> Eliminar departamento
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      setIsDeptModalOpen(false)
+                      setConfirmingDeleteDept(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    {editingDepartment ? <Check size={14} /> : <Plus size={14} />}
+                    {editingDepartment ? 'Guardar cambios' : 'Guardar departamento'}
+                  </button>
+                </div>
               </div>
             </form>
           </section>
         </div>
       )}
 
-      {/* Modal: Crear Ubicación Física */}
+      {/* Modal: Crear / Editar Ubicación Física */}
       {isLocationModalOpen && (
         <div
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setIsLocationModalOpen(false)
+            if (e.target === e.currentTarget) {
+              setIsLocationModalOpen(false)
+              setConfirmingDeleteLoc(false)
+            }
           }}
         >
           <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="modal-loc-title">
             <div className="create-modal-heading">
               <div>
                 <div className="panel-kicker">ADMINISTRACIÓN · INFRAESTRUCTURA</div>
-                <h2 id="modal-loc-title">Nueva Ubicación Física</h2>
-                <p>Registra una nueva sede, almacén o sucursal operativa para la empresa.</p>
+                <h2 id="modal-loc-title">
+                  {editingLocation ? `Editar Ubicación · ${editingLocation.code}` : 'Nueva Ubicación Física'}
+                </h2>
+                <p>
+                  Registra una sede, almacén o sucursal operativa y asígnala a una o más subsidiarias.
+                </p>
               </div>
               <button
                 className="icon-button"
-                onClick={() => setIsLocationModalOpen(false)}
+                onClick={() => {
+                  setIsLocationModalOpen(false)
+                  setConfirmingDeleteLoc(false)
+                }}
                 aria-label="Cerrar modal"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateLocation}>
+            <form onSubmit={handleSaveLocation}>
               <div className="form-grid">
                 <label className="form-field">
                   <span>Código de la sede *</span>
@@ -2418,17 +3612,109 @@ export function AdministrationSection({
                 />
               </label>
 
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setIsLocationModalOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <Plus size={14} /> Guardar ubicación
-                </button>
+              <div className="admin-sub-multiselect">
+                <div className="admin-sub-multiselect-head">
+                  <span>
+                    Subsidiarias relacionadas * ({locSubsidiaryIds.length} de {subsidiaries.length})
+                  </span>
+                  {subsidiaries.length > 0 && (
+                    <div className="admin-sub-multiselect-tools">
+                      <button
+                        type="button"
+                        onClick={() => setLocSubsidiaryIds(subsidiaries.map((s) => s.id))}
+                      >
+                        Todas
+                      </button>
+                      <button type="button" onClick={() => setLocSubsidiaryIds([])}>
+                        Limpiar
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {subsidiaries.length === 0 ? (
+                  <p className="admin-sub-multiselect-empty">
+                    No hay subsidiarias registradas aún. Crea una en la pestaña Subsidiarias para relacionar esta sede.
+                  </p>
+                ) : (
+                  <div className="admin-sub-multiselect-grid">
+                    {subsidiaries.map((sub) => {
+                      const selected = locSubsidiaryIds.includes(sub.id)
+                      return (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          className={`admin-sub-option ${selected ? 'selected' : ''}`}
+                          onClick={() =>
+                            setLocSubsidiaryIds((prev) => toggleIdInList(prev, sub.id))
+                          }
+                        >
+                          <span className="admin-sub-option-check">
+                            {selected && <Check size={11} />}
+                          </span>
+                          <span className="admin-sub-option-copy">
+                            <strong>{sub.code} · {sub.name}</strong>
+                            <small>{sub.country} · {sub.currency}</small>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={`create-modal-actions ${
+                  editingLocation && canDeleteLoc ? 'has-delete-action' : ''
+                }`}
+              >
+                {editingLocation && canDeleteLoc && (
+                  <div className="modal-delete-slot">
+                    {confirmingDeleteLoc ? (
+                      <div className="modal-delete-confirm">
+                        <span>¿Eliminar ubicación?</span>
+                        <button
+                          type="button"
+                          className="button button-secondary button-sm"
+                          onClick={() => setConfirmingDeleteLoc(false)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-danger-solid button-sm"
+                          onClick={handleDeleteLocationConfirmed}
+                        >
+                          <Trash2 size={12} /> Confirmar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDeleteLoc(true)}
+                      >
+                        <Trash2 size={13} /> Eliminar ubicación
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      setIsLocationModalOpen(false)
+                      setConfirmingDeleteLoc(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    {editingLocation ? <Check size={14} /> : <Plus size={14} />}
+                    {editingLocation ? 'Guardar cambios' : 'Guardar ubicación'}
+                  </button>
+                </div>
               </div>
             </form>
           </section>

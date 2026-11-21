@@ -9,7 +9,9 @@ import {
   CreditCard,
   X,
   ArrowRight,
+  Eye,
   Landmark,
+  Trash2,
 } from 'lucide-react'
 import type { BillPayable } from '../data/finance'
 import type { PurchaseOrder } from '../data/operations'
@@ -27,6 +29,7 @@ interface PurchasesInvoicesProps {
   purchaseOrders: PurchaseOrder[]
   suppliers: SupplierOption[]
   onCreateSupplierBill: (bill: BillPayable) => void
+  onDeleteSupplierBill?: (billId: string) => void
   onNavigateToFinancePayables?: () => void
   onOpenEbpBatchFromBills?: (bills: BillPayable[], mode?: EbpAggregationMode) => void
 }
@@ -43,6 +46,7 @@ export function PurchasesInvoices({
   purchaseOrders,
   suppliers,
   onCreateSupplierBill,
+  onDeleteSupplierBill,
   onNavigateToFinancePayables,
   onOpenEbpBatchFromBills,
 }: PurchasesInvoicesProps) {
@@ -50,6 +54,8 @@ export function PurchasesInvoices({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
+  const [viewingBill, setViewingBill] = useState<BillPayable | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [selectedBillIds, setSelectedBillIds] = useState<Record<string, boolean>>({})
 
   // Modal state
@@ -342,13 +348,13 @@ export function PurchasesInvoices({
               <th style={{ textAlign: 'right' }}>PAGADO</th>
               <th style={{ textAlign: 'right' }}>SALDO</th>
               <th>ESTADO</th>
-              {onOpenEbpBatchFromBills && <th style={{ textAlign: 'right' }}>PAGO EBP</th>}
+              <th style={{ textAlign: 'right' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
             {filteredBills.length === 0 ? (
               <tr>
-                <td colSpan={onOpenEbpBatchFromBills ? 11 : 9} className="empty-cell">
+                <td colSpan={onOpenEbpBatchFromBills ? 11 : 10} className="empty-cell">
                   No se encontraron facturas de proveedor con los filtros actuales.
                 </td>
               </tr>
@@ -405,9 +411,20 @@ export function PurchasesInvoices({
                     </strong>
                   </td>
                   <td>{getStatusBadge(b.status)}</td>
-                  {onOpenEbpBatchFromBills && (
-                    <td style={{ textAlign: 'right' }}>
-                      {canPay ? (
+                  <td style={{ textAlign: 'right' }}>
+                    <div className="po-actions-row">
+                      <button
+                        type="button"
+                        className="button-icon-action"
+                        title="Ver detalle de la factura de proveedor"
+                        onClick={() => {
+                          setConfirmingDelete(false)
+                          setViewingBill(b)
+                        }}
+                      >
+                        <Eye size={12} /> Ver
+                      </button>
+                      {onOpenEbpBatchFromBills && canPay && (
                         <button
                           type="button"
                           className="button-icon-action action-pay"
@@ -416,11 +433,9 @@ export function PurchasesInvoices({
                         >
                           <Landmark size={12} /> Pagar EBP
                         </button>
-                      ) : (
-                        <span className="ebp-field-hint">Liquidada</span>
                       )}
-                    </td>
-                  )}
+                    </div>
+                  </td>
                 </tr>
                 )
               })
@@ -550,6 +565,152 @@ export function PurchasesInvoices({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Factura de Proveedor */}
+      {viewingBill && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setViewingBill(null)
+              setConfirmingDelete(false)
+            }
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">COMPRAS · DETALLE DE FACTURA CXP</div>
+                <h2>Factura {viewingBill.folio}</h2>
+                <p>
+                  {viewingBill.supplierCompany} · {viewingBill.supplierContact}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setViewingBill(null)
+                  setConfirmingDelete(false)
+                }}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="po-detail-meta-grid">
+              <div>
+                <small>Proveedor</small>
+                <strong>{viewingBill.supplierCompany}</strong>
+                <span>{viewingBill.supplierContact}</span>
+              </div>
+              <div>
+                <small>Orden vinculada / Fecha</small>
+                <strong>{viewingBill.purchaseOrderFolio || 'Factura directa'}</strong>
+                <span>Emisión: {viewingBill.issueDate} · Vence: {viewingBill.dueDate}</span>
+              </div>
+              <div>
+                <small>Estado de pago</small>
+                <div>{getStatusBadge(viewingBill.status)}</div>
+                <span>Método: {viewingBill.paymentMethod}</span>
+              </div>
+            </div>
+
+            <div className="po-totals-box" style={{ marginTop: 14 }}>
+              <div className="po-totals-row">
+                <span>Subtotal:</span>
+                <strong className="tabular-nums">{money(viewingBill.subtotal)}</strong>
+              </div>
+              <div className="po-totals-row">
+                <span>IVA trasladado (16%):</span>
+                <strong className="tabular-nums">{money(viewingBill.tax)}</strong>
+              </div>
+              <div className="po-totals-row grand">
+                <span>Total facturado:</span>
+                <strong className="tabular-nums">{money(viewingBill.total)} {viewingBill.currency || 'MXN'}</strong>
+              </div>
+              <div className="po-totals-row">
+                <span>Monto pagado:</span>
+                <strong className="tabular-nums text-positive">{money(viewingBill.paidAmount)}</strong>
+              </div>
+              <div className="po-totals-row" style={{ borderTop: '1px dashed #d5dcd6', paddingTop: 4 }}>
+                <span>Saldo pendiente:</span>
+                <strong className={`tabular-nums ${viewingBill.balance > 0 ? 'text-alert' : 'text-positive'}`}>
+                  {money(viewingBill.balance)} {viewingBill.currency || 'MXN'}
+                </strong>
+              </div>
+            </div>
+
+            <div className={`create-modal-actions ${onDeleteSupplierBill ? 'has-delete-action' : ''}`}>
+              {onDeleteSupplierBill && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar factura
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingBill.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteSupplierBill(viewingBill.id)
+                          setViewingBill(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setViewingBill(null)
+                    setConfirmingDelete(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                {onOpenEbpBatchFromBills && viewingBill.balance > 0 && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      const target = viewingBill
+                      setViewingBill(null)
+                      setConfirmingDelete(false)
+                      onOpenEbpBatchFromBills([target], 'individual')
+                    }}
+                  >
+                    <Landmark size={14} /> Pagar con EBP
+                  </button>
+                )}
+              </div>
+            </div>
           </section>
         </div>
       )}

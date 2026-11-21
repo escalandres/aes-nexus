@@ -56,7 +56,7 @@ export const translations = {
     'module.finance.title': 'Finanzas',
     'module.finance.subtitle': 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.',
     'module.admin.title': 'Administración',
-    'module.admin.subtitle': 'Gestiona los departamentos, líderes, centros de costos y ubicaciones físicas de la organización.',
+    'module.admin.subtitle': 'Gestiona las subsidiarias, departamentos, líderes, centros de costos y ubicaciones físicas de la organización.',
 
     // Tabs
     'tabs.sales.catalog': 'Productos y servicios',
@@ -93,6 +93,7 @@ export const translations = {
     'tabs.reports.sales': 'Ventas y CxC',
     'tabs.reports.inventory': 'Compras e Inventario',
     'tabs.reports.payroll': 'Nómina y RRHH',
+    'tabs.admin.subsidiaries': 'Subsidiarias',
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Ubicaciones',
     'tabs.admin.summary': 'Resumen organizacional',
@@ -252,7 +253,7 @@ export const translations = {
     'module.finance.title': 'Finanzas',
     'module.finance.subtitle': 'Supervisa saldos bancarios, cobros, pagos y gastos operativos.',
     'module.admin.title': 'Administración',
-    'module.admin.subtitle': 'Gestiona los departamentos, responsables, centros de costes y sedes físicas de la organización.',
+    'module.admin.subtitle': 'Gestiona las subsidiarias, departamentos, responsables, centros de costes y sedes físicas de la organización.',
 
     'tabs.sales.catalog': 'Productos y servicios',
     'tabs.sales.quotes': 'Presupuestos y propuestas',
@@ -288,6 +289,7 @@ export const translations = {
     'tabs.reports.sales': 'Ventas y CxC',
     'tabs.reports.inventory': 'Compras e Inventario',
     'tabs.reports.payroll': 'Nóminas y RRHH',
+    'tabs.admin.subsidiaries': 'Subsidiarias',
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Ubicaciones',
     'tabs.admin.summary': 'Resumen organizativo',
@@ -440,7 +442,7 @@ export const translations = {
     'module.finance.title': 'Finance',
     'module.finance.subtitle': 'Track bank balances, receivables, payables, electronic payments, and operational expenses.',
     'module.admin.title': 'Administration',
-    'module.admin.subtitle': 'Configure organizational structure, physical locations, and operational controls.',
+    'module.admin.subtitle': 'Configure subsidiaries, organizational structure, physical locations, and operational controls.',
 
     'tabs.sales.catalog': 'Products & Services',
     'tabs.sales.quotes': 'Quotes & Proposals',
@@ -476,6 +478,7 @@ export const translations = {
     'tabs.reports.sales': 'Sales & AR',
     'tabs.reports.inventory': 'Purchasing & Inventory',
     'tabs.reports.payroll': 'Payroll & HR',
+    'tabs.admin.subsidiaries': 'Subsidiaries',
     'tabs.admin.departments': 'Departments',
     'tabs.admin.locations': 'Locations',
     'tabs.admin.summary': 'Organization Summary',
@@ -628,7 +631,7 @@ export const translations = {
     'module.finance.title': 'Finanças',
     'module.finance.subtitle': 'Acompanhe saldos bancários, recebimentos, pagamentos e despesas operacionais.',
     'module.admin.title': 'Administração',
-    'module.admin.subtitle': 'Configure a organização, departamentos, unidades físicas e controles operacionais.',
+    'module.admin.subtitle': 'Configure subsidiárias, departamentos, unidades físicas e controles operacionais.',
 
     'tabs.sales.catalog': 'Produtos e serviços',
     'tabs.sales.quotes': 'Orçamentos e propostas',
@@ -664,6 +667,7 @@ export const translations = {
     'tabs.reports.sales': 'Vendas e Recebimentos',
     'tabs.reports.inventory': 'Compras e Estoque',
     'tabs.reports.payroll': 'Folha e RH',
+    'tabs.admin.subsidiaries': 'Subsidiárias',
     'tabs.admin.departments': 'Departamentos',
     'tabs.admin.locations': 'Unidades e locais',
     'tabs.admin.summary': 'Resumo organizacional',

@@ -10,6 +10,8 @@ import {
   X,
   RotateCcw,
   Boxes,
+  Eye,
+  Trash2,
 } from 'lucide-react'
 import type { ShipmentDelivery, DeliveryStatus } from '../data/operations'
 import { useToast } from './Toast'
@@ -17,6 +19,7 @@ import { useToast } from './Toast'
 interface OperationsDeliveriesProps {
   shipments: ShipmentDelivery[]
   onUpdateShipments: (shipments: ShipmentDelivery[]) => void
+  onDeleteShipment?: (shipmentId: string) => void
   salesOrderFolios?: string[]
 }
 
@@ -32,6 +35,7 @@ const CARRIERS = [
 export function OperationsDeliveries({
   shipments,
   onUpdateShipments,
+  onDeleteShipment,
   salesOrderFolios = ['PED-2026-001', 'PED-2026-002', 'PED-2026-003'],
 }: OperationsDeliveriesProps) {
   const toast = useToast()
@@ -42,6 +46,8 @@ export function OperationsDeliveries({
   const [isNewShipmentModalOpen, setIsNewShipmentModalOpen] = useState(false)
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false)
   const [selectedShipment, setSelectedShipment] = useState<ShipmentDelivery | null>(null)
+  const [viewingShipment, setViewingShipment] = useState<ShipmentDelivery | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [returnReason, setReturnReason] = useState('')
 
   // New Shipment Form State
@@ -426,6 +432,17 @@ export function OperationsDeliveries({
                     <CheckCircle2 size={13} /> Entrega finalizada con éxito
                   </div>
                 )}
+                <button
+                  type="button"
+                  className="button-icon-action"
+                  onClick={() => {
+                    setConfirmingDelete(false)
+                    setViewingShipment(shp)
+                  }}
+                  title="Ver ficha completa o eliminar despacho"
+                >
+                  <Eye size={12} /> Detalle
+                </button>
               </div>
             </article>
           ))
@@ -628,6 +645,149 @@ export function OperationsDeliveries({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Despacho / Entrega */}
+      {viewingShipment && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setViewingShipment(null)
+              setConfirmingDelete(false)
+            }
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">OPERACIONES · DETALLE DE DESPACHO</div>
+                <h2>{viewingShipment.folio}</h2>
+                <p>
+                  {viewingShipment.clientCompany} · Pedido {viewingShipment.orderFolio}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setViewingShipment(null)
+                  setConfirmingDelete(false)
+                }}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="po-detail-meta-grid">
+              <div>
+                <small>Transportista y guía</small>
+                <strong>{viewingShipment.carrier}</strong>
+                <span>Guía: {viewingShipment.trackingNumber}</span>
+              </div>
+              <div>
+                <small>Fechas y bultos</small>
+                <strong>{viewingShipment.packages} {viewingShipment.packages === 1 ? 'bulto' : 'bultos'}</strong>
+                <span>Despacho: {viewingShipment.shippingDate} · Est.: {viewingShipment.estimatedDelivery}</span>
+              </div>
+              <div>
+                <small>Estado actual</small>
+                <div>{getStatusBadge(viewingShipment.status)}</div>
+                <span>Receptor: {viewingShipment.clientName}</span>
+              </div>
+            </div>
+
+            <div className="po-notes-preview" style={{ marginTop: 12 }}>
+              <strong>Dirección de destino:</strong>
+              <p>{viewingShipment.address}</p>
+              {viewingShipment.notes && (
+                <p style={{ marginTop: 4 }}>
+                  <strong>Notas:</strong> {viewingShipment.notes}
+                </p>
+              )}
+            </div>
+
+            <div className={`create-modal-actions ${onDeleteShipment ? 'has-delete-action' : ''}`}>
+              {onDeleteShipment && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar despacho
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingShipment.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteShipment(viewingShipment.id)
+                          setViewingShipment(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setViewingShipment(null)
+                    setConfirmingDelete(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                {viewingShipment.status === 'Preparando' && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      handleAdvanceStatus(viewingShipment)
+                      setViewingShipment(null)
+                      setConfirmingDelete(false)
+                    }}
+                  >
+                    <Truck size={14} /> Marcar "En ruta"
+                  </button>
+                )}
+                {viewingShipment.status === 'En ruta' && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      handleAdvanceStatus(viewingShipment)
+                      setViewingShipment(null)
+                      setConfirmingDelete(false)
+                    }}
+                  >
+                    <PackageCheck size={14} /> Confirmar entrega
+                  </button>
+                )}
+              </div>
+            </div>
           </section>
         </div>
       )}

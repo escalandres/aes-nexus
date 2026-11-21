@@ -7,7 +7,7 @@ import {
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
-  LogIn, LogOut, BarChart3,
+  LogIn, LogOut, BarChart3, BadgeCheck, Trash2,
 } from 'lucide-react'
 import { activities, opportunities } from './data/dashboard'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
@@ -42,6 +42,7 @@ import {
   canAccessModule,
   canAccessSection,
   canCreateInSection,
+  canDeleteInSection,
   canEditInSection,
   getFirstAccessibleSection,
   getRequiredCapabilities,
@@ -107,6 +108,7 @@ import {
   type AdminSectionTab,
   type DepartmentRecord,
   type PhysicalLocationRecord,
+  type SubsidiaryRecord,
 } from './components/AdministrationSection'
 import { ReportsSection, type ReportsSectionTab } from './components/ReportsSection'
 import {
@@ -144,7 +146,7 @@ const moduleDetails = {
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
   Reportes: { icon: BarChart3, phase: 'BI · Analítica ERP', description: 'Inteligencia financiera y operativa consolidada en tiempo real con exportación CSV e impresión.', areas: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas, Inventario y Nómina'] },
-  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos', 'Historial de auditoría'] },
+  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: subsidiarias, departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Subsidiarias y razones sociales', 'Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Historial de auditoría'] },
 } as const
 
 type DirectoryRecord = {
@@ -280,19 +282,61 @@ const suppliers: DirectoryRecord[] = [
   { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', currency: 'MXN', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
 ]
 
+const initialSubsidiaries: SubsidiaryRecord[] = [
+  {
+    id: 'sub_1',
+    code: 'SUB-MX',
+    name: 'AES Nexus México (Matriz)',
+    legalName: 'AES Nexus Corporativo México S.A. de C.V.',
+    taxId: 'ANM210412KX8',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Andrea Morales',
+    fiscalAddress: 'Paseo de la Reforma 222, Piso 14, Cuauhtémoc, CDMX',
+    isHolding: true,
+    active: true,
+  },
+  {
+    id: 'sub_2',
+    code: 'SUB-NTE',
+    name: 'AES Nexus Norte Operaciones',
+    legalName: 'AES Nexus Norte Logística S.A.P.I. de C.V.',
+    taxId: 'ANN220815PL4',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Roberto Santos',
+    fiscalAddress: 'Av. Constitución 1400, Monterrey, Nuevo León',
+    isHolding: false,
+    active: true,
+  },
+  {
+    id: 'sub_3',
+    code: 'SUB-OCC',
+    name: 'AES Nexus Occidente Comercial',
+    legalName: 'AES Nexus Occidente S. de R.L. de C.V.',
+    taxId: 'ANO230309TR1',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Carlos Méndez',
+    fiscalAddress: 'Av. Chapultepec 480, Guadalajara, Jalisco',
+    isHolding: false,
+    active: true,
+  },
+]
+
 const initialDepartments: DepartmentRecord[] = [
-  { id: 'dep_1', code: 'DIR-01', name: 'Dirección General', leader: 'Andrea Morales', costCenter: 'CC-100', description: 'Toma de decisiones estratégicas y gobierno corporativo.', active: true },
-  { id: 'dep_2', code: 'OPE-02', name: 'Operaciones y Logística', leader: 'Roberto Santos', costCenter: 'CC-200', description: 'Control de inventarios, compras, almacén y distribución.', active: true },
-  { id: 'dep_3', code: 'FIN-03', name: 'Finanzas y Tesorería', leader: 'Gabriela Morales', costCenter: 'CC-300', description: 'Flujo de caja, cuentas por cobrar, pagos e impuestos.', active: true },
-  { id: 'dep_4', code: 'VEN-04', name: 'Ventas y Comercial', leader: 'Carlos Méndez', costCenter: 'CC-400', description: 'Prospección, cotizaciones, pedidos y atención a cuentas.', active: true },
-  { id: 'dep_5', code: 'TEC-05', name: 'Tecnología y Sistemas', leader: 'Laura R.', costCenter: 'CC-500', description: 'Infraestructura TI, software ERP y soporte técnico.', active: true },
+  { id: 'dep_1', code: 'DIR-01', name: 'Dirección General', leader: 'Andrea Morales', costCenter: 'CC-100', description: 'Toma de decisiones estratégicas y gobierno corporativo.', subsidiaryIds: ['sub_1', 'sub_2', 'sub_3'], active: true },
+  { id: 'dep_2', code: 'OPE-02', name: 'Operaciones y Logística', leader: 'Roberto Santos', costCenter: 'CC-200', description: 'Control de inventarios, compras, almacén y distribución.', subsidiaryIds: ['sub_1', 'sub_2'], active: true },
+  { id: 'dep_3', code: 'FIN-03', name: 'Finanzas y Tesorería', leader: 'Gabriela Morales', costCenter: 'CC-300', description: 'Flujo de caja, cuentas por cobrar, pagos e impuestos.', subsidiaryIds: ['sub_1', 'sub_2', 'sub_3'], active: true },
+  { id: 'dep_4', code: 'VEN-04', name: 'Ventas y Comercial', leader: 'Carlos Méndez', costCenter: 'CC-400', description: 'Prospección, cotizaciones, pedidos y atención a cuentas.', subsidiaryIds: ['sub_1', 'sub_3'], active: true },
+  { id: 'dep_5', code: 'TEC-05', name: 'Tecnología y Sistemas', leader: 'Laura R.', costCenter: 'CC-500', description: 'Infraestructura TI, software ERP y soporte técnico.', subsidiaryIds: ['sub_1'], active: true },
 ]
 
 const initialLocations: PhysicalLocationRecord[] = [
-  { id: 'loc_1', code: 'CORP-CDMX', name: 'Sede Corporativa Reforma', type: 'Oficina corporativa', address: 'Paseo de la Reforma 222, Piso 14', city: 'Ciudad de México', state: 'CDMX', country: 'México', manager: 'Andrea Morales', active: true },
-  { id: 'loc_2', code: 'ALM-VALLEJO', name: 'Almacén Central Vallejo', type: 'Almacén / Bodega', address: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', country: 'México', manager: 'Roberto Santos', active: true },
-  { id: 'loc_3', code: 'SUC-MTY', name: 'Sucursal y Bodega Monterrey', type: 'Sucursal', address: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', country: 'México', manager: 'Diego Fernández', active: true },
-  { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', active: true },
+  { id: 'loc_1', code: 'CORP-CDMX', name: 'Sede Corporativa Reforma', type: 'Oficina corporativa', address: 'Paseo de la Reforma 222, Piso 14', city: 'Ciudad de México', state: 'CDMX', country: 'México', manager: 'Andrea Morales', subsidiaryIds: ['sub_1'], active: true },
+  { id: 'loc_2', code: 'ALM-VALLEJO', name: 'Almacén Central Vallejo', type: 'Almacén / Bodega', address: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', country: 'México', manager: 'Roberto Santos', subsidiaryIds: ['sub_1', 'sub_2'], active: true },
+  { id: 'loc_3', code: 'SUC-MTY', name: 'Sucursal y Bodega Monterrey', type: 'Sucursal', address: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', country: 'México', manager: 'Diego Fernández', subsidiaryIds: ['sub_2'], active: true },
+  { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', subsidiaryIds: ['sub_1', 'sub_3'], active: true },
 ]
 
 const accentOptions = [
@@ -454,7 +498,9 @@ const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
     : 'Resumen ejecutivo'
 
 const adminSectionFromPath = (pathname: string): AdminSectionTab =>
-  pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
+  pathname === '/admin/subsidiaries' || pathname === '/admin/subsidiarias' || pathname === '/administracion/subsidiarias'
+    ? 'Subsidiarias'
+    : pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
     ? 'Ubicaciones'
     : pathname === '/admin/summary' || pathname === '/admin/resumen' || pathname === '/administracion/resumen'
     ? 'Resumen'
@@ -598,6 +644,7 @@ function AppContent() {
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
+  const [subsidiaries, setSubsidiaries] = useState<SubsidiaryRecord[]>(initialSubsidiaries)
   const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
   const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
 
@@ -1231,6 +1278,24 @@ function AppContent() {
     originalCompany: string
     record: DirectoryRecord
   } | null>(null)
+  const [editingOpportunity, setEditingOpportunity] = useState<{
+    index: number
+    company: string
+    person: string
+    value: string
+    stage: string
+    date: string
+  } | null>(null)
+  const [confirmDeleteOpp, setConfirmDeleteOpp] = useState(false)
+  const [editingActivity, setEditingActivity] = useState<{
+    index: number
+    title: string
+    company: string
+    time: string
+    icon: string
+    tone: 'blue' | 'amber' | 'green'
+  } | null>(null)
+  const [confirmDeleteAct, setConfirmDeleteAct] = useState(false)
 
   const handleUpdateEbpPacks = (next: BankFormatPack[]) => {
     setEbpPacks(next)
@@ -1639,6 +1704,42 @@ function AppContent() {
     })
   }
 
+  const handleAddSubsidiary = (sub: SubsidiaryRecord) => {
+    setSubsidiaries((prev) => [sub, ...prev])
+    appendAuditLog({
+      category: 'admin',
+      action: 'Creación de subsidiaria',
+      detail: `${sub.code} · ${sub.name} (${sub.taxId})`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleDeleteSubsidiary = (subsidiaryId: string) => {
+    const target = subsidiaries.find((s) => s.id === subsidiaryId)
+    setSubsidiaries((prev) => prev.filter((s) => s.id !== subsidiaryId))
+    setDepartments((prev) =>
+      prev.map((d) => ({
+        ...d,
+        subsidiaryIds: (d.subsidiaryIds || []).filter((id) => id !== subsidiaryId),
+      }))
+    )
+    setLocations((prev) =>
+      prev.map((l) => ({
+        ...l,
+        subsidiaryIds: (l.subsidiaryIds || []).filter((id) => id !== subsidiaryId),
+      }))
+    )
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        action: 'Eliminación de subsidiaria',
+        detail: `${target.code} · ${target.name} (${target.taxId})`,
+        user: activeSessionProfile.name,
+      })
+      toast.info(`Subsidiaria “${target.name}” eliminada del sistema.`, 'Subsidiaria eliminada')
+    }
+  }
+
   const handleAddDepartment = (dep: DepartmentRecord) => {
     setDepartments((prev) => [dep, ...prev])
     appendAuditLog({
@@ -1649,36 +1750,63 @@ function AppContent() {
     })
   }
 
+  const handleDeleteDepartment = (departmentId: string) => {
+    const target = departments.find((d) => d.id === departmentId)
+    setDepartments((prev) => prev.filter((d) => d.id !== departmentId))
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        action: 'Eliminación de departamento',
+        detail: `${target.code} · ${target.name}`,
+        user: activeSessionProfile.name,
+      })
+      toast.info(`Departamento “${target.name}” eliminado del sistema.`, 'Departamento eliminado')
+    }
+  }
+
   const handleAddLocation = (loc: PhysicalLocationRecord) => {
-    setLocations((prev) => [loc, ...prev])
+    const defaultSub =
+      subsidiaries.find((s) => s.active && s.isHolding) ||
+      subsidiaries.find((s) => s.active) ||
+      subsidiaries[0]
+    const normalizedLoc: PhysicalLocationRecord = {
+      ...loc,
+      subsidiaryIds:
+        loc.subsidiaryIds && loc.subsidiaryIds.length > 0
+          ? loc.subsidiaryIds
+          : defaultSub
+          ? [defaultSub.id]
+          : [],
+    }
+    setLocations((prev) => [normalizedLoc, ...prev])
     appendAuditLog({
       category: 'admin',
       action: 'Alta de ubicación física',
-      detail: `${loc.code} · ${loc.name} (${loc.city}, ${loc.state})`,
+      detail: `${normalizedLoc.code} · ${normalizedLoc.name} (${normalizedLoc.city}, ${normalizedLoc.state})`,
       user: activeSessionProfile.name,
     })
     setWarehouses((prev) => {
       const exists = prev.some(
         (w) =>
-          w.locationId === loc.id ||
-          w.code.toLowerCase() === loc.code.toLowerCase() ||
-          w.name.toLowerCase() === loc.name.toLowerCase()
+          w.locationId === normalizedLoc.id ||
+          w.code.toLowerCase() === normalizedLoc.code.toLowerCase() ||
+          w.name.toLowerCase() === normalizedLoc.name.toLowerCase()
       )
       if (exists) return prev
       return [
         ...prev,
         {
-          id: `wh_${loc.id}`,
-          code: loc.code,
-          name: loc.name,
-          city: loc.city,
-          state: loc.state,
-          address: loc.address,
+          id: `wh_${normalizedLoc.id}`,
+          code: normalizedLoc.code,
+          name: normalizedLoc.name,
+          city: normalizedLoc.city,
+          state: normalizedLoc.state,
+          address: normalizedLoc.address,
           capacityPercentage: 0,
           isDefault: false,
-          active: loc.active,
-          locationId: loc.id,
-          locationType: loc.type,
+          active: normalizedLoc.active,
+          locationId: normalizedLoc.id,
+          locationType: normalizedLoc.type,
         },
       ]
     })
@@ -1721,6 +1849,20 @@ function AppContent() {
             w.name.toLowerCase() !== target.name.toLowerCase()
         )
       )
+    }
+  }
+
+  const handleDeleteAdminLocation = (locationId: string) => {
+    const target = locations.find((l) => l.id === locationId)
+    handleRemoveLocation(locationId)
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        action: 'Eliminación de ubicación física',
+        detail: `${target.code} · ${target.name}`,
+        user: activeSessionProfile.name,
+      })
+      toast.info(`Ubicación física “${target.name}” eliminada del sistema.`, 'Ubicación eliminada')
     }
   }
 
@@ -2332,7 +2474,9 @@ function AppContent() {
     setActivePage('Administración')
     setAdminSection(section)
     const route =
-      section === 'Ubicaciones'
+      section === 'Subsidiarias'
+        ? '/admin/subsidiaries'
+        : section === 'Ubicaciones'
         ? '/admin/locations'
         : section === 'Resumen'
         ? '/admin/summary'
@@ -3051,7 +3195,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -3691,6 +3835,33 @@ function AppContent() {
                       user: activeSessionProfile.name,
                     })
                   }}
+                  onDeleteEmployee={
+                    canDeleteInSection(
+                      'CRM',
+                      'Empleados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (employeeId) => {
+                          const target = employees.find((e) => e.id === employeeId)
+                          setEmployees((prev) => prev.filter((e) => e.id !== employeeId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'users',
+                              action: 'Eliminación de empleado',
+                              detail: `${target.fullName} (${target.employeeCode})`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Empleado “${target.fullName}” eliminado del directorio.`)
+                            toast.info(
+                              `Empleado “${target.fullName}” eliminado del directorio.`,
+                              'Empleado eliminado'
+                            )
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateSettingsRoles={
                     canAccessSection(
                       'Configuración',
@@ -3713,16 +3884,43 @@ function AppContent() {
                   onUpdatePayrollRun={(updated) =>
                     setPayrollRuns((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
                   }
+                  onDeletePayrollRun={
+                    canDeleteInSection(
+                      'CRM',
+                      'Nómina',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (runId) => {
+                          const target = payrollRuns.find((r) => r.id === runId)
+                          setPayrollRuns((prev) => prev.filter((r) => r.id !== runId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de periodo de nómina',
+                              detail: `${target.folio} · ${target.periodLabel}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Periodo de nómina ${target.folio} eliminado.`)
+                            toast.info(
+                              `Periodo de nómina ${target.folio} eliminado.`,
+                              'Nómina eliminada'
+                            )
+                          }
+                        }
+                      : undefined
+                  }
                   onPayPayrollRun={handlePayPayrollRun}
                   onOpenEbpWizard={openEbpWizardForPayrollRun}
                 />
               ) : crmSection === 'Oportunidades' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="opportunity-summary"><article><span className="kpi-icon"><Target size={17} /></span><div><strong>{opportunityRecords.length}</strong><small>Abiertas</small></div></article><article><span className="kpi-icon icon-sand"><BriefcaseBusiness size={17} /></span><div><strong>{money(opportunityRecords.reduce((total, opportunity) => total + opportunity.value, 0))}</strong><small>Valor del pipeline</small></div></article><article><span className="kpi-icon icon-green"><ArrowUpRight size={17} /></span><div><strong>32%</strong><small>Tasa de conversión</small></div></article></div>
-                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3>{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button>}</div><div className="opportunities-list">{opportunityRecords.map((opportunity) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span><button className="row-more" aria-label={`Opciones para ${opportunity.company}`} onClick={() => { setNotice(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`, 'Oportunidad') }}><MoreHorizontal size={17} /></button></article>)}</div></div>
+                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3>{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button>}</div><div className="opportunities-list">{opportunityRecords.map((opportunity, oppIdx) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}-${oppIdx}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span>{canEditInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button-icon-action" aria-label={`Editar oportunidad ${opportunity.company}`} title="Editar o eliminar oportunidad" onClick={() => { setConfirmDeleteOpp(false); setEditingOpportunity({ index: oppIdx, company: opportunity.company, person: opportunity.person, value: String(opportunity.value), stage: opportunity.stage, date: opportunity.date }) }}><Edit3 size={12} /> Editar</button>}</article>)}</div></div>
               </> : crmSection === 'Actividades' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div>{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button>}</div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => { setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`); toast.info(`La actividad “${activity.title}” se marcará al conectar el CRM.`, 'Actividad') }}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
+                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div>{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button>}</div><div className="activities-list">{activityRecords.map((activity, actIdx) => <article className="activity-item" key={`${activity.title}-${activity.time}-${actIdx}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time>{canEditInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button-icon-action" aria-label={`Editar actividad ${activity.title}`} title="Editar o eliminar actividad" onClick={() => { setConfirmDeleteAct(false); setEditingActivity({ index: actIdx, title: activity.title, company: activity.company, time: activity.time, icon: activity.icon, tone: (activity.tone as 'blue' | 'amber' | 'green') || 'green' }) }}><Edit3 size={12} /> Editar</button>}</article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
               </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', crmSection, activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && (crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>)}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
@@ -3803,14 +4001,31 @@ function AppContent() {
             activeSessionProfile.isActive
           ) &&
             (crmSection === 'Proveedores' ? (
-              <button
-                type="button"
-                className="button-icon-action"
-                onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
-                title="Configurar datos bancarios y packs EBP del proveedor"
-              >
-                <Landmark size={12} /> Datos bancarios
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="button-icon-action"
+                  onClick={() =>
+                    setEditingDirectory({
+                      kind: 'supplier',
+                      originalEmail: client.email,
+                      originalCompany: client.company,
+                      record: JSON.parse(JSON.stringify(client)),
+                    })
+                  }
+                  title="Editar datos del proveedor"
+                >
+                  <Edit3 size={12} /> Editar
+                </button>
+                <button
+                  type="button"
+                  className="button-icon-action"
+                  onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
+                  title="Configurar datos bancarios y packs EBP del proveedor"
+                >
+                  <Landmark size={12} /> Datos bancarios
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -3977,12 +4192,53 @@ function AppContent() {
               </nav>
 
               {salesSection === 'Catálogo' ? (
-                <ProductsAndServices />
+                <ProductsAndServices
+                  canDelete={canDeleteInSection(
+                    'Ventas',
+                    'Catálogo',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onItemDeleted={(item) => {
+                    appendAuditLog({
+                      category: 'sales',
+                      action: 'Eliminación de artículo del catálogo',
+                      detail: `${item.sku} · ${item.name}`,
+                      user: activeSessionProfile.name,
+                    })
+                    setNotice(`Artículo “${item.name}” eliminado del catálogo.`)
+                  }}
+                />
               ) : salesSection === 'Cotizaciones' ? (
                 <QuotesSection
                   quotes={quotes}
                   onUpdateQuotes={setQuotes}
                   onConvertToOrder={handleConvertToOrder}
+                  onDeleteQuote={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Cotizaciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (quoteId) => {
+                          const target = quotes.find((q) => q.id === quoteId)
+                          setQuotes((prev) => prev.filter((q) => q.id !== quoteId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de cotización',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cotización ${target.folio} eliminada.`)
+                            toast.info(`La cotización ${target.folio} fue eliminada.`, 'Cotización eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   clientNames={clientRecords.map((c, idx) => ({
                     id: `cli_${idx}_${c.company.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
                     name: c.name,
@@ -3997,6 +4253,30 @@ function AppContent() {
                 <OrdersSection
                   orders={orders}
                   onUpdateOrders={setOrders}
+                  onDeleteOrder={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Pedidos',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (orderId) => {
+                          const target = orders.find((o) => o.id === orderId)
+                          setOrders((prev) => prev.filter((o) => o.id !== orderId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de pedido de venta',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Pedido ${target.folio} eliminado.`)
+                            toast.info(`El pedido ${target.folio} fue eliminado.`, 'Pedido eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   receivables={receivables}
                   onInvoiceOrder={(ord) => {
                     setPresetOrderToInvoice(ord)
@@ -4035,6 +4315,37 @@ function AppContent() {
                   presetInvoiceIdToView={presetInvoiceIdToView}
                   onClearPresetInvoiceView={() => setPresetInvoiceIdToView(null)}
                   onCreateInvoice={handleCreateSalesInvoice}
+                  onDeleteInvoice={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Facturas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (invoiceId) => {
+                          const target = receivables.find((r) => r.id === invoiceId)
+                          setReceivables((prev) => prev.filter((r) => r.id !== invoiceId))
+                          if (target) {
+                            setOrders((prevOrders) =>
+                              prevOrders.map((ord) => ({
+                                ...ord,
+                                invoiceIds: ord.invoiceIds?.filter((id) => id !== target.id),
+                                invoiceFolios: ord.invoiceFolios?.filter((f) => f !== target.folio),
+                              }))
+                            )
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de factura de venta',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura ${target.folio} eliminada.`)
+                            toast.info(`Factura ${target.folio} eliminada.`, 'Factura eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToFinanceReceivables={() => navigateToFinanceSection('Cobros')}
                   onNavigateToOrder={(orderFolio) => {
                     setPresetOrderFolioToView(orderFolio)
@@ -4237,6 +4548,30 @@ function AppContent() {
                   onCreateRequisition={handleCreateRequisition}
                   onUpdateRequisitionStatus={handleUpdateRequisitionStatus}
                   onConvertToPurchaseOrder={handleConvertRequisitionToPo}
+                  onDeleteRequisition={
+                    canDeleteInSection(
+                      'Compras',
+                      'Requisiciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (reqId) => {
+                          const target = requisitions.find((r) => r.id === reqId)
+                          setRequisitions((prev) => prev.filter((r) => r.id !== reqId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de requisición de compra',
+                              detail: `${target.folio} · ${target.department}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Requisición ${target.folio} eliminada.`)
+                            toast.info(`Requisición ${target.folio} eliminada.`, 'Requisición eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToOrder={() => navigateToPurchasesSection('Órdenes de compra')}
                 />
               ) : purchasesSection === 'Órdenes de compra' ? (
@@ -4262,6 +4597,30 @@ function AppContent() {
                   movementsCount={movements.length}
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
+                  onDeletePurchaseOrder={
+                    canDeleteInSection(
+                      'Compras',
+                      'Órdenes de compra',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (poId) => {
+                          const target = purchaseOrders.find((po) => po.id === poId)
+                          setPurchaseOrders((prev) => prev.filter((po) => po.id !== poId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de orden de compra',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Orden de compra ${target.folio} eliminada.`)
+                            toast.info(`Orden de compra ${target.folio} eliminada.`, 'Orden eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   canApprovePurchases={
                     isFullAdmin ||
                     (activeCapabilities.has('approvePurchases') &&
@@ -4304,6 +4663,30 @@ function AppContent() {
                     email: s.email,
                   }))}
                   onCreateSupplierBill={handleCreateSupplierBill}
+                  onDeleteSupplierBill={
+                    canDeleteInSection(
+                      'Compras',
+                      'Facturas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (billId) => {
+                          const target = payables.find((b) => b.id === billId)
+                          setPayables((prev) => prev.filter((b) => b.id !== billId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de factura de proveedor (CxP)',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura de proveedor ${target.folio} eliminada.`)
+                            toast.info(`Factura ${target.folio} eliminada.`, 'Factura eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToFinancePayables={() => navigateToFinanceSection('Pagos')}
                   onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
                 />
@@ -4382,6 +4765,54 @@ function AppContent() {
                   onUpdateInventory={setInventory}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
+                  onDeleteInventoryItem={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Inventario',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (itemId) => {
+                          const target = inventory.find((it) => it.id === itemId)
+                          setInventory((prev) => prev.filter((it) => it.id !== itemId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de registro de inventario',
+                              detail: `${target.sku} · ${target.name} (${target.warehouseName})`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Registro ${target.sku} eliminado de ${target.warehouseName}.`)
+                            toast.info(`Registro ${target.sku} eliminado de ${target.warehouseName}.`, 'Inventario eliminado')
+                          }
+                        }
+                      : undefined
+                  }
+                  onDeleteTransfer={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Traslados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (transferId) => {
+                          const target = transfers.find((t) => t.id === transferId)
+                          setTransfers((prev) => prev.filter((t) => t.id !== transferId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de traslado entre almacenes',
+                              detail: `${target.folio} · ${target.sourceWarehouseName} → ${target.targetWarehouseName}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Traslado ${target.folio} eliminado.`)
+                            toast.info(`Traslado ${target.folio} eliminado.`, 'Traslado eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onStartTransfer={(item) => {
                     if (item) setPresetTransferItem(item)
                     navigateToOperationsSection('Traslados')
@@ -4398,6 +4829,30 @@ function AppContent() {
                   onUpdateInventory={setInventory}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
+                  onDeleteTransfer={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Traslados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (transferId) => {
+                          const target = transfers.find((t) => t.id === transferId)
+                          setTransfers((prev) => prev.filter((t) => t.id !== transferId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de traslado entre almacenes',
+                              detail: `${target.folio} · ${target.sourceWarehouseName} → ${target.targetWarehouseName}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Traslado ${target.folio} eliminado.`)
+                            toast.info(`Traslado ${target.folio} eliminado.`, 'Traslado eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                 />
               ) : operationsSection === 'Compras' ? (
                 <OperationsPurchases
@@ -4423,6 +4878,30 @@ function AppContent() {
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
                   onOpenFullPurchasesModule={() => navigateToPurchasesSection('Resumen')}
+                  onDeletePurchaseOrder={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Compras',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (poId) => {
+                          const target = purchaseOrders.find((po) => po.id === poId)
+                          setPurchaseOrders((prev) => prev.filter((po) => po.id !== poId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de orden de compra',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Orden de compra ${target.folio} eliminada.`)
+                            toast.info(`Orden de compra ${target.folio} eliminada.`, 'Orden eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   canApprovePurchases={
                     isFullAdmin ||
                     (activeCapabilities.has('approvePurchases') &&
@@ -4439,6 +4918,30 @@ function AppContent() {
                 <OperationsDeliveries
                   shipments={shipments}
                   onUpdateShipments={setShipments}
+                  onDeleteShipment={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Entregas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (shipmentId) => {
+                          const target = shipments.find((s) => s.id === shipmentId)
+                          setShipments((prev) => prev.filter((s) => s.id !== shipmentId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de despacho y entrega',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Despacho ${target.folio} eliminado.`)
+                            toast.info(`Despacho ${target.folio} eliminado.`, 'Despacho eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   salesOrderFolios={orders.map((o) => o.folio)}
                 />
               ) : (
@@ -4525,6 +5028,37 @@ function AppContent() {
                     rfc: c.rfc,
                   }))}
                   onUpdateReceivables={setReceivables}
+                  onDeleteReceivable={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Cobros',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (invoiceId) => {
+                          const target = receivables.find((r) => r.id === invoiceId)
+                          setReceivables((prev) => prev.filter((r) => r.id !== invoiceId))
+                          if (target) {
+                            setOrders((prevOrders) =>
+                              prevOrders.map((ord) => ({
+                                ...ord,
+                                invoiceIds: ord.invoiceIds?.filter((id) => id !== target.id),
+                                invoiceFolios: ord.invoiceFolios?.filter((f) => f !== target.folio),
+                              }))
+                            )
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta por cobrar (CxC)',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura ${target.folio} eliminada de Cobros.`)
+                            toast.info(`Factura ${target.folio} eliminada de Cuentas por cobrar.`, 'Registro eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                 />
@@ -4538,6 +5072,30 @@ function AppContent() {
                     email: s.email,
                   }))}
                   onUpdatePayables={setPayables}
+                  onDeletePayable={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Pagos',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (billId) => {
+                          const target = payables.find((b) => b.id === billId)
+                          setPayables((prev) => prev.filter((b) => b.id !== billId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta por pagar (CxP)',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cuenta por pagar ${target.folio} eliminada.`)
+                            toast.info(`Cuenta por pagar ${target.folio} eliminada.`, 'Registro eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                   onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
@@ -4565,6 +5123,30 @@ function AppContent() {
                   payables={payables}
                   onUpdatePacks={handleUpdateEbpPacks}
                   onCreateBatch={(batch) => setEbpBatches((prev) => [batch, ...prev])}
+                  onDeleteBatch={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Pagos Bancarios',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (batchId) => {
+                          const target = ebpBatches.find((b) => b.id === batchId)
+                          setEbpBatches((prev) => prev.filter((b) => b.id !== batchId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de lote de dispersión EBP',
+                              detail: `${target.folio} · ${target.generatedFilename}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Lote bancario ${target.folio} eliminado.`)
+                            toast.info(`Lote bancario ${target.folio} eliminado.`, 'Lote eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onApplyBatchInFinance={handleApplyEbpBatchInFinance}
                   onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
                   onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
@@ -4574,6 +5156,30 @@ function AppContent() {
                   expenses={expenses}
                   bankAccounts={bankAccounts}
                   onAddExpense={handleAddExpense}
+                  onDeleteExpense={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Gastos',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (expenseId) => {
+                          const target = expenses.find((ex) => ex.id === expenseId)
+                          setExpenses((prev) => prev.filter((ex) => ex.id !== expenseId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de gasto operativo',
+                              detail: `${target.folio} · ${target.description}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Gasto ${target.folio} eliminado.`)
+                            toast.info(`Gasto ${target.folio} eliminado.`, 'Gasto eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                 />
@@ -4581,6 +5187,30 @@ function AppContent() {
                 <FinanceAccounting
                   accounts={chartAccounts}
                   onUpdateAccounts={setChartAccounts}
+                  onDeleteAccount={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Cuentas contables',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (accountId) => {
+                          const target = chartAccounts.find((a) => a.id === accountId)
+                          setChartAccounts((prev) => prev.filter((a) => a.id !== accountId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta contable',
+                              detail: `[${target.code}] ${target.name}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cuenta contable ${target.code} eliminada.`)
+                            toast.info(`Cuenta contable [${target.code}] ${target.name} eliminada.`, 'Cuenta eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <FinanceOverview
@@ -4656,16 +5286,22 @@ function AppContent() {
             />
           ) : activePage === 'Administración' ? (
             <AdministrationSection
+              subsidiaries={subsidiaries}
               departments={departments}
               locations={locations}
               employees={employees}
+              onAddSubsidiary={handleAddSubsidiary}
+              onUpdateSubsidiaries={setSubsidiaries}
+              onDeleteSubsidiary={handleDeleteSubsidiary}
               onAddDepartment={handleAddDepartment}
               onAddLocation={handleAddLocation}
               onUpdateDepartments={setDepartments}
+              onDeleteDepartment={handleDeleteDepartment}
               onUpdateLocations={handleUpdateLocations}
+              onDeleteLocation={handleDeleteAdminLocation}
               adminSection={adminSection}
               onNavigateSection={navigateToAdminSection}
-              allowedSections={(['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'] as AdminSectionTab[]).filter(
+              allowedSections={(['Subsidiarias', 'Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'] as AdminSectionTab[]).filter(
                 (sec) =>
                   canAccessSection(
                     'Administración',
@@ -4677,6 +5313,33 @@ function AppContent() {
                   )
               )}
               currentUserName={activeSessionProfile.name}
+              canCreateInTab={(tab) =>
+                canCreateInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
+              canEditInTab={(tab) =>
+                canEditInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
+              canDeleteInTab={(tab) =>
+                canDeleteInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
             />
           ) : activePage === 'Inicio' ? (
             <ExecutiveDashboard
@@ -5502,6 +6165,50 @@ function AppContent() {
           record={editingDirectory.record}
           installedPacks={ebpPacks}
           onClose={() => setEditingDirectory(null)}
+          onDelete={
+            canDeleteInSection(
+              'CRM',
+              editingDirectory.kind === 'supplier' ? 'Proveedores' : 'Clientes',
+              activeSectionAccess,
+              isFullAdmin,
+              activeSessionProfile.isActive
+            )
+              ? () => {
+                  const targetName = editingDirectory.originalCompany
+                  const isSup = editingDirectory.kind === 'supplier'
+                  if (isSup) {
+                    setSupplierRecords((prev) =>
+                      prev.filter(
+                        (s) =>
+                          !(
+                            s.email === editingDirectory.originalEmail &&
+                            s.company === editingDirectory.originalCompany
+                          )
+                      )
+                    )
+                  } else {
+                    setClientRecords((prev) =>
+                      prev.filter(
+                        (c) =>
+                          !(
+                            c.email === editingDirectory.originalEmail &&
+                            c.company === editingDirectory.originalCompany
+                          )
+                      )
+                    )
+                  }
+                  setEditingDirectory(null)
+                  setDetailDirectory(null)
+                  setNotice(
+                    `${isSup ? 'Proveedor' : 'Cliente'} “${targetName}” eliminado del directorio.`
+                  )
+                  toast.info(
+                    `${isSup ? 'Proveedor' : 'Cliente'} “${targetName}” eliminado del directorio.`,
+                    isSup ? 'Proveedor eliminado' : 'Cliente eliminado'
+                  )
+                }
+              : undefined
+          }
           onSave={(updated) => {
             if (editingDirectory.kind === 'supplier') {
               setSupplierRecords((prev) =>
@@ -5529,6 +6236,406 @@ function AppContent() {
             setEditingDirectory(null)
           }}
         />
+      )}
+
+      {/* Modal: Editar ficha de Oportunidad */}
+      {editingOpportunity && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingOpportunity(null)
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="edit-opp-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">CRM · OPORTUNIDAD COMERCIAL</div>
+                <h2 id="edit-opp-title">Editar ficha de oportunidad</h2>
+                <p>Actualiza la etapa comercial, valor estimado, contacto o elimina esta oportunidad.</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                aria-label="Cerrar"
+                onClick={() => setEditingOpportunity(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const cleanCompany = editingOpportunity.company.trim()
+                if (!cleanCompany) return
+                const cleanValue = Math.max(0, Number(editingOpportunity.value) || 0)
+                const stageTone: 'blue' | 'amber' | 'green' =
+                  editingOpportunity.stage === 'Negociación'
+                    ? 'amber'
+                    : editingOpportunity.stage === 'Calificada' || editingOpportunity.stage === 'Ganada'
+                    ? 'green'
+                    : 'blue'
+                const initials =
+                  cleanCompany
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((p) => p[0]?.toUpperCase() || '')
+                    .join('') || 'OP'
+                setOpportunityRecords((prev) =>
+                  prev.map((item, idx) =>
+                    idx === editingOpportunity.index
+                      ? {
+                          ...item,
+                          company: cleanCompany,
+                          person: editingOpportunity.person.trim() || 'Sin contacto',
+                          initials,
+                          value: cleanValue,
+                          stage: editingOpportunity.stage,
+                          stageTone,
+                          date: editingOpportunity.date.trim() || item.date,
+                        }
+                      : item
+                  )
+                )
+                toast.success(
+                  `Oportunidad de “${cleanCompany}” actualizada correctamente.`,
+                  'Oportunidad actualizada'
+                )
+                setEditingOpportunity(null)
+              }}
+            >
+              <label className="form-field">
+                <span>Empresa *</span>
+                <input
+                  required
+                  autoFocus
+                  value={editingOpportunity.company}
+                  onChange={(e) =>
+                    setEditingOpportunity({ ...editingOpportunity, company: e.target.value })
+                  }
+                />
+              </label>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Contacto</span>
+                  <input
+                    value={editingOpportunity.person}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, person: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Valor estimado (MXN)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editingOpportunity.value}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, value: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Etapa</span>
+                  <select
+                    value={editingOpportunity.stage}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, stage: e.target.value })
+                    }
+                  >
+                    <option value="Calificada">Calificada</option>
+                    <option value="Propuesta">Propuesta</option>
+                    <option value="Negociación">Negociación</option>
+                    <option value="Ganada">Ganada</option>
+                    <option value="Perdida">Perdida</option>
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Fecha / Seguimiento</span>
+                  <input
+                    value={editingOpportunity.date}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, date: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div
+                className={`create-modal-actions ${
+                  canDeleteInSection(
+                    'CRM',
+                    'Oportunidades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+                    ? 'has-delete-action'
+                    : ''
+                }`}
+              >
+                {canDeleteInSection(
+                  'CRM',
+                  'Oportunidades',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                ) && (
+                  <div className="modal-delete-slot">
+                    {!confirmDeleteOpp ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmDeleteOpp(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar oportunidad
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar a <strong>{editingOpportunity.company}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetName = editingOpportunity.company
+                            const targetIdx = editingOpportunity.index
+                            setOpportunityRecords((prev) =>
+                              prev.filter((_, idx) => idx !== targetIdx)
+                            )
+                            setEditingOpportunity(null)
+                            setConfirmDeleteOpp(false)
+                            setNotice(`Oportunidad de “${targetName}” eliminada del pipeline.`)
+                            toast.info(
+                              `Oportunidad de “${targetName}” eliminada del pipeline.`,
+                              'Oportunidad eliminada'
+                            )
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmDeleteOpp(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingOpportunity(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <BadgeCheck size={14} /> Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Editar ficha de Actividad */}
+      {editingActivity && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingActivity(null)
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="edit-act-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">CRM · AGENDA COMERCIAL</div>
+                <h2 id="edit-act-title">Editar ficha de actividad</h2>
+                <p>Modifica el título, empresa, horario, tipo de seguimiento o elimina esta actividad.</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                aria-label="Cerrar"
+                onClick={() => setEditingActivity(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const cleanTitle = editingActivity.title.trim()
+                if (!cleanTitle) return
+                setActivityRecords((prev) =>
+                  prev.map((item, idx) =>
+                    idx === editingActivity.index
+                      ? {
+                          ...item,
+                          title: cleanTitle,
+                          company: editingActivity.company.trim() || 'Sin empresa',
+                          time: editingActivity.time,
+                          icon: editingActivity.icon,
+                          tone: editingActivity.tone,
+                        }
+                      : item
+                  )
+                )
+                toast.success(
+                  `Actividad “${cleanTitle}” actualizada correctamente.`,
+                  'Actividad actualizada'
+                )
+                setEditingActivity(null)
+              }}
+            >
+              <label className="form-field">
+                <span>Actividad *</span>
+                <input
+                  required
+                  autoFocus
+                  value={editingActivity.title}
+                  onChange={(e) =>
+                    setEditingActivity({ ...editingActivity, title: e.target.value })
+                  }
+                />
+              </label>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Empresa relacionada</span>
+                  <input
+                    value={editingActivity.company}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, company: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Hora *</span>
+                  <input
+                    type="time"
+                    required
+                    value={editingActivity.time}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, time: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <label className="form-field">
+                <span>Tipo de seguimiento</span>
+                <select
+                  value={editingActivity.icon}
+                  onChange={(e) => {
+                    const nextIcon = e.target.value
+                    const nextTone: 'blue' | 'amber' | 'green' =
+                      nextIcon === 'send' ? 'blue' : nextIcon === 'phone' ? 'amber' : 'green'
+                    setEditingActivity({ ...editingActivity, icon: nextIcon, tone: nextTone })
+                  }}
+                >
+                  <option value="send">Envío de propuesta / correo</option>
+                  <option value="phone">Llamada de seguimiento</option>
+                  <option value="check">Revisión / Tarea interna</option>
+                </select>
+              </label>
+
+              <div
+                className={`create-modal-actions ${
+                  canDeleteInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+                    ? 'has-delete-action'
+                    : ''
+                }`}
+              >
+                {canDeleteInSection(
+                  'CRM',
+                  'Actividades',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                ) && (
+                  <div className="modal-delete-slot">
+                    {!confirmDeleteAct ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmDeleteAct(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar actividad
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar <strong>{editingActivity.title}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetTitle = editingActivity.title
+                            const targetIdx = editingActivity.index
+                            setActivityRecords((prev) =>
+                              prev.filter((_, idx) => idx !== targetIdx)
+                            )
+                            setEditingActivity(null)
+                            setConfirmDeleteAct(false)
+                            setNotice(`Actividad “${targetTitle}” eliminada de la agenda.`)
+                            toast.info(
+                              `Actividad “${targetTitle}” eliminada de la agenda.`,
+                              'Actividad eliminada'
+                            )
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmDeleteAct(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingActivity(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <BadgeCheck size={14} /> Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
       )}
 
       {/* Global EBP Batch Wizard Modal (launched from CRM Payroll, Purchases Invoices or Finance Payables) */}

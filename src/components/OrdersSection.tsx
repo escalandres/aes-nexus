@@ -21,6 +21,7 @@ const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
 interface OrdersSectionProps {
   orders: SalesOrder[]
   onUpdateOrders: (orders: SalesOrder[]) => void
+  onDeleteOrder?: (orderId: string) => void
   clientNames: { id: string; name: string; company: string; email: string; address?: string }[]
   receivables?: InvoiceReceivable[]
   onInvoiceOrder?: (order: SalesOrder) => void
@@ -34,6 +35,7 @@ const ORDER_STEPS: OrderStatus[] = ['Confirmado', 'En preparación', 'Enviado', 
 export function OrdersSection({
   orders,
   onUpdateOrders,
+  onDeleteOrder,
   clientNames,
   receivables = [],
   onInvoiceOrder,
@@ -51,6 +53,7 @@ export function OrdersSection({
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [viewingOrder, setViewingOrder] = useState<SalesOrder | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   useEffect(() => {
     if (presetOrderFolioToView) {
@@ -266,13 +269,12 @@ export function OrdersSection({
     toast.info(`Estado del pedido actualizado a "${status}".`, 'Pedido actualizado')
   }
 
-  const handleDeleteOrder = (orderId: string, folio: string) => {
-    if (window.confirm(`¿Deseas eliminar el pedido ${folio}?`)) {
-      onUpdateOrders(orders.filter((o) => o.id !== orderId))
-      if (viewingOrder?.id === orderId) setViewingOrder(null)
-      setActiveMenuId(null)
-      toast.info(`El pedido ${folio} fue eliminado.`, 'Pedido eliminado')
-    }
+  const handleConfirmDeleteOrder = (orderId: string) => {
+    if (!onDeleteOrder) return
+    onDeleteOrder(orderId)
+    if (viewingOrder?.id === orderId) setViewingOrder(null)
+    setActiveMenuId(null)
+    setConfirmingDelete(false)
   }
 
   const getOrderStatusBadge = (status: OrderStatus) => {
@@ -639,13 +641,19 @@ export function OrdersSection({
                             <X size={13} /> Cancelar pedido
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="action-danger"
-                          onClick={() => handleDeleteOrder(order.id, order.folio)}
-                        >
-                          <Trash2 size={13} /> Eliminar registro
-                        </button>
+                        {onDeleteOrder && (
+                          <button
+                            type="button"
+                            className="action-danger"
+                            onClick={() => {
+                              setViewingOrder(order)
+                              setConfirmingDelete(true)
+                              setActiveMenuId(null)
+                            }}
+                          >
+                            <Trash2 size={13} /> Eliminar registro
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1038,38 +1046,77 @@ export function OrdersSection({
             )}
 
             {/* Actions */}
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setViewingOrder(null)}
-              >
-                Cerrar
-              </button>
-              {onInvoiceOrder &&
-                viewingOrder.status !== 'Cancelado' &&
-                (billedByOrder[viewingOrder.folio] || 0) < viewingOrder.total - 0.5 && (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => {
-                      const target = viewingOrder
-                      setViewingOrder(null)
-                      onInvoiceOrder(target)
-                    }}
-                  >
-                    <ReceiptText size={14} /> Facturar pedido
-                  </button>
-                )}
-              {viewingOrder.status !== 'Entregado' && viewingOrder.status !== 'Cancelado' && (
+            <div className={`create-modal-actions ${onDeleteOrder ? 'has-delete-action' : ''}`}>
+              {onDeleteOrder && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar pedido
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingOrder.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => handleConfirmDeleteOrder(viewingOrder.id)}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
-                  className="button button-primary"
-                  onClick={() => handleAdvanceStatus(viewingOrder.id)}
+                  className="button button-secondary"
+                  onClick={() => {
+                    setViewingOrder(null)
+                    setConfirmingDelete(false)
+                  }}
                 >
-                  <Truck size={14} /> Avanzar estado operativo
+                  Cerrar
                 </button>
-              )}
+                {onInvoiceOrder &&
+                  viewingOrder.status !== 'Cancelado' &&
+                  (billedByOrder[viewingOrder.folio] || 0) < viewingOrder.total - 0.5 && (
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => {
+                        const target = viewingOrder
+                        setViewingOrder(null)
+                        setConfirmingDelete(false)
+                        onInvoiceOrder(target)
+                      }}
+                    >
+                      <ReceiptText size={14} /> Facturar pedido
+                    </button>
+                  )}
+                {viewingOrder.status !== 'Entregado' && viewingOrder.status !== 'Cancelado' && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => handleAdvanceStatus(viewingOrder.id)}
+                  >
+                    <Truck size={14} /> Avanzar estado operativo
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         </div>

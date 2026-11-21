@@ -14,6 +14,8 @@ import {
   Plane,
   Receipt,
   PieChart,
+  Eye,
+  Trash2,
 } from 'lucide-react'
 import type {
   ExpenseRecord,
@@ -27,6 +29,7 @@ interface FinanceExpensesProps {
   expenses: ExpenseRecord[]
   bankAccounts: BankAccount[]
   onAddExpense: (expense: ExpenseRecord) => void
+  onDeleteExpense?: (expenseId: string) => void
   onAddTransaction: (txn: PaymentTransaction) => void
   onUpdateBankAccountBalance: (accountId: string, delta: number) => void
 }
@@ -52,6 +55,7 @@ export function FinanceExpenses({
   expenses,
   bankAccounts,
   onAddExpense,
+  onDeleteExpense,
   onAddTransaction,
   onUpdateBankAccountBalance,
 }: FinanceExpensesProps) {
@@ -61,6 +65,8 @@ export function FinanceExpenses({
 
   // Modal
   const [isNewExpenseModalOpen, setIsNewExpenseModalOpen] = useState(false)
+  const [viewingExpense, setViewingExpense] = useState<ExpenseRecord | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Form state
   const [category, setCategory] = useState<ExpenseCategory>('Servicios')
@@ -346,12 +352,13 @@ export function FinanceExpenses({
               <th style={{ textAlign: 'right' }}>IVA</th>
               <th style={{ textAlign: 'right' }}>TOTAL GASTO</th>
               <th>RESPONSABLE</th>
+              <th style={{ textAlign: 'right' }}>ACCIONES</th>
             </tr>
           </thead>
           <tbody>
             {filteredExpenses.length === 0 ? (
               <tr>
-                <td colSpan={11} className="empty-cell">
+                <td colSpan={12} className="empty-cell">
                   No se encontraron gastos registrados en esta categoría o búsqueda.
                 </td>
               </tr>
@@ -393,6 +400,21 @@ export function FinanceExpenses({
                     <strong className="text-negative">{money(exp.total)}</strong>
                   </td>
                   <td className="user-cell">{exp.user}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div className="po-actions-row">
+                      <button
+                        type="button"
+                        className="button-icon-action"
+                        title={`Ver detalle de ${exp.folio}`}
+                        onClick={() => {
+                          setConfirmingDelete(false)
+                          setViewingExpense(exp)
+                        }}
+                      >
+                        <Eye size={12} /> Ver
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -556,6 +578,127 @@ export function FinanceExpenses({
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Detalle de Gasto Operativo */}
+      {viewingExpense && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setViewingExpense(null)
+              setConfirmingDelete(false)
+            }
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">FINANZAS · PÓLIZA DE GASTO</div>
+                <h2>{viewingExpense.folio}</h2>
+                <p>
+                  {viewingExpense.category} · Registrado el {viewingExpense.date}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setViewingExpense(null)
+                  setConfirmingDelete(false)
+                }}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="po-detail-meta-grid">
+              <div>
+                <small>Beneficiario / Proveedor</small>
+                <strong>{viewingExpense.beneficiary}</strong>
+                <span>Responsable: {viewingExpense.user}</span>
+              </div>
+              <div>
+                <small>Forma de pago</small>
+                <strong>{viewingExpense.paymentMethod}</strong>
+                <span>Comprobante: {viewingExpense.referenceDoc || 'Sin folio adjunto'}</span>
+              </div>
+              <div>
+                <small>Concepto</small>
+                <strong>{viewingExpense.description}</strong>
+              </div>
+            </div>
+
+            <div className="po-totals-box" style={{ marginTop: 14 }}>
+              <div className="po-totals-row">
+                <span>Subtotal:</span>
+                <strong>{money(viewingExpense.amount)}</strong>
+              </div>
+              <div className="po-totals-row">
+                <span>IVA (16%):</span>
+                <strong>{viewingExpense.tax > 0 ? money(viewingExpense.tax) : '$0'}</strong>
+              </div>
+              <div className="po-totals-row grand">
+                <span>Total del gasto:</span>
+                <strong className="text-negative">{money(viewingExpense.total)} MXN</strong>
+              </div>
+            </div>
+
+            <div className={`create-modal-actions ${onDeleteExpense ? 'has-delete-action' : ''}`}>
+              {onDeleteExpense && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar gasto
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingExpense.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteExpense(viewingExpense.id)
+                          setViewingExpense(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setViewingExpense(null)
+                    setConfirmingDelete(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       )}

@@ -10,6 +10,7 @@ import {
   Mail,
   MapPin,
   Phone,
+  Trash2,
   Wallet,
   X,
 } from 'lucide-react'
@@ -504,6 +505,7 @@ interface DirectoryEditModalProps {
   installedPacks?: BankFormatPack[]
   onClose: () => void
   onSave: (updated: DirectoryProfile) => void
+  onDelete?: () => void
 }
 
 export function DirectoryEditModal({
@@ -512,8 +514,10 @@ export function DirectoryEditModal({
   installedPacks = [],
   onClose,
   onSave,
+  onDelete,
 }: DirectoryEditModalProps) {
   const isSupplier = kind === 'supplier'
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [clientCode, setClientCode] = useState(record.clientCode || '')
   const [supplierCode, setSupplierCode] = useState(record.supplierCode || '')
   const [name, setName] = useState(record.name)
@@ -785,17 +789,52 @@ export function DirectoryEditModal({
             />
           </label>
 
-          <div className="create-modal-actions">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={onClose}
-            >
-              Cancelar
-            </button>
-            <button type="submit" className="button button-primary">
-              <BadgeCheck size={14} /> Guardar cambios
-            </button>
+          <div className={`create-modal-actions ${onDelete ? 'has-delete-action' : ''}`}>
+            {onDelete && (
+              <div className="modal-delete-slot">
+                {!confirmingDelete ? (
+                  <button
+                    type="button"
+                    className="button button-danger-outline"
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2 size={14} /> Eliminar {isSupplier ? 'proveedor' : 'cliente'}
+                  </button>
+                ) : (
+                  <div className="modal-delete-confirm">
+                    <span>
+                      ¿Eliminar a <strong>{company.trim() || record.company}</strong>?
+                    </span>
+                    <button
+                      type="button"
+                      className="button button-danger-solid"
+                      onClick={onDelete}
+                    >
+                      <Trash2 size={13} /> Confirmar
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setConfirmingDelete(false)}
+                    >
+                      Conservar
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="modal-primary-actions-slot">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={onClose}
+              >
+                Cancelar
+              </button>
+              <button type="submit" className="button button-primary">
+                <BadgeCheck size={14} /> Guardar cambios
+              </button>
+            </div>
           </div>
         </form>
       </section>

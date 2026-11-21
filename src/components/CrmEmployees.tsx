@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Trash2,
   UserCheck,
   Users,
   Wallet,
@@ -51,6 +52,7 @@ interface CrmEmployeesProps {
   installedPacks?: BankFormatPack[]
   onAddEmployee: (employee: EmployeeRecord) => void
   onUpdateEmployee: (employee: EmployeeRecord) => void
+  onDeleteEmployee?: (employeeId: string) => void
   onNavigateSettingsRoles?: () => void
 }
 
@@ -76,6 +78,7 @@ export function CrmEmployees({
   installedPacks = [],
   onAddEmployee,
   onUpdateEmployee,
+  onDeleteEmployee,
   onNavigateSettingsRoles,
 }: CrmEmployeesProps) {
   const toast = useToast()
@@ -126,6 +129,7 @@ export function CrmEmployees({
   // Modals
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [detailEmployee, setDetailEmployee] = useState<EmployeeRecord | null>(null)
   const [rolePickerEmployee, setRolePickerEmployee] = useState<EmployeeRecord | null>(null)
   const [rolePickerDraft, setRolePickerDraft] = useState<RoleKey[]>([])
@@ -206,6 +210,7 @@ export function CrmEmployees({
 
   const openCreateModal = () => {
     setEditingId(null)
+    setConfirmingDelete(false)
     const nextNum = employees.length + 1
     setEmployeeCode(`EMP-${String(nextNum).padStart(3, '0')}`)
     setFullName('')
@@ -234,6 +239,7 @@ export function CrmEmployees({
   const openEditModal = (emp: EmployeeRecord) => {
     const validIds = new Set(roleDefinitions.map((r) => r.id))
     setEditingId(emp.id)
+    setConfirmingDelete(false)
     setEmployeeCode(emp.employeeCode)
     setFullName(emp.fullName)
     setEmail(emp.email)
@@ -1068,17 +1074,62 @@ export function CrmEmployees({
                 </label>
               </div>
 
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setIsFormOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <BadgeCheck size={14} /> {editingId ? 'Guardar cambios' : 'Registrar empleado'}
-                </button>
+              <div
+                className={`create-modal-actions ${
+                  editingId && onDeleteEmployee ? 'has-delete-action' : ''
+                }`}
+              >
+                {editingId && onDeleteEmployee && (
+                  <div className="modal-delete-slot">
+                    {!confirmingDelete ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDelete(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar empleado
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar a <strong>{fullName.trim() || 'este empleado'}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetId = editingId
+                            onDeleteEmployee(targetId)
+                            if (detailEmployee?.id === targetId) setDetailEmployee(null)
+                            setIsFormOpen(false)
+                            setConfirmingDelete(false)
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmingDelete(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setIsFormOpen(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <BadgeCheck size={14} /> {editingId ? 'Guardar cambios' : 'Registrar empleado'}
+                  </button>
+                </div>
               </div>
             </form>
           </section>

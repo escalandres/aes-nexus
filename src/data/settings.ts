@@ -35,7 +35,7 @@ export const SYSTEM_MODULE_SECTIONS = {
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
   Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
   Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
-  Administración: ['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
+  Administración: ['Subsidiarias', 'Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
   Configuración: [
     'General',
     'Organización',
@@ -345,6 +345,7 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     'Nómina y RRHH': ['manageUsers'],
   },
   Administración: {
+    Subsidiarias: ['sysConfig'],
     Departamentos: ['sysConfig'],
     Ubicaciones: ['sysConfig'],
     Resumen: ['sysConfig'],
@@ -645,111 +646,429 @@ export function generateExternalApiKey(environment: 'production' | 'sandbox'): {
   }
 }
 
-export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
+export type CommercialSyncInterval =
+  | '5m'
+  | '15m'
+  | '30m'
+  | '1h'
+  | '6h'
+  | '24h'
+  | 'manual'
+
+export type CommercialCategory = 'PAC Fiscal' | 'Ecommerce' | 'Banca & Pagos' | 'Productividad'
+
+export const COMMERCIAL_SYNC_INTERVALS: Array<{
+  id: CommercialSyncInterval
+  label: string
+  shortLabel: string
+}> = [
+  { id: '5m', label: 'Cada 5 minutos', shortLabel: 'Cada 5 min' },
+  { id: '15m', label: 'Cada 15 minutos', shortLabel: 'Cada 15 min' },
+  { id: '30m', label: 'Cada 30 minutos', shortLabel: 'Cada 30 min' },
+  { id: '1h', label: 'Cada 1 hora', shortLabel: 'Cada 1 h' },
+  { id: '6h', label: 'Cada 6 horas', shortLabel: 'Cada 6 h' },
+  { id: '24h', label: 'Cada 24 horas (Diario)', shortLabel: 'Diario' },
+  { id: 'manual', label: 'Manual / Bajo demanda', shortLabel: 'Manual' },
+]
+
+export interface CommercialMarketplaceApp {
+  id: string
+  name: string
+  vendor: string
+  category: CommercialCategory
+  brandCode: string
+  brandColor: string
+  brandBg: string
+  description: string
+  authMethodLabel: string
+  dataSyncedLabel: string
+  endpointLabel: string
+  endpointPlaceholder: string
+  apiKeyLabel: string
+  apiKeyPlaceholder: string
+  apiSecretLabel: string
+  apiSecretPlaceholder: string
+  defaultSyncInterval: CommercialSyncInterval
+  sampleOutboundEndpoint: string
+  sampleOutboundPayload: Record<string, unknown>
+}
+
+export interface CommercialIntegrationRecord {
+  id: string
+  marketplaceId: string
+  name: string
+  vendor: string
+  category: CommercialCategory
+  description: string
+  enabled: boolean
+  environment: 'production' | 'sandbox'
+  syncInterval: CommercialSyncInterval
+  endpointLabel: string
+  endpointUrl: string
+  apiKeyLabel: string
+  apiKey: string
+  apiSecretLabel: string
+  apiSecret: string
+  dataSyncedLabel: string
+  lastSyncAtIso: string
+  lastSyncStatus: 'idle' | 'success' | 'error'
+  installedAtIso: string
+  recentLogs: ExternalIntegrationLog[]
+}
+
+export const COMMERCIAL_MARKETPLACE_CATALOG: CommercialMarketplaceApp[] = [
   {
-    id: 'ext_shopify_mx',
-    name: 'Sincronizador Shopify MX',
-    systemType: 'Ecommerce',
-    origin: 'commercial',
-    description: 'Sincroniza catálogo de SKUs, pedidos en línea y altas de clientes desde tienda web.',
-    environment: 'production',
-    status: 'active',
-    roleId: 'role_integracion_ecommerce',
-    apiKeyPrefix: 'nexus_live_8Kp',
-    apiKeySecret: 'nexus_live_8Kp92VmQx4RtN7wL3YzH5BcJ6DfA',
-    webhookCallbackUrl: 'https://hooks.brujulaestudio.mx/shopify-sync',
-    ipAllowlist: '34.192.18.0/24, 52.84.112.14',
-    rateLimitPerMin: 240,
-    permissions: {
-      clientes: ['read', 'create', 'update'],
-      productos: ['read', 'update'],
-      ventas: ['read', 'create', 'update'],
-      compras: [],
-      finanzas: [],
-      rrhh: [],
+    id: 'mkt_shopify',
+    name: 'Shopify',
+    vendor: 'Shopify Inc.',
+    category: 'Ecommerce',
+    brandCode: 'SH',
+    brandColor: '#4c7c22',
+    brandBg: '#edf6e3',
+    description:
+      'AES Nexus consulta periódicamente pedidos, catálogo de productos, existencias y altas de clientes desde tu tienda Shopify.',
+    authMethodLabel: 'Admin API Access Token',
+    dataSyncedLabel: 'Pedidos, SKUs, Inventario y Clientes',
+    endpointLabel: 'URL de tienda Shopify',
+    endpointPlaceholder: 'https://mi-tienda.myshopify.com',
+    apiKeyLabel: 'API Key / Client ID',
+    apiKeyPlaceholder: 'shp_client_92a8c...',
+    apiSecretLabel: 'Admin API Access Token',
+    apiSecretPlaceholder: 'shpat_xxxxxxxxxxxxxxxxxxxxx',
+    defaultSyncInterval: '15m',
+    sampleOutboundEndpoint: 'GET https://mi-tienda.myshopify.com/admin/api/2026-01/orders.json',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Shopify',
+      importedOrders: 14,
+      syncedSkus: 42,
+      newCustomers: 5,
     },
-    createdAtIso: '2026-09-12T10:15:00.000Z',
-    lastUsedAtIso: '2026-11-16T14:22:00.000Z',
-    requestsCount: 18420,
+  },
+  {
+    id: 'mkt_woocommerce',
+    name: 'WooCommerce',
+    vendor: 'Automattic / WordPress',
+    category: 'Ecommerce',
+    brandCode: 'WC',
+    brandColor: '#6d3fb3',
+    brandBg: '#f1eafb',
+    description:
+      'Extracción programada de órdenes de compra, precios y stock desde tu tienda WordPress + WooCommerce.',
+    authMethodLabel: 'Consumer Key + Consumer Secret',
+    dataSyncedLabel: 'Pedidos, Productos y Clientes',
+    endpointLabel: 'URL de tienda WordPress',
+    endpointPlaceholder: 'https://tienda.midominio.mx',
+    apiKeyLabel: 'Consumer Key',
+    apiKeyPlaceholder: 'ck_4f9b2e...',
+    apiSecretLabel: 'Consumer Secret',
+    apiSecretPlaceholder: 'cs_81c3a7...',
+    defaultSyncInterval: '30m',
+    sampleOutboundEndpoint: 'GET https://tienda.midominio.mx/wp-json/wc/v3/orders',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'WooCommerce',
+      ordersImported: 6,
+      productsSynced: 64,
+    },
+  },
+  {
+    id: 'mkt_mercadolibre',
+    name: 'Mercado Libre',
+    vendor: 'Mercado Libre México',
+    category: 'Ecommerce',
+    brandCode: 'ML',
+    brandColor: '#27439c',
+    brandBg: '#fcf6dc',
+    description:
+      'Consulta automática de ventas confirmadas, publicaciones, stock disponible y mensajería postventa.',
+    authMethodLabel: 'OAuth Client ID + Secret',
+    dataSyncedLabel: 'Órdenes, Publicaciones y Stock',
+    endpointLabel: 'Endpoint API / Seller ID',
+    endpointPlaceholder: 'https://api.mercadolibre.com/users/MLM-482910',
+    apiKeyLabel: 'App ID (Client ID)',
+    apiKeyPlaceholder: '7829104562819',
+    apiSecretLabel: 'Client Secret / Refresh Token',
+    apiSecretPlaceholder: 'TG-67f891a2c...',
+    defaultSyncInterval: '15m',
+    sampleOutboundEndpoint: 'GET https://api.mercadolibre.com/orders/search?seller=MLM-482910',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Mercado Libre',
+      ordersFetched: 9,
+      publicationsChecked: 118,
+    },
+  },
+  {
+    id: 'mkt_amazon',
+    name: 'Amazon Seller Central',
+    vendor: 'Amazon SP-API',
+    category: 'Ecommerce',
+    brandCode: 'AZ',
+    brandColor: '#a65d03',
+    brandBg: '#fdf2df',
+    description:
+      'Consulta de órdenes FBA/FBM, reportes de inventario y liquidaciones desde Amazon Selling Partner API.',
+    authMethodLabel: 'LWA Client ID + Refresh Token',
+    dataSyncedLabel: 'Órdenes FBA/FBM e Inventario',
+    endpointLabel: 'Endpoint Regional / Marketplace ID',
+    endpointPlaceholder: 'https://sellingpartnerapi-na.amazon.com (A1AM78C64UM0Y8)',
+    apiKeyLabel: 'LWA Client ID',
+    apiKeyPlaceholder: 'amzn1.application-oa2-client...',
+    apiSecretLabel: 'LWA Refresh Token',
+    apiSecretPlaceholder: 'Atzr|IwEBIA...',
+    defaultSyncInterval: '1h',
+    sampleOutboundEndpoint: 'GET https://sellingpartnerapi-na.amazon.com/orders/v0/orders',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Amazon SP-API',
+      marketplace: 'MX (A1AM78C64UM0Y8)',
+      ordersSynced: 11,
+    },
+  },
+  {
+    id: 'mkt_finkok_pac',
+    name: 'Finkok PAC CFDI 4.0',
+    vendor: 'Finkok SAPI de CV',
+    category: 'PAC Fiscal',
+    brandCode: 'FK',
+    brandColor: '#1f53a4',
+    brandBg: '#eaf1fc',
+    description:
+      'Consulta y timbrado de CFDI 4.0, descarga de acuses SAT, validaciones de RFC y cancelaciones.',
+    authMethodLabel: 'Usuario PAC + Contraseña',
+    dataSyncedLabel: 'Estatus CFDI 4.0, Acuses SAT y Timbres',
+    endpointLabel: 'URL Webservice PAC',
+    endpointPlaceholder: 'https://facturacion.finkok.com/servicios/soap/stamp',
+    apiKeyLabel: 'Usuario PAC',
+    apiKeyPlaceholder: 'facturacion@brujulaestudio.mx',
+    apiSecretLabel: 'Contraseña / Llave PAC',
+    apiSecretPlaceholder: 'fkk_live_••••••••',
+    defaultSyncInterval: '15m',
+    sampleOutboundEndpoint: 'POST https://facturacion.finkok.com/servicios/soap/utilities/status',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Finkok PAC',
+      cfdisVerified: 18,
+      satStatus: 'Vigente',
+    },
+  },
+  {
+    id: 'mkt_sw_sapien_pac',
+    name: 'SW Sapien PAC',
+    vendor: 'Smarter Web PAC',
+    category: 'PAC Fiscal',
+    brandCode: 'SW',
+    brandColor: '#0c6b93',
+    brandBg: '#e5f5fb',
+    description:
+      'Integración con PAC autorizado SAT para timbrado, verificación de estatus y consulta de saldo de timbres.',
+    authMethodLabel: 'Usuario + Token Bearer PAC',
+    dataSyncedLabel: 'Timbres, Cancelaciones y Acuses',
+    endpointLabel: 'Endpoint API REST',
+    endpointPlaceholder: 'https://services.sw.com.mx',
+    apiKeyLabel: 'Usuario / RFC Emisor',
+    apiKeyPlaceholder: 'BES1904128A1',
+    apiSecretLabel: 'Token de acceso PAC',
+    apiSecretPlaceholder: 'sw_live_token_••••••••',
+    defaultSyncInterval: '15m',
+    sampleOutboundEndpoint: 'GET https://services.sw.com.mx/account/balance',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'SW Sapien PAC',
+      availableStamps: 4820,
+    },
+  },
+  {
+    id: 'mkt_facturama_pac',
+    name: 'Facturama PAC',
+    vendor: 'Facturama',
+    category: 'PAC Fiscal',
+    brandCode: 'FA',
+    brandColor: '#1b6d48',
+    brandBg: '#e8f6ef',
+    description:
+      'Consulta periódica de comprobantes emitidos, descarga XML/PDF y conciliación fiscal automática.',
+    authMethodLabel: 'Usuario API + Contraseña',
+    dataSyncedLabel: 'CFDIs emitidos y XML/PDF',
+    endpointLabel: 'URL API Facturama',
+    endpointPlaceholder: 'https://api.facturama.mx',
+    apiKeyLabel: 'Usuario API',
+    apiKeyPlaceholder: 'nexus_facturama',
+    apiSecretLabel: 'Contraseña API',
+    apiSecretPlaceholder: '••••••••••••',
+    defaultSyncInterval: '1h',
+    sampleOutboundEndpoint: 'GET https://api.facturama.mx/cfdi?type=issued',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Facturama PAC',
+      documentsFetched: 23,
+    },
+  },
+  {
+    id: 'mkt_stp_spei',
+    name: 'STP · Dispersión SPEI',
+    vendor: 'Sistema de Transferencias y Pagos',
+    category: 'Banca & Pagos',
+    brandCode: 'ST',
+    brandColor: '#0f6860',
+    brandBg: '#e6f5f3',
+    description:
+      'AES Nexus consulta movimientos entrantes, saldos de cuenta concentradora y rastreo de órdenes SPEI.',
+    authMethodLabel: 'Empresa STP + Llave privada',
+    dataSyncedLabel: 'Movimientos bancarios, Saldos y Rastreo',
+    endpointLabel: 'Endpoint STP / Cuenta CLABE',
+    endpointPlaceholder: 'https://efws-dev.stpmex.com · CLABE 646180157000482190',
+    apiKeyLabel: 'Empresa / Prefijo STP',
+    apiKeyPlaceholder: 'BRUJULAESTUDIO',
+    apiSecretLabel: 'Llave privada / Passphrase',
+    apiSecretPlaceholder: 'stp_key_••••••••',
+    defaultSyncInterval: '5m',
+    sampleOutboundEndpoint: 'POST https://prod.stpmex.com/speiws/rest/ordenPago/consultaConciliacion',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'STP SPEI',
+      settledTransfers: 7,
+      reconciledMxn: 194320.5,
+    },
+  },
+  {
+    id: 'mkt_google_workspace',
+    name: 'Google Workspace / Gmail API',
+    vendor: 'Google Cloud',
+    category: 'Productividad',
+    brandCode: 'GW',
+    brandColor: '#b3382c',
+    brandBg: '#fceceb',
+    description:
+      'Sincroniza notificaciones fiscales, envío de estados de cuenta y respaldos automáticos en Drive.',
+    authMethodLabel: 'OAuth 2.0 Client ID + Token',
+    dataSyncedLabel: 'Correos, Acuses y Respaldos Drive',
+    endpointLabel: 'Cuenta corporativa Workspace',
+    endpointPlaceholder: 'notificaciones@brujulaestudio.mx',
+    apiKeyLabel: 'OAuth Client ID',
+    apiKeyPlaceholder: '8492019283-abc.apps.googleusercontent.com',
+    apiSecretLabel: 'Refresh Token / Secret',
+    apiSecretPlaceholder: 'oauth_gw_••••••••',
+    defaultSyncInterval: '30m',
+    sampleOutboundEndpoint: 'GET https://gmail.googleapis.com/gmail/v1/users/me/messages',
+    sampleOutboundPayload: {
+      ok: true,
+      direction: 'outbound_poll',
+      provider: 'Google Workspace',
+      threadsSynced: 12,
+    },
+  },
+]
+
+export const DEFAULT_COMMERCIAL_INTEGRATIONS: CommercialIntegrationRecord[] = [
+  {
+    id: 'comm_finkok_pac',
+    marketplaceId: 'mkt_finkok_pac',
+    name: 'Finkok PAC CFDI 4.0',
+    vendor: 'Finkok SAPI de CV',
+    category: 'PAC Fiscal',
+    description:
+      'Consulta y timbrado de CFDI 4.0, descarga de acuses SAT, validaciones de RFC y cancelaciones.',
+    enabled: true,
+    environment: 'production',
+    syncInterval: '15m',
+    endpointLabel: 'URL Webservice PAC',
+    endpointUrl: 'https://facturacion.finkok.com/servicios/soap/stamp',
+    apiKeyLabel: 'Usuario PAC',
+    apiKey: 'facturacion@brujulaestudio.mx',
+    apiSecretLabel: 'Contraseña / Llave PAC',
+    apiSecret: 'fkk_live_98Kp2VmQ7RtN',
+    dataSyncedLabel: 'Estatus CFDI 4.0, Acuses SAT y Timbres',
+    lastSyncAtIso: '2026-11-16T14:20:00.000Z',
+    lastSyncStatus: 'success',
+    installedAtIso: '2026-09-10T09:00:00.000Z',
     recentLogs: [
       {
-        id: 'log_seed_1',
-        method: 'POST',
-        resource: 'ventas',
-        moduleName: 'Ventas',
-        sectionName: 'Pedidos',
-        endpoint: '/api/v1/ventas/pedidos',
-        statusCode: 201,
-        latencyMs: 42,
-        summary: 'Pedido #VTA-9841 insertado desde checkout web',
-        responsePayload: JSON.stringify(
-          {
-            ok: true,
-            operation: 'INSERT',
-            orderId: 'VTA-9841',
-            channel: 'Shopify MX',
-            totalMxn: 14850.0,
-            status: 'confirmed',
-            createdAt: '2026-11-16T14:22:00.000Z',
-          },
-          null,
-          2
-        ),
-        timestampIso: '2026-11-16T14:22:00.000Z',
-      },
-      {
-        id: 'log_seed_2',
-        method: 'PUT',
-        resource: 'productos',
-        moduleName: 'Operaciones',
-        sectionName: 'Inventario',
-        endpoint: '/api/v1/operaciones/inventario',
+        id: 'log_comm_seed_1',
+        method: 'GET',
+        resource: 'finanzas',
+        moduleName: 'PAC Fiscal',
+        sectionName: 'Finkok PAC CFDI 4.0',
+        endpoint: 'https://facturacion.finkok.com/servicios/soap/utilities/status',
         statusCode: 200,
-        latencyMs: 36,
-        summary: 'Stock reservado para 4 SKUs en Almacén Vallejo',
+        latencyMs: 64,
+        summary: 'Consulta programada cada 15 min: 18 CFDIs verificados ante el SAT',
         responsePayload: JSON.stringify(
           {
             ok: true,
-            operation: 'UPDATE',
-            warehouse: 'Almacén Vallejo',
-            updatedSkus: 4,
-            reservedUnits: 18,
-            updatedAt: '2026-11-16T14:19:00.000Z',
+            direction: 'outbound_poll',
+            provider: 'Finkok PAC CFDI 4.0',
+            cfdisVerified: 18,
+            satStatus: 'Vigente',
+            polledAt: '2026-11-16T14:20:00.000Z',
           },
           null,
           2
         ),
-        timestampIso: '2026-11-16T14:19:00.000Z',
-      },
-      {
-        id: 'log_seed_5',
-        method: 'DELETE',
-        resource: 'clientes',
-        moduleName: 'CRM',
-        sectionName: 'Clientes',
-        endpoint: '/api/v1/crm/clientes',
-        statusCode: 403,
-        latencyMs: 19,
-        summary: 'Eliminación denegada: el rol vinculado tiene nivel Crear en CRM › Clientes',
-        responsePayload: JSON.stringify(
-          {
-            ok: false,
-            error: 'ROLE_SECTION_ACCESS_DENIED',
-            linkedRole: 'Integración Ecommerce',
-            module: 'CRM',
-            section: 'Clientes',
-            currentLevel: 'Crear',
-            requiredLevel: 'Completo',
-            message:
-              'El rol vinculado solo permite Crear/Visualizar en CRM › Clientes. Se requiere nivel Completo para ejecutar DELETE.',
-          },
-          null,
-          2
-        ),
-        timestampIso: '2026-11-16T13:45:00.000Z',
+        timestampIso: '2026-11-16T14:20:00.000Z',
       },
     ],
   },
+  {
+    id: 'comm_stp_spei',
+    marketplaceId: 'mkt_stp_spei',
+    name: 'STP · Dispersión SPEI',
+    vendor: 'Sistema de Transferencias y Pagos',
+    category: 'Banca & Pagos',
+    description:
+      'AES Nexus consulta movimientos entrantes, saldos de cuenta concentradora y rastreo de órdenes SPEI.',
+    enabled: true,
+    environment: 'production',
+    syncInterval: '5m',
+    endpointLabel: 'Endpoint STP / Cuenta CLABE',
+    endpointUrl: 'https://prod.stpmex.com/speiws/rest · CLABE 646180157000482190',
+    apiKeyLabel: 'Empresa / Prefijo STP',
+    apiKey: 'BRUJULAESTUDIO',
+    apiSecretLabel: 'Llave privada / Passphrase',
+    apiSecret: 'stp_live_4Tx71MnPq91A',
+    dataSyncedLabel: 'Movimientos bancarios, Saldos y Rastreo',
+    lastSyncAtIso: '2026-11-16T14:15:00.000Z',
+    lastSyncStatus: 'success',
+    installedAtIso: '2026-09-14T11:30:00.000Z',
+    recentLogs: [
+      {
+        id: 'log_comm_seed_2',
+        method: 'GET',
+        resource: 'finanzas',
+        moduleName: 'Banca & Pagos',
+        sectionName: 'STP · Dispersión SPEI',
+        endpoint: 'https://prod.stpmex.com/speiws/rest/ordenPago/consultaConciliacion',
+        statusCode: 200,
+        latencyMs: 51,
+        summary: 'Consulta automática cada 5 min: 7 abonos SPEI conciliados ($194,320.50 MXN)',
+        responsePayload: JSON.stringify(
+          {
+            ok: true,
+            direction: 'outbound_poll',
+            provider: 'STP · Dispersión SPEI',
+            settledTransfers: 7,
+            reconciledMxn: 194320.5,
+            polledAt: '2026-11-16T14:15:00.000Z',
+          },
+          null,
+          2
+        ),
+        timestampIso: '2026-11-16T14:15:00.000Z',
+      },
+    ],
+  },
+]
+
+export const DEFAULT_EXTERNAL_INTEGRATIONS: ExternalIntegrationRecord[] = [
   {
     id: 'ext_powerbi_dwh',
     name: 'Conector Power BI / Data Warehouse',
@@ -1256,6 +1575,7 @@ export const STORAGE_KEYS = {
   roleDefinitions: 'aes_nexus_settings_role_profiles',
   defaultNewUserRole: 'aes_nexus_settings_default_new_user_role',
   integrations: 'aes_nexus_settings_integrations',
+  commercialIntegrations: 'aes_nexus_settings_commercial_integrations',
   externalIntegrations: 'aes_nexus_settings_external_integrations',
   audit: 'aes_nexus_settings_audit',
   plan: 'aes_nexus_settings_plan',
@@ -1283,6 +1603,7 @@ export const ROLES_CHANGED_EVENT = 'aes_nexus_roles_changed'
 export const USERS_CHANGED_EVENT = 'aes_nexus_users_changed'
 export const AUDIT_CHANGED_EVENT = 'aes_nexus_audit_changed'
 export const INTEGRATIONS_CHANGED_EVENT = 'aes_nexus_integrations_changed'
+export const COMMERCIAL_INTEGRATIONS_CHANGED_EVENT = 'aes_nexus_commercial_integrations_changed'
 export const DEFAULT_NEW_USER_ROLE_CHANGED_EVENT = 'aes_nexus_default_role_changed'
 export const FALLBACK_DEFAULT_NEW_USER_ROLE: RoleKey = 'Operaciones'
 
@@ -1455,48 +1776,61 @@ export function loadStoredExternalIntegrations(roles?: RoleDefinition[]): Extern
     STORAGE_KEYS.externalIntegrations,
     DEFAULT_EXTERNAL_INTEGRATIONS
   )
-  return stored.map((rec) => {
-    const seedMatch = DEFAULT_EXTERNAL_INTEGRATIONS.find((d) => d.id === rec.id)
-    const candidateRoleId = rec.roleId || seedMatch?.roleId || fallbackRoleId
-    const resolvedRoleId = validRoleIds.has(candidateRoleId) ? candidateRoleId : fallbackRoleId
-    const rawLogs = Array.isArray(rec.recentLogs) ? rec.recentLogs : seedMatch?.recentLogs || []
-    const hydratedLogs: ExternalIntegrationLog[] = rawLogs.map((log) => {
-      const seedLog = seedMatch?.recentLogs.find((sl) => sl.id === log.id)
-      const resolvedEndpoint =
-        log.endpoint ||
-        seedLog?.endpoint ||
-        (log.moduleName && log.sectionName
-          ? getSectionApiEndpoint(log.moduleName, log.sectionName)
-          : EXTERNAL_API_RESOURCES.find((r) => r.id === log.resource)?.endpoint || `/api/v1/${log.resource}`)
-      const resolvedPayload =
-        log.responsePayload ||
-        seedLog?.responsePayload ||
-        JSON.stringify(
-          {
-            ok: log.statusCode < 400,
-            statusCode: log.statusCode,
-            method: log.method,
-            endpoint: resolvedEndpoint,
-            summary: log.summary,
-            timestamp: log.timestampIso,
-          },
-          null,
-          2
-        )
+  return stored
+    .filter((rec) => rec.id !== 'ext_shopify_mx')
+    .map((rec) => {
+      const seedMatch = DEFAULT_EXTERNAL_INTEGRATIONS.find((d) => d.id === rec.id)
+      const candidateRoleId = rec.roleId || seedMatch?.roleId || fallbackRoleId
+      const resolvedRoleId = validRoleIds.has(candidateRoleId) ? candidateRoleId : fallbackRoleId
+      const rawLogs = Array.isArray(rec.recentLogs) ? rec.recentLogs : seedMatch?.recentLogs || []
+      const hydratedLogs: ExternalIntegrationLog[] = rawLogs.map((log) => {
+        const seedLog = seedMatch?.recentLogs.find((sl) => sl.id === log.id)
+        const resolvedEndpoint =
+          log.endpoint ||
+          seedLog?.endpoint ||
+          (log.moduleName && log.sectionName
+            ? getSectionApiEndpoint(log.moduleName, log.sectionName)
+            : EXTERNAL_API_RESOURCES.find((r) => r.id === log.resource)?.endpoint || `/api/v1/${log.resource}`)
+        const resolvedPayload =
+          log.responsePayload ||
+          seedLog?.responsePayload ||
+          JSON.stringify(
+            {
+              ok: log.statusCode < 400,
+              statusCode: log.statusCode,
+              method: log.method,
+              endpoint: resolvedEndpoint,
+              summary: log.summary,
+              timestamp: log.timestampIso,
+            },
+            null,
+            2
+          )
+        return {
+          ...log,
+          endpoint: resolvedEndpoint,
+          latencyMs: log.latencyMs ?? seedLog?.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
+          responsePayload: resolvedPayload,
+        }
+      })
       return {
-        ...log,
-        endpoint: resolvedEndpoint,
-        latencyMs: log.latencyMs ?? seedLog?.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
-        responsePayload: resolvedPayload,
+        ...rec,
+        origin: 'custom',
+        roleId: resolvedRoleId,
+        recentLogs: hydratedLogs,
       }
     })
-    return {
-      ...rec,
-      origin: rec.origin || seedMatch?.origin || 'custom',
-      roleId: resolvedRoleId,
-      recentLogs: hydratedLogs,
-    }
-  })
+}
+
+export function loadStoredCommercialIntegrations(): CommercialIntegrationRecord[] {
+  const stored = readStoredJson<CommercialIntegrationRecord[]>(
+    STORAGE_KEYS.commercialIntegrations,
+    DEFAULT_COMMERCIAL_INTEGRATIONS
+  )
+  return stored.map((rec) => ({
+    ...rec,
+    recentLogs: Array.isArray(rec.recentLogs) ? rec.recentLogs : [],
+  }))
 }
 
 export function loadDefaultNewUserRole(roles?: RoleDefinition[]): RoleKey {

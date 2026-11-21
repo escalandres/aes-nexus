@@ -21,10 +21,17 @@ interface QuotesSectionProps {
   quotes: Quote[]
   onUpdateQuotes: (quotes: Quote[]) => void
   onConvertToOrder: (quote: Quote) => void
+  onDeleteQuote?: (quoteId: string) => void
   clientNames: { id: string; name: string; company: string; email: string }[]
 }
 
-export function QuotesSection({ quotes, onUpdateQuotes, onConvertToOrder, clientNames }: QuotesSectionProps) {
+export function QuotesSection({
+  quotes,
+  onUpdateQuotes,
+  onConvertToOrder,
+  onDeleteQuote,
+  clientNames,
+}: QuotesSectionProps) {
   const toast = useToast()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
@@ -35,6 +42,7 @@ export function QuotesSection({ quotes, onUpdateQuotes, onConvertToOrder, client
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [viewingQuote, setViewingQuote] = useState<Quote | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Form state for new quote
   const [selectedClientId, setSelectedClientId] = useState('')
@@ -244,13 +252,12 @@ export function QuotesSection({ quotes, onUpdateQuotes, onConvertToOrder, client
     toast.info(`La cotización ahora está en estado "${nextStatus}".`, 'Estado actualizado')
   }
 
-  const handleDelete = (quoteId: string, folio: string) => {
-    if (window.confirm(`¿Seguro que deseas eliminar la cotización ${folio}?`)) {
-      onUpdateQuotes(quotes.filter((q) => q.id !== quoteId))
-      if (viewingQuote?.id === quoteId) setViewingQuote(null)
-      setActiveMenuId(null)
-      toast.info(`La cotización ${folio} fue eliminada.`, 'Cotización eliminada')
-    }
+  const handleConfirmDeleteQuote = (quoteId: string) => {
+    if (!onDeleteQuote) return
+    onDeleteQuote(quoteId)
+    if (viewingQuote?.id === quoteId) setViewingQuote(null)
+    setActiveMenuId(null)
+    setConfirmingDelete(false)
   }
 
   const getStatusBadge = (status: QuoteStatus) => {
@@ -574,13 +581,19 @@ export function QuotesSection({ quotes, onUpdateQuotes, onConvertToOrder, client
                             <XCircle size={13} /> Marcar como Rechazada
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="action-danger"
-                          onClick={() => handleDelete(q.id, q.folio)}
-                        >
-                          <Trash2 size={13} /> Eliminar
-                        </button>
+                        {onDeleteQuote && (
+                          <button
+                            type="button"
+                            className="action-danger"
+                            onClick={() => {
+                              setViewingQuote(q)
+                              setConfirmingDelete(true)
+                              setActiveMenuId(null)
+                            }}
+                          >
+                            <Trash2 size={13} /> Eliminar
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -988,40 +1001,79 @@ export function QuotesSection({ quotes, onUpdateQuotes, onConvertToOrder, client
             )}
 
             {/* Actions */}
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setViewingQuote(null)}
-              >
-                Cerrar
-              </button>
-              {viewingQuote.status !== 'Aprobada' && (
+            <div className={`create-modal-actions ${onDeleteQuote ? 'has-delete-action' : ''}`}>
+              {onDeleteQuote && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar cotización
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingQuote.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => handleConfirmDeleteQuote(viewingQuote.id)}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
                   className="button button-secondary"
-                  onClick={() => handleStatusChange(viewingQuote.id, 'Aprobada')}
-                >
-                  <Check size={14} /> Aprobar cotización
-                </button>
-              )}
-              {!viewingQuote.convertedToOrderId ? (
-                <button
-                  type="button"
-                  className="button button-primary"
                   onClick={() => {
-                    const q = viewingQuote
                     setViewingQuote(null)
-                    onConvertToOrder(q)
+                    setConfirmingDelete(false)
                   }}
                 >
-                  <ShoppingBag size={14} /> Convertir a pedido de venta
+                  Cerrar
                 </button>
-              ) : (
-                <span className="demo-pill">
-                  <Check size={12} /> Convertida a pedido
-                </span>
-              )}
+                {viewingQuote.status !== 'Aprobada' && (
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => handleStatusChange(viewingQuote.id, 'Aprobada')}
+                  >
+                    <Check size={14} /> Aprobar cotización
+                  </button>
+                )}
+                {!viewingQuote.convertedToOrderId ? (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      const q = viewingQuote
+                      setViewingQuote(null)
+                      setConfirmingDelete(false)
+                      onConvertToOrder(q)
+                    }}
+                  >
+                    <ShoppingBag size={14} /> Convertir a pedido de venta
+                  </button>
+                ) : (
+                  <span className="demo-pill">
+                    <Check size={12} /> Convertida a pedido
+                  </span>
+                )}
+              </div>
             </div>
           </section>
         </div>

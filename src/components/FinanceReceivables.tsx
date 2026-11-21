@@ -12,6 +12,7 @@ import {
   Building2,
   DollarSign,
   ReceiptText,
+  Trash2,
 } from 'lucide-react'
 import type {
   InvoiceReceivable,
@@ -32,6 +33,7 @@ interface FinanceReceivablesProps {
   bankAccounts: BankAccount[]
   clientsList: ClientOption[]
   onUpdateReceivables: (items: InvoiceReceivable[]) => void
+  onDeleteReceivable?: (invoiceId: string) => void
   onAddTransaction: (txn: PaymentTransaction) => void
   onUpdateBankAccountBalance: (accountId: string, delta: number) => void
 }
@@ -48,6 +50,7 @@ export function FinanceReceivables({
   bankAccounts,
   clientsList,
   onUpdateReceivables,
+  onDeleteReceivable,
   onAddTransaction,
   onUpdateBankAccountBalance,
 }: FinanceReceivablesProps) {
@@ -60,6 +63,7 @@ export function FinanceReceivables({
   const [isNewInvoiceModalOpen, setIsNewInvoiceModalOpen] = useState(false)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceReceivable | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Payment registration form
   const [collectAmount, setCollectAmount] = useState<number>(0)
@@ -435,6 +439,7 @@ export function FinanceReceivables({
                           className="button-icon-action"
                           title="Ver detalle del CFDI"
                           onClick={() => {
+                            setConfirmingDelete(false)
                             setSelectedInvoice(inv)
                             setIsDetailModalOpen(true)
                           }}
@@ -714,7 +719,10 @@ export function FinanceReceivables({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setIsDetailModalOpen(false)
+            if (e.target === e.currentTarget) {
+              setIsDetailModalOpen(false)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
@@ -726,7 +734,10 @@ export function FinanceReceivables({
               </div>
               <button
                 className="icon-button"
-                onClick={() => setIsDetailModalOpen(false)}
+                onClick={() => {
+                  setIsDetailModalOpen(false)
+                  setConfirmingDelete(false)
+                }}
                 aria-label="Cerrar modal"
               >
                 <X size={18} />
@@ -802,26 +813,70 @@ export function FinanceReceivables({
               </div>
             </div>
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setIsDetailModalOpen(false)}
-              >
-                Cerrar
-              </button>
-              {selectedInvoice.balance > 0 && (
+            <div className={`create-modal-actions ${onDeleteReceivable ? 'has-delete-action' : ''}`}>
+              {onDeleteReceivable && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar factura
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{selectedInvoice.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteReceivable(selectedInvoice.id)
+                          setIsDetailModalOpen(false)
+                          setSelectedInvoice(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
-                  className="button button-primary"
+                  className="button button-secondary"
                   onClick={() => {
                     setIsDetailModalOpen(false)
-                    handleOpenCollectModal(selectedInvoice)
+                    setConfirmingDelete(false)
                   }}
                 >
-                  <DollarSign size={14} /> Registrar cobro ahora
+                  Cerrar
                 </button>
-              )}
+                {selectedInvoice.balance > 0 && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      setIsDetailModalOpen(false)
+                      setConfirmingDelete(false)
+                      handleOpenCollectModal(selectedInvoice)
+                    }}
+                  >
+                    <DollarSign size={14} /> Registrar cobro ahora
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         </div>

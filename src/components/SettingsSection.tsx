@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   Settings2,
   Building2,
@@ -44,6 +44,9 @@ import {
   Code2,
   ChevronDown,
   ChevronRight,
+  Store,
+  Clock,
+  Loader2,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -55,6 +58,9 @@ import type { Warehouse } from '../data/operations'
 import type { PhysicalLocationRecord, LocationType } from './AdministrationSection'
 import {
   AUDIT_CHANGED_EVENT,
+  COMMERCIAL_INTEGRATIONS_CHANGED_EVENT,
+  COMMERCIAL_MARKETPLACE_CATALOG,
+  COMMERCIAL_SYNC_INTERVALS,
   DEFAULT_INTEGRATIONS,
   DEFAULT_NEW_USER_ROLE_CHANGED_EVENT,
   DEFAULT_PLAN_SETTINGS,
@@ -80,6 +86,7 @@ import {
   levelAllowsHttpMethod,
   loadDefaultNewUserRole,
   loadStoredAuditEvents,
+  loadStoredCommercialIntegrations,
   loadStoredExternalIntegrations,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
@@ -88,6 +95,10 @@ import {
   writeStoredJson,
   type AuditEventRecord,
   type BuiltInRoleKey,
+  type CommercialCategory,
+  type CommercialIntegrationRecord,
+  type CommercialMarketplaceApp,
+  type CommercialSyncInterval,
   type ExternalApiAction,
   type ExternalApiResource,
   type ExternalIntegrationLog,
@@ -431,6 +442,35 @@ export function SettingsSection({
     readStoredJson(STORAGE_KEYS.integrations, DEFAULT_INTEGRATIONS)
   )
   const [editingIntegration, setEditingIntegration] = useState<IntegrationConfig | null>(null)
+
+  // 8A. COMMERCIAL OUTBOUND INTEGRATIONS & MARKETPLACE (CREDENTIALS + POLLING ONLY)
+  const [commercialIntegrations, setCommercialIntegrations] = useState<
+    CommercialIntegrationRecord[]
+  >(() => loadStoredCommercialIntegrations())
+  const [commDraftsById, setCommDraftsById] = useState<
+    Record<string, CommercialIntegrationRecord>
+  >({})
+  const [editingCommercialId, setEditingCommercialId] = useState<string | null>(null)
+  const [revealedCommSecretIds, setRevealedCommSecretIds] = useState<Record<string, boolean>>({})
+  const [marketplaceSearch, setMarketplaceSearch] = useState('')
+  const [marketplaceCategory, setMarketplaceCategory] = useState<'all' | CommercialCategory>('all')
+  const [marketplaceStatusFilter, setMarketplaceStatusFilter] = useState<
+    'all' | 'installed' | 'available'
+  >('all')
+  const [marketplaceIntervalDrafts, setMarketplaceIntervalDrafts] = useState<
+    Record<string, CommercialSyncInterval>
+  >({})
+  const [installingMarketplaceIds, setInstallingMarketplaceIds] = useState<
+    Record<string, boolean>
+  >({})
+  const installTimersRef = useRef<number[]>([])
+
+  useEffect(() => {
+    return () => {
+      installTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
+      installTimersRef.current = []
+    }
+  }, [])
 
   // 8B. EXTERNAL SYSTEMS API INTEGRATIONS (LINKED TO ROLE, 0 USER SLOTS)
   const [externalIntegrations, setExternalIntegrations] = useState<ExternalIntegrationRecord[]>(() =>
@@ -1114,6 +1154,7 @@ export function SettingsSection({
         state: statePart || mainCountryName,
         country: mainCountryName,
         manager: org.legalRep,
+        subsidiaryIds: [],
         active: true,
       })
     }
@@ -2118,16 +2159,342 @@ export function SettingsSection({
     })
   }
 
+  const persistCommercialIntegrations = (updated: CommercialIntegrationRecord[]) => {
+    setCommercialIntegrations(updated)
+    writeStoredJson(STORAGE_KEYS.commercialIntegrations, updated)
+    window.dispatchEvent(
+      new CustomEvent(COMMERCIAL_INTEGRATIONS_CHANGED_EVENT, {
+        detail: { commercialIntegrations: updated },
+      })
+    )
+  }
+
+  const getCommercialDraft = (rec: CommercialIntegrationRecord): CommercialIntegrationRecord =>
+    commDraftsById[rec.id] || rec
+
+  const updateCommercialDraft = (
+    rec: CommercialIntegrationRecord,
+    patch: Partial<CommercialIntegrationRecord>
+  ) => {
+    setCommDraftsById((prev) => ({
+      ...prev,
+      [rec.id]: {
+        ...(prev[rec.id] || rec),
+        ...patch,
+      },
+    }))
+  }
+
+  const handleInstallMarketplaceApp = (app: CommercialMarketplaceApp) => {
+    if (installingMarketplaceIds[app.id]) return
+
+    const existing = commercialIntegrations.find((item) => item.marketplaceId === app.id)
+    if (existing) {
+      setEditingCommercialId(existing.id)
+      return
+    }
+
+    setInstallingMarketplaceIds((prev) => ({ ...prev, [app.id]: true }))
+    const chosenInterval = marketplaceIntervalDrafts[app.id] || app.defaultSyncInterval
+
+    const timerId = window.setTimeout(() => {
+      const nowIso = new Date().toISOString()
+      const newRecord: CommercialIntegrationRecord = {
+        id: `comm_${app.id.replace(/^mkt_/, '')}_${Date.now().toString(36)}`,
+        marketplaceId: app.id,
+        name: app.name,
+        vendor: app.vendor,
+        category: app.category,
+        description: app.description,
+        enabled: true,
+        environment: 'production',
+        syncInterval: chosenInterval,
+        endpointLabel: app.endpointLabel,
+        endpointUrl: '',
+        apiKeyLabel: app.apiKeyLabel,
+        apiKey: '',
+        apiSecretLabel: app.apiSecretLabel,
+        apiSecret: '',
+        dataSyncedLabel: app.dataSyncedLabel,
+        lastSyncAtIso: '',
+        lastSyncStatus: 'idle',
+        installedAtIso: nowIso,
+        recentLogs: [],
+      }
+
+      setCommercialIntegrations((prev) => {
+        if (prev.some((item) => item.marketplaceId === app.id)) return prev
+        const updated = [newRecord, ...prev]
+        writeStoredJson(STORAGE_KEYS.commercialIntegrations, updated)
+        window.dispatchEvent(
+          new CustomEvent(COMMERCIAL_INTEGRATIONS_CHANGED_EVENT, {
+            detail: { commercialIntegrations: updated },
+          })
+        )
+        return updated
+      })
+
+      setInstallingMarketplaceIds((prev) => {
+        const next = { ...prev }
+        delete next[app.id]
+        return next
+      })
+
+      const syncMeta =
+        COMMERCIAL_SYNC_INTERVALS.find((s) => s.id === chosenInterval) ||
+        COMMERCIAL_SYNC_INTERVALS[1]
+      recordAudit({
+        category: 'integrations',
+        action: 'Dependencias e integración comercial instaladas',
+        detail: `${app.name} (${app.category}) · Intervalo inicial: ${syncMeta.label} · Pendiente de configurar credenciales`,
+        user: 'Andrea Morales',
+      })
+      toast.success(
+        `Dependencias de "${app.name}" instaladas correctamente. Ahora haz clic en "Configurar" para ingresar tus credenciales.`,
+        'Marketplace de Integraciones'
+      )
+    }, 650)
+
+    installTimersRef.current.push(timerId)
+  }
+
+  const handleChangeCommercialSyncInterval = (
+    rec: CommercialIntegrationRecord,
+    nextInterval: CommercialSyncInterval
+  ) => {
+    const updated = commercialIntegrations.map((item) =>
+      item.id === rec.id ? { ...item, syncInterval: nextInterval } : item
+    )
+    persistCommercialIntegrations(updated)
+    setCommDraftsById((prev) =>
+      prev[rec.id] ? { ...prev, [rec.id]: { ...prev[rec.id], syncInterval: nextInterval } } : prev
+    )
+    const syncMeta =
+      COMMERCIAL_SYNC_INTERVALS.find((s) => s.id === nextInterval) || COMMERCIAL_SYNC_INTERVALS[1]
+    recordAudit({
+      category: 'integrations',
+      action: 'Intervalo de sincronización actualizado',
+      detail: `${rec.name} · Nueva frecuencia: ${syncMeta.label}`,
+      user: 'Andrea Morales',
+    })
+    toast.success(
+      `AES Nexus sincronizará "${rec.name}" ${syncMeta.label.toLowerCase()}.`,
+      'Intervalo de sincronización'
+    )
+  }
+
+  const handleSaveCommercialConfig = (rec: CommercialIntegrationRecord, e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const draft = getCommercialDraft(rec)
+    const cleanEndpoint = draft.endpointUrl.trim()
+    const cleanKey = draft.apiKey.trim()
+    const cleanSecret = draft.apiSecret.trim()
+
+    if (!cleanEndpoint || !cleanKey || !cleanSecret) {
+      toast.warning(
+        `Completa ${draft.endpointLabel}, ${draft.apiKeyLabel} y ${draft.apiSecretLabel} para guardar las credenciales de "${draft.name}".`,
+        'Credenciales requeridas'
+      )
+      return
+    }
+
+    const syncMeta =
+      COMMERCIAL_SYNC_INTERVALS.find((s) => s.id === draft.syncInterval) ||
+      COMMERCIAL_SYNC_INTERVALS[1]
+
+    const nextRecord: CommercialIntegrationRecord = {
+      ...draft,
+      endpointUrl: cleanEndpoint,
+      apiKey: cleanKey,
+      apiSecret: cleanSecret,
+    }
+
+    const updated = commercialIntegrations.map((item) =>
+      item.id === rec.id ? nextRecord : item
+    )
+    persistCommercialIntegrations(updated)
+    setCommDraftsById((prev) => {
+      const next = { ...prev }
+      delete next[rec.id]
+      return next
+    })
+    setEditingCommercialId(null)
+    recordAudit({
+      category: 'integrations',
+      action: 'Credenciales y frecuencia comercial guardadas',
+      detail: `${draft.name} · Entorno ${draft.environment === 'production' ? 'Producción' : 'Sandbox'} · Consulta: ${syncMeta.label}`,
+      user: 'Andrea Morales',
+    })
+    toast.success(
+      `Credenciales de "${draft.name}" guardadas. AES Nexus consultará este sistema: ${syncMeta.label.toLowerCase()}.`,
+      'Integración comercial actualizada'
+    )
+  }
+
+  const handleRunCommercialSync = (rec: CommercialIntegrationRecord) => {
+    const current = getCommercialDraft(rec)
+    const nowIso = new Date().toISOString()
+    const latencyMs = 34 + Math.floor(Math.random() * 58)
+    const catalogApp = COMMERCIAL_MARKETPLACE_CATALOG.find(
+      (app) => app.id === current.marketplaceId
+    )
+    const endpoint =
+      catalogApp?.sampleOutboundEndpoint.replace(/^(GET|POST)\s+/i, '') ||
+      current.endpointUrl.trim() ||
+      `https://api.${current.name.toLowerCase().replace(/\s+/g, '')}.com/v1/sync`
+    const hasAllCredentials =
+      Boolean(current.endpointUrl.trim()) &&
+      Boolean(current.apiKey.trim()) &&
+      Boolean(current.apiSecret.trim())
+
+    let statusCode: 200 | 401 | 403 = 200
+    let summary = ''
+    let bodyObj: Record<string, unknown>
+
+    if (!current.enabled) {
+      statusCode = 403
+      summary = `Consulta saliente omitida: el conector "${current.name}" está pausado`
+      bodyObj = {
+        ok: false,
+        direction: 'outbound_poll',
+        error: 'CONNECTOR_PAUSED',
+        provider: current.name,
+        message: 'Reactiva el conector comercial para reanudar las consultas programadas de AES Nexus.',
+      }
+    } else if (!hasAllCredentials) {
+      statusCode = 401
+      summary = `Error de autenticación al consultar ${current.name}: faltan credenciales`
+      bodyObj = {
+        ok: false,
+        direction: 'outbound_poll',
+        error: 'MISSING_CREDENTIALS',
+        provider: current.name,
+        message: `Completa ${current.endpointLabel}, ${current.apiKeyLabel} y ${current.apiSecretLabel} antes de consultar.`,
+      }
+    } else {
+      const syncMeta =
+        COMMERCIAL_SYNC_INTERVALS.find((s) => s.id === current.syncInterval) ||
+        COMMERCIAL_SYNC_INTERVALS[1]
+      summary = `Consulta manual (${syncMeta.shortLabel}): información sincronizada desde ${current.name}`
+      bodyObj = {
+        ...(catalogApp?.sampleOutboundPayload || {
+          ok: true,
+          direction: 'outbound_poll',
+          provider: current.name,
+        }),
+        environment: current.environment,
+        syncInterval: syncMeta.label,
+        polledAt: nowIso,
+      }
+    }
+
+    const newLog: ExternalIntegrationLog = {
+      id: `commlog_${Date.now().toString(36)}`,
+      method: 'GET',
+      resource: 'ventas',
+      moduleName: current.category,
+      sectionName: current.name,
+      endpoint,
+      statusCode,
+      latencyMs,
+      summary,
+      responsePayload: JSON.stringify(bodyObj, null, 2),
+      timestampIso: nowIso,
+    }
+
+    const updated = commercialIntegrations.map((item) =>
+      item.id === rec.id
+        ? {
+            ...current,
+            lastSyncAtIso: nowIso,
+            lastSyncStatus: (statusCode >= 400 ? 'error' : 'success') as 'error' | 'success',
+            recentLogs: [newLog, ...(item.recentLogs || [])].slice(0, 25),
+          }
+        : item
+    )
+    persistCommercialIntegrations(updated)
+    setCommDraftsById((prev) => {
+      const next = { ...prev }
+      delete next[rec.id]
+      return next
+    })
+    setExpandedIntegLogIds((prev) => ({ ...prev, [newLog.id]: true }))
+    recordAudit({
+      category: 'integrations',
+      action: `Consulta saliente a ${current.name}`,
+      detail: `HTTP ${statusCode} · ${summary}`,
+      user: 'Andrea Morales',
+    })
+    if (statusCode >= 400) {
+      toast.warning(summary, 'Consulta comercial')
+    } else {
+      toast.success(
+        `AES Nexus consultó "${current.name}" correctamente (${latencyMs} ms). Revisa el payload en Logs de Integración.`,
+        'Sincronización completada'
+      )
+    }
+  }
+
+  const handleToggleCommercialStatus = (rec: CommercialIntegrationRecord) => {
+    const nextEnabled = !rec.enabled
+    const updated = commercialIntegrations.map((item) =>
+      item.id === rec.id ? { ...item, enabled: nextEnabled } : item
+    )
+    persistCommercialIntegrations(updated)
+    setCommDraftsById((prev) =>
+      prev[rec.id] ? { ...prev, [rec.id]: { ...prev[rec.id], enabled: nextEnabled } } : prev
+    )
+    recordAudit({
+      category: 'integrations',
+      action: nextEnabled ? 'Conector comercial activado' : 'Conector comercial pausado',
+      detail: `${rec.name} (${rec.category})`,
+      user: 'Andrea Morales',
+    })
+    toast.info(
+      `Conector "${rec.name}" ${nextEnabled ? 'activado' : 'pausado'}.`,
+      'Integraciones comerciales'
+    )
+  }
+
+  const handleUninstallCommercialInteg = (rec: CommercialIntegrationRecord) => {
+    const remaining = commercialIntegrations.filter((item) => item.id !== rec.id)
+    persistCommercialIntegrations(remaining)
+    setCommDraftsById((prev) => {
+      const next = { ...prev }
+      delete next[rec.id]
+      return next
+    })
+    if (editingCommercialId === rec.id) setEditingCommercialId(null)
+    recordAudit({
+      category: 'integrations',
+      action: 'Conector comercial desinstalado',
+      detail: `${rec.name} (${rec.category})`,
+      user: 'Andrea Morales',
+    })
+    toast.info(
+      `"${rec.name}" desinstalada. Puedes volver a instalarla cuando quieras desde el Marketplace.`,
+      'Integraciones comerciales'
+    )
+  }
+
   const handleClearIntegrationLogs = () => {
     const targetIntegrationId = integLogIntegrationFilter
-    const updated = externalIntegrations.map((item) => {
+    const updatedExternal = externalIntegrations.map((item) => {
       if (targetIntegrationId !== 'all' && item.id !== targetIntegrationId) return item
       return {
         ...item,
         recentLogs: [],
       }
     })
-    persistExternalIntegrations(updated)
+    const updatedCommercial = commercialIntegrations.map((item) => {
+      if (targetIntegrationId !== 'all' && item.id !== targetIntegrationId) return item
+      return {
+        ...item,
+        recentLogs: [],
+      }
+    })
+    persistExternalIntegrations(updatedExternal)
+    persistCommercialIntegrations(updatedCommercial)
     setExpandedIntegLogIds({})
     toast.info(
       targetIntegrationId === 'all'
@@ -2137,42 +2504,81 @@ export function SettingsSection({
     )
   }
 
+  const customExternalIntegrations = useMemo(
+    () => externalIntegrations.filter((rec) => rec.origin !== 'commercial'),
+    [externalIntegrations]
+  )
+
   const allIntegrationLogs = useMemo(() => {
-    return externalIntegrations
-      .flatMap((rec) =>
-        (rec.recentLogs || []).map((log) => {
-          const resolvedEndpoint =
-            log.endpoint ||
-            (log.moduleName && log.sectionName
-              ? getSectionApiEndpoint(log.moduleName, log.sectionName)
-              : `/api/v1/${log.resource}`)
-          const resolvedPayload =
-            log.responsePayload ||
-            JSON.stringify(
-              {
-                ok: log.statusCode < 400,
-                statusCode: log.statusCode,
-                method: log.method,
-                endpoint: resolvedEndpoint,
-                summary: log.summary,
-                timestamp: log.timestampIso,
-              },
-              null,
-              2
-            )
-          return {
-            ...log,
-            endpoint: resolvedEndpoint,
-            responsePayload: resolvedPayload,
-            latencyMs: log.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
-            integrationId: rec.id,
-            integrationName: rec.name,
-            integrationEnv: rec.environment,
-          }
-        })
-      )
-      .sort((a, b) => new Date(b.timestampIso).getTime() - new Date(a.timestampIso).getTime())
-  }, [externalIntegrations])
+    const customLogs = customExternalIntegrations.flatMap((rec) =>
+      (rec.recentLogs || []).map((log) => {
+        const resolvedEndpoint =
+          log.endpoint ||
+          (log.moduleName && log.sectionName
+            ? getSectionApiEndpoint(log.moduleName, log.sectionName)
+            : `/api/v1/${log.resource}`)
+        const resolvedPayload =
+          log.responsePayload ||
+          JSON.stringify(
+            {
+              ok: log.statusCode < 400,
+              statusCode: log.statusCode,
+              method: log.method,
+              endpoint: resolvedEndpoint,
+              summary: log.summary,
+              timestamp: log.timestampIso,
+            },
+            null,
+            2
+          )
+        return {
+          ...log,
+          endpoint: resolvedEndpoint,
+          responsePayload: resolvedPayload,
+          latencyMs: log.latencyMs ?? (log.statusCode >= 400 ? 22 : 38),
+          integrationId: rec.id,
+          integrationName: rec.name,
+          integrationEnv: rec.environment,
+          sourceKind: 'custom' as const,
+        }
+      })
+    )
+
+    const commercialLogs = commercialIntegrations.flatMap((rec) =>
+      (rec.recentLogs || []).map((log) => {
+        const resolvedEndpoint =
+          log.endpoint || rec.endpointUrl || `https://api.${rec.name.toLowerCase()}.com`
+        const resolvedPayload =
+          log.responsePayload ||
+          JSON.stringify(
+            {
+              ok: log.statusCode < 400,
+              direction: 'outbound_poll',
+              provider: rec.name,
+              statusCode: log.statusCode,
+              summary: log.summary,
+              timestamp: log.timestampIso,
+            },
+            null,
+            2
+          )
+        return {
+          ...log,
+          endpoint: resolvedEndpoint,
+          responsePayload: resolvedPayload,
+          latencyMs: log.latencyMs ?? (log.statusCode >= 400 ? 25 : 44),
+          integrationId: rec.id,
+          integrationName: rec.name,
+          integrationEnv: rec.environment,
+          sourceKind: 'commercial' as const,
+        }
+      })
+    )
+
+    return [...commercialLogs, ...customLogs].sort(
+      (a, b) => new Date(b.timestampIso).getTime() - new Date(a.timestampIso).getTime()
+    )
+  }, [commercialIntegrations, customExternalIntegrations])
 
   const filteredIntegrationLogs = useMemo(() => {
     const q = integLogSearch.trim().toLowerCase()
@@ -2197,14 +2603,33 @@ export function SettingsSection({
     integLogMethodFilter,
   ])
 
-  const commercialExternalIntegrations = useMemo(
-    () => externalIntegrations.filter((rec) => rec.origin === 'commercial'),
-    [externalIntegrations]
+  const installedMarketplaceIds = useMemo(
+    () => new Set(commercialIntegrations.map((rec) => rec.marketplaceId)),
+    [commercialIntegrations]
   )
 
-  const customExternalIntegrations = useMemo(
-    () => externalIntegrations.filter((rec) => rec.origin !== 'commercial'),
-    [externalIntegrations]
+  const availableMarketplaceApps = useMemo(
+    () => COMMERCIAL_MARKETPLACE_CATALOG.filter((app) => !installedMarketplaceIds.has(app.id)),
+    [installedMarketplaceIds]
+  )
+
+  const filteredMarketplaceApps = useMemo(() => {
+    const q = marketplaceSearch.trim().toLowerCase()
+    return COMMERCIAL_MARKETPLACE_CATALOG.filter((app) => {
+      if (marketplaceCategory !== 'all' && app.category !== marketplaceCategory) return false
+      const isInstalled = installedMarketplaceIds.has(app.id)
+      if (marketplaceStatusFilter === 'installed' && !isInstalled) return false
+      if (marketplaceStatusFilter === 'available' && isInstalled) return false
+      if (!q) return true
+      return `${app.name} ${app.vendor} ${app.category} ${app.description} ${app.dataSyncedLabel}`
+        .toLowerCase()
+        .includes(q)
+    })
+  }, [marketplaceSearch, marketplaceCategory, marketplaceStatusFilter, installedMarketplaceIds])
+
+  const activeCommercialEditorRecord = useMemo(
+    () => commercialIntegrations.find((item) => item.id === editingCommercialId) || null,
+    [commercialIntegrations, editingCommercialId]
   )
 
   const filteredCustomIntegrations = useMemo(() => {
@@ -2217,11 +2642,6 @@ export function SettingsSection({
         .includes(q)
     })
   }, [customExternalIntegrations, extSearch, extStatusFilter])
-
-  const commercialNativeIntegrations = useMemo(
-    () => integrations.filter((integ) => integ.id !== 'webhooks'),
-    [integrations]
-  )
 
   const customNativeWebhooks = useMemo(
     () => integrations.filter((integ) => integ.id === 'webhooks'),
@@ -4457,22 +4877,44 @@ export function SettingsSection({
                       : t('settings.plan.subheading')}
                   </p>
                 </div>
-                {activeSetting === 'Integraciones' &&
-                  canCreateInSection(
-                    'Configuración',
-                    'Integraciones',
-                    activeSectionAccess,
-                    isFullAdmin,
-                    isAccountActive
-                  ) && (
+                {activeSetting === 'Integraciones' && (
+                  <div className="ext-integ-actions">
                     <button
                       type="button"
-                      className="button button-primary"
-                      onClick={handleOpenCreateExternalInteg}
+                      className="button button-secondary"
+                      onClick={() => {
+                        if (integViewTab !== 'all' && integViewTab !== 'commercial') {
+                          setIntegViewTab('commercial')
+                        }
+                        window.setTimeout(() => {
+                          document
+                            .getElementById('integ-sec-commercial')
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                        }, 40)
+                      }}
                     >
-                      <Plus size={14} /> Nueva integración API
+                      <Store size={14} /> Marketplace
+                      {availableMarketplaceApps.length > 0
+                        ? ` (${availableMarketplaceApps.length} por instalar)`
+                        : ''}
                     </button>
-                  )}
+                    {canCreateInSection(
+                      'Configuración',
+                      'Integraciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      isAccountActive
+                    ) && (
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        onClick={handleOpenCreateExternalInteg}
+                      >
+                        <Plus size={14} /> Nueva integración API
+                      </button>
+                    )}
+                  </div>
+                )}
                 {activeSetting === 'Auditoría' && (
                   <button
                     type="button"
@@ -4524,8 +4966,8 @@ export function SettingsSection({
                     : 0
 
                 const resolvedAnalyzerInteg =
-                  externalIntegrations.find((r) => r.id === analyzerIntegrationId) ||
-                  externalIntegrations[0] ||
+                  customExternalIntegrations.find((r) => r.id === analyzerIntegrationId) ||
+                  customExternalIntegrations[0] ||
                   null
                 const analyzerRole = resolvedAnalyzerInteg
                   ? roleDefinitions.find((r) => r.id === resolvedAnalyzerInteg.roleId)
@@ -4821,7 +5263,7 @@ export function SettingsSection({
                         { id: 'all' as const, label: 'Vista completa (3 secciones)' },
                         {
                           id: 'commercial' as const,
-                          label: `1. Integraciones comerciales (${commercialNativeIntegrations.length + commercialExternalIntegrations.length})`,
+                          label: `1. Integraciones comerciales (${commercialIntegrations.length})`,
                         },
                         {
                           id: 'custom' as const,
@@ -4846,53 +5288,366 @@ export function SettingsSection({
                     ))}
                   </div>
 
-                  {/* SECCIÓN 1: INTEGRACIONES COMERCIALES (PAC, ECOMMERCE, BANCA) */}
-                  {(integViewTab === 'all' || integViewTab === 'commercial') && (
-                    <section className="integ-major-section" aria-labelledby="integ-sec-commercial">
-                      <div className="integ-major-section-head">
-                        <div>
-                          <span className="integ-section-kicker">01 · Conectores oficiales</span>
-                          <h3 id="integ-sec-commercial">Integraciones comerciales</h3>
-                          <p>
-                            Integraciones listas para PAC de timbrado fiscal CFDI, dispersión bancaria SPEI, canales Ecommerce y suite corporativa.
-                          </p>
-                        </div>
-                      </div>
+                  {/* SECCIÓN 1: MARKETPLACE DE INTEGRACIONES COMERCIALES */}
+                  {(integViewTab === 'all' || integViewTab === 'commercial') && (() => {
+                    const readyCredsCount = commercialIntegrations.filter(
+                      (c) =>
+                        Boolean(c.endpointUrl.trim()) &&
+                        Boolean(c.apiKey.trim()) &&
+                        Boolean(c.apiSecret.trim())
+                    ).length
+                    const pendingCredsCount = commercialIntegrations.length - readyCredsCount
 
-                      <div className="settings-section-card">
-                        <div className="card-header-row">
-                          <div>
-                            <h3>PAC Fiscal, Dispersión Bancaria y Productividad</h3>
+                    return (
+                      <section className="integ-major-section" aria-labelledby="integ-sec-commercial">
+                        <div className="mkt-header-band">
+                          <div className="mkt-header-copy">
+                            <span className="integ-section-kicker">01. Marketplace de conectores comerciales</span>
+                            <h3 id="integ-sec-commercial">Marketplace de Integraciones</h3>
                             <p>
-                              Proveedores comerciales autorizados para facturación electrónica SAT, pagos bancarios y correo corporativo.
+                              Conecta plataformas comerciales externas para que AES Nexus consulte automáticamente pedidos, inventario, timbres CFDI y conciliaciones. Instala cada conector, configura sus credenciales y define su intervalo de sincronización.
                             </p>
                           </div>
-                        </div>
-                        <div className="integrations-grid">
-                          {commercialNativeIntegrations.map(renderNativeIntegrationCard)}
-                        </div>
-                      </div>
 
-                      <div className="settings-section-card">
-                        <div className="card-header-row">
-                          <div>
-                            <div className="plan-title-row">
-                              <h3>Ecommerce & Canales Comerciales</h3>
-                              <span className="org-tax-badge">
-                                {commercialExternalIntegrations.length} conector(es)
-                              </span>
+                          <div className="mkt-summary-metrics">
+                            <div className="mkt-summary-stat">
+                              <span>Catálogo</span>
+                              <strong className="tabular-nums">
+                                {COMMERCIAL_MARKETPLACE_CATALOG.length} apps
+                              </strong>
                             </div>
-                            <p>
-                              Tiendas en línea y canales comerciales sincronizados con inventario, pedidos y clientes mediante roles sin consumir asientos.
-                            </p>
+                            <div className="mkt-summary-stat">
+                              <span>Instaladas</span>
+                              <strong className="tabular-nums">
+                                {commercialIntegrations.length}
+                              </strong>
+                            </div>
+                            <div className="mkt-summary-stat">
+                              <span>Listas para sincronizar</span>
+                              <strong className="tabular-nums is-success">{readyCredsCount}</strong>
+                            </div>
+                            <div className="mkt-summary-stat">
+                              <span>Credenciales pendientes</span>
+                              <strong
+                                className={`tabular-nums ${
+                                  pendingCredsCount > 0 ? 'is-warning' : ''
+                                }`}
+                              >
+                                {pendingCredsCount}
+                              </strong>
+                            </div>
                           </div>
                         </div>
-                        <div className="ext-integ-list">
-                          {commercialExternalIntegrations.map(renderExternalIntegrationCard)}
+
+                        <div className="mkt-controls-bar">
+                          <label className="audit-search-wrap mkt-search-field">
+                            <Search size={13} />
+                            <input
+                              type="search"
+                              value={marketplaceSearch}
+                              onChange={(e) => setMarketplaceSearch(e.target.value)}
+                              placeholder="Buscar Shopify, WooCommerce, Mercado Libre, Finkok PAC, STP..."
+                              aria-label="Buscar integraciones en el Marketplace"
+                            />
+                          </label>
+
+                          <div className="mkt-filter-groups">
+                            <div
+                              className="audit-filter-tabs"
+                              role="tablist"
+                              aria-label="Categorías del Marketplace"
+                            >
+                              {(
+                                [
+                                  { id: 'all' as const, label: 'Todas' },
+                                  { id: 'Ecommerce' as const, label: 'Ecommerce' },
+                                  { id: 'PAC Fiscal' as const, label: 'PAC Fiscal' },
+                                  { id: 'Banca & Pagos' as const, label: 'Banca & Pagos' },
+                                  { id: 'Productividad' as const, label: 'Productividad' },
+                                ]
+                              ).map((cat) => (
+                                <button
+                                  key={cat.id}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={marketplaceCategory === cat.id}
+                                  className={`audit-filter-btn ${
+                                    marketplaceCategory === cat.id ? 'active' : ''
+                                  }`}
+                                  onClick={() => setMarketplaceCategory(cat.id)}
+                                >
+                                  {cat.label}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div
+                              className="audit-filter-tabs"
+                              role="tablist"
+                              aria-label="Estado de instalación"
+                            >
+                              {(
+                                [
+                                  { id: 'all' as const, label: 'Todos' },
+                                  {
+                                    id: 'installed' as const,
+                                    label: `Instaladas (${commercialIntegrations.length})`,
+                                  },
+                                  {
+                                    id: 'available' as const,
+                                    label: `Disponibles (${availableMarketplaceApps.length})`,
+                                  },
+                                ]
+                              ).map((st) => (
+                                <button
+                                  key={st.id}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={marketplaceStatusFilter === st.id}
+                                  className={`audit-filter-btn ${
+                                    marketplaceStatusFilter === st.id ? 'active' : ''
+                                  }`}
+                                  onClick={() => setMarketplaceStatusFilter(st.id)}
+                                >
+                                  {st.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </section>
-                  )}
+
+                        {filteredMarketplaceApps.length === 0 ? (
+                          <div className="audit-empty-state">
+                            <strong>No hay integraciones que coincidan con este filtro</strong>
+                            <p>
+                              Limpia la búsqueda o cambia la categoría para ver todo el catálogo de Shopify, WooCommerce, PACs y Banca.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mkt-showcase-grid">
+                            {filteredMarketplaceApps.map((app) => {
+                              const installedRec = commercialIntegrations.find(
+                                (c) => c.marketplaceId === app.id
+                              )
+                              const isInstalling = Boolean(installingMarketplaceIds[app.id])
+                              const currentInterval: CommercialSyncInterval = installedRec
+                                ? installedRec.syncInterval
+                                : marketplaceIntervalDrafts[app.id] || app.defaultSyncInterval
+                              const credentialsConfigured = Boolean(
+                                installedRec &&
+                                  installedRec.endpointUrl.trim() &&
+                                  installedRec.apiKey.trim() &&
+                                  installedRec.apiSecret.trim()
+                              )
+                              const stateKind = isInstalling
+                                ? 'installing'
+                                : !installedRec
+                                ? 'available'
+                                : !credentialsConfigured
+                                ? 'pending'
+                                : !installedRec.enabled
+                                ? 'paused'
+                                : 'connected'
+                              const stateLabel =
+                                stateKind === 'installing'
+                                  ? 'Instalando...'
+                                  : stateKind === 'available'
+                                  ? 'Disponible'
+                                  : stateKind === 'pending'
+                                  ? 'Por configurar'
+                                  : stateKind === 'paused'
+                                  ? 'Pausada'
+                                  : 'Conectada'
+
+                              return (
+                                <article
+                                  key={app.id}
+                                  className={`mkt-card ${installedRec ? 'is-installed' : ''} ${
+                                    stateKind === 'pending' ? 'is-pending' : ''
+                                  }`}
+                                >
+                                  <div className="mkt-card-top">
+                                    <div className="mkt-brand-block">
+                                      <div
+                                        className="mkt-brand-emblem"
+                                        style={{
+                                          backgroundColor: app.brandBg,
+                                          color: app.brandColor,
+                                        }}
+                                        aria-hidden="true"
+                                      >
+                                        {app.brandCode}
+                                      </div>
+                                      <div className="mkt-brand-titles">
+                                        <h4 title={app.name}>{app.name}</h4>
+                                        <div className="mkt-meta-line" title={`${app.category} · ${app.vendor}`}>
+                                          <span>{app.category}</span>
+                                          <span aria-hidden="true">&middot;</span>
+                                          <span className="mkt-meta-vendor">{app.vendor}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <span className={`mkt-state-text state-${stateKind}`}>
+                                      {stateKind === 'installing' && (
+                                        <Loader2 size={12} className="mkt-spin" />
+                                      )}
+                                      {stateKind === 'connected' && <CheckCircle2 size={12} />}
+                                      {stateKind === 'pending' && <AlertTriangle size={12} />}
+                                      {stateKind === 'paused' && <Pause size={12} />}
+                                      {stateLabel}
+                                    </span>
+                                  </div>
+
+                                  <p className="mkt-card-desc" title={app.description}>
+                                    {app.description}
+                                  </p>
+
+                                  <div className="mkt-card-specs">
+                                    <div className="mkt-spec-row">
+                                      <span>Sincroniza</span>
+                                      <strong title={app.dataSyncedLabel}>{app.dataSyncedLabel}</strong>
+                                    </div>
+                                    <div className="mkt-spec-row">
+                                      <span>Autenticación</span>
+                                      <strong title={app.authMethodLabel}>{app.authMethodLabel}</strong>
+                                    </div>
+                                    <div className="mkt-spec-row">
+                                      <span>Última consulta</span>
+                                      <strong className="tabular-nums">
+                                        {!installedRec
+                                          ? 'Sin instalar'
+                                          : !credentialsConfigured
+                                          ? 'Pendiente de configurar'
+                                          : installedRec.lastSyncAtIso
+                                          ? `${formatDate(new Date(installedRec.lastSyncAtIso))} · ${formatTime(new Date(installedRec.lastSyncAtIso))}`
+                                          : 'Lista para sincronizar'}
+                                      </strong>
+                                    </div>
+                                  </div>
+
+                                  <div className="mkt-interval-box">
+                                    <label htmlFor={`mkt-interval-${app.id}`}>
+                                      <Clock size={12} /> Intervalo de sincronización
+                                    </label>
+                                    <select
+                                      id={`mkt-interval-${app.id}`}
+                                      value={currentInterval}
+                                      disabled={isInstalling || Boolean(installedRec && !canEditInteg)}
+                                      onChange={(e) => {
+                                        const nextInt = e.target.value as CommercialSyncInterval
+                                        if (installedRec) {
+                                          handleChangeCommercialSyncInterval(installedRec, nextInt)
+                                        } else {
+                                          setMarketplaceIntervalDrafts((prev) => ({
+                                            ...prev,
+                                            [app.id]: nextInt,
+                                          }))
+                                        }
+                                      }}
+                                    >
+                                      {COMMERCIAL_SYNC_INTERVALS.map((opt) => (
+                                        <option key={opt.id} value={opt.id}>
+                                          {opt.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <div
+                                    className={`mkt-card-actions ${
+                                      installedRec && credentialsConfigured ? 'is-configured-actions' : ''
+                                    }`}
+                                  >
+                                    {!installedRec ? (
+                                      <button
+                                        type="button"
+                                        className="button button-primary button-sm mkt-btn-grow"
+                                        disabled={!canCreateInteg || isInstalling}
+                                        onClick={() => handleInstallMarketplaceApp(app)}
+                                      >
+                                        {isInstalling ? (
+                                          <>
+                                            <Loader2 size={13} className="mkt-spin" /> Instalando dependencias...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Plus size={13} /> Instalar
+                                          </>
+                                        )}
+                                      </button>
+                                    ) : !credentialsConfigured ? (
+                                      <button
+                                        type="button"
+                                        className="button button-primary button-sm mkt-btn-grow"
+                                        disabled={!canEditInteg}
+                                        onClick={() => setEditingCommercialId(installedRec.id)}
+                                      >
+                                        <KeyRound size={13} /> Configurar
+                                      </button>
+                                    ) : (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="button button-primary button-sm mkt-btn-compact"
+                                          onClick={() => setEditingCommercialId(installedRec.id)}
+                                        >
+                                          <KeyRound size={12} /> Credenciales
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="button button-secondary button-sm mkt-btn-compact"
+                                          onClick={() => handleRunCommercialSync(installedRec)}
+                                        >
+                                          <RefreshCw size={12} /> Sincronizar
+                                        </button>
+                                        {canEditInteg && (
+                                          <button
+                                            type="button"
+                                            className="button button-ghost button-sm mkt-btn-compact"
+                                            onClick={() =>
+                                              handleToggleCommercialStatus(installedRec)
+                                            }
+                                            title={
+                                              installedRec.enabled
+                                                ? 'Pausar sincronización'
+                                                : 'Reanudar sincronización'
+                                            }
+                                          >
+                                            {installedRec.enabled ? (
+                                              <>
+                                                <Pause size={12} /> Pausa
+                                              </>
+                                            ) : (
+                                              <>
+                                                <Play size={12} /> Reanudar
+                                              </>
+                                            )}
+                                          </button>
+                                        )}
+                                        {canDeleteInteg && (
+                                          <button
+                                            type="button"
+                                            className="button button-ghost button-sm mkt-btn-compact mkt-btn-danger"
+                                            onClick={() =>
+                                              handleUninstallCommercialInteg(installedRec)
+                                            }
+                                            title="Desinstalar integración"
+                                          >
+                                            <Trash2 size={12} /> Borrar
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                </article>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    )
+                  })()}
 
                   {/* SECCIÓN 2: INTEGRACIONES PERSONALIZADAS (CREADAS POR EL ADMIN) */}
                   {(integViewTab === 'all' || integViewTab === 'custom') && (
@@ -5074,7 +5829,7 @@ export function SettingsSection({
                               value={cfgTargetId}
                               onChange={(e) => handleSelectCfgTarget(e.target.value)}
                             >
-                              {externalIntegrations.map((rec) => (
+                              {customExternalIntegrations.map((rec) => (
                                 <option key={rec.id} value={rec.id}>
                                   {rec.name} ({rec.systemType})
                                 </option>
@@ -5316,9 +6071,9 @@ export function SettingsSection({
                                     setSimResult(null)
                                   }}
                                 >
-                                  {externalIntegrations.map((rec) => (
+                                  {customExternalIntegrations.map((rec) => (
                                     <option key={rec.id} value={rec.id}>
-                                      {rec.name} ({rec.origin === 'commercial' ? 'Comercial' : 'Personalizada'})
+                                      {rec.name} · Rol {rec.roleId}
                                     </option>
                                   ))}
                                 </select>
@@ -5505,16 +6260,29 @@ export function SettingsSection({
 
                           <select
                             className="integ-logs-filter-select"
-                            aria-label="Filtrar por integración externa"
+                            aria-label="Filtrar por integración"
                             value={integLogIntegrationFilter}
                             onChange={(e) => setIntegLogIntegrationFilter(e.target.value)}
                           >
                             <option value="all">Todas las integraciones</option>
-                            {externalIntegrations.map((rec) => (
-                              <option key={rec.id} value={rec.id}>
-                                {rec.name}
-                              </option>
-                            ))}
+                            {commercialIntegrations.length > 0 && (
+                              <optgroup label="Integraciones comerciales (Salientes)">
+                                {commercialIntegrations.map((rec) => (
+                                  <option key={rec.id} value={rec.id}>
+                                    {rec.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {customExternalIntegrations.length > 0 && (
+                              <optgroup label="Integraciones personalizadas (Entrantes)">
+                                {customExternalIntegrations.map((rec) => (
+                                  <option key={rec.id} value={rec.id}>
+                                    {rec.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
                           </select>
 
                           <select
@@ -5552,7 +6320,7 @@ export function SettingsSection({
                           <div className="audit-empty-state">
                             <strong>Sin llamadas API registradas con estos filtros</strong>
                             <p>
-                              Ejecuta una llamada desde el Analizador superior o limpia los filtros activos para revisar el historial completo.
+                              Ejecuta una consulta en Integraciones comerciales o una llamada en el Analizador superior para revisar el historial completo.
                             </p>
                           </div>
                         ) : (
@@ -5588,6 +6356,15 @@ export function SettingsSection({
                                       </strong>
                                       <div className="integ-log-source">
                                         <span>{log.integrationName}</span>
+                                        <span
+                                          className={`integ-direction-pill ${
+                                            log.sourceKind === 'commercial'
+                                              ? 'is-outbound'
+                                              : 'is-inbound'
+                                          }`}
+                                        >
+                                          {log.sourceKind === 'commercial' ? 'Saliente' : 'Entrante'}
+                                        </span>
                                         <span
                                           className={`integ-status-pill ${
                                             log.integrationEnv === 'sandbox' ? 'status-sandbox' : ''
@@ -7638,6 +8415,246 @@ export function SettingsSection({
                   Cerrar consola
                 </button>
               </div>
+            </section>
+          </div>
+        )
+      })()}
+      {/* MODAL: CONFIGURAR CREDENCIALES E INTERVALO DE SINCRONIZACIÓN (MARKETPLACE) */}
+      {activeCommercialEditorRecord && (() => {
+        const draft = getCommercialDraft(activeCommercialEditorRecord)
+        const catalogApp = COMMERCIAL_MARKETPLACE_CATALOG.find(
+          (a) => a.id === activeCommercialEditorRecord.marketplaceId
+        )
+        const isSecretRevealed = Boolean(revealedCommSecretIds[activeCommercialEditorRecord.id])
+        const canEditInteg = canEditInSection(
+          'Configuración',
+          'Integraciones',
+          activeSectionAccess,
+          isFullAdmin,
+          isAccountActive
+        )
+
+        return (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setEditingCommercialId(null)
+            }}
+          >
+            <section
+              className="create-modal comm-cred-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="comm-cred-modal-title"
+            >
+              <div className="create-modal-heading">
+                <div className="mkt-modal-title-group">
+                  {catalogApp && (
+                    <div
+                      className="mkt-brand-emblem"
+                      style={{
+                        backgroundColor: catalogApp.brandBg,
+                        color: catalogApp.brandColor,
+                      }}
+                      aria-hidden="true"
+                    >
+                      {catalogApp.brandCode}
+                    </div>
+                  )}
+                  <div className="mkt-modal-title-copy">
+                    <div className="panel-kicker">
+                      {activeCommercialEditorRecord.category} · {activeCommercialEditorRecord.vendor}
+                    </div>
+                    <h2 id="comm-cred-modal-title">
+                      Configurar {activeCommercialEditorRecord.name}
+                    </h2>
+                    <p>
+                      Ingresa las credenciales de acceso y define cada cuánto tiempo AES Nexus consultará la información de este sistema.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={() => setEditingCommercialId(null)}
+                  aria-label={t('settings.modal.closeAria')}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="comm-modal-meta-strip">
+                <div className="comm-modal-meta-item">
+                  <span>Autenticación</span>
+                  <strong title={catalogApp?.authMethodLabel || 'Credenciales API'}>
+                    {catalogApp?.authMethodLabel || 'Credenciales API'}
+                  </strong>
+                </div>
+                <div className="comm-modal-meta-item">
+                  <span>Información a consultar</span>
+                  <strong title={activeCommercialEditorRecord.dataSyncedLabel}>
+                    {activeCommercialEditorRecord.dataSyncedLabel}
+                  </strong>
+                </div>
+              </div>
+
+              <form
+                className="comm-cred-form"
+                onSubmit={(e) => handleSaveCommercialConfig(activeCommercialEditorRecord, e)}
+              >
+                <div className="comm-toggle-card">
+                  <div className="comm-toggle-copy">
+                    <strong>Sincronización automática activa</strong>
+                    <p>Permite que AES Nexus consulte este proveedor según el intervalo configurado.</p>
+                  </div>
+                  <label className="toggle-switch-wrap">
+                    <input
+                      type="checkbox"
+                      checked={draft.enabled}
+                      disabled={!canEditInteg}
+                      onChange={(e) =>
+                        updateCommercialDraft(activeCommercialEditorRecord, {
+                          enabled: e.target.checked,
+                        })
+                      }
+                    />
+                    <span className="toggle-slider" />
+                  </label>
+                </div>
+
+                <div className="form-field">
+                  <label htmlFor="comm-modal-endpoint">{draft.endpointLabel} *</label>
+                  <input
+                    id="comm-modal-endpoint"
+                    type="text"
+                    value={draft.endpointUrl}
+                    disabled={!canEditInteg}
+                    placeholder={catalogApp?.endpointPlaceholder || 'https://...'}
+                    onChange={(e) =>
+                      updateCommercialDraft(activeCommercialEditorRecord, {
+                        endpointUrl: e.target.value,
+                      })
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="form-grid-2">
+                  <div className="form-field">
+                    <label htmlFor="comm-modal-apikey">{draft.apiKeyLabel} *</label>
+                    <input
+                      id="comm-modal-apikey"
+                      type="text"
+                      value={draft.apiKey}
+                      disabled={!canEditInteg}
+                      placeholder={catalogApp?.apiKeyPlaceholder || 'API Key / Usuario'}
+                      onChange={(e) =>
+                        updateCommercialDraft(activeCommercialEditorRecord, {
+                          apiKey: e.target.value,
+                        })
+                      }
+                      required
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="comm-modal-secret">{draft.apiSecretLabel} *</label>
+                    <div className="comm-secret-input-wrap">
+                      <input
+                        id="comm-modal-secret"
+                        type={isSecretRevealed ? 'text' : 'password'}
+                        value={draft.apiSecret}
+                        disabled={!canEditInteg}
+                        placeholder={catalogApp?.apiSecretPlaceholder || 'Token / Secret'}
+                        onChange={(e) =>
+                          updateCommercialDraft(activeCommercialEditorRecord, {
+                            apiSecret: e.target.value,
+                          })
+                        }
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="comm-secret-eye-btn"
+                        onClick={() =>
+                          setRevealedCommSecretIds((prev) => ({
+                            ...prev,
+                            [activeCommercialEditorRecord.id]: !isSecretRevealed,
+                          }))
+                        }
+                        title={isSecretRevealed ? 'Ocultar secreto' : 'Mostrar secreto'}
+                        aria-label={isSecretRevealed ? 'Ocultar secreto' : 'Mostrar secreto'}
+                      >
+                        {isSecretRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="form-grid-2">
+                  <div className="form-field">
+                    <label htmlFor="comm-modal-interval">Intervalo de sincronización</label>
+                    <select
+                      id="comm-modal-interval"
+                      value={draft.syncInterval}
+                      disabled={!canEditInteg}
+                      onChange={(e) =>
+                        updateCommercialDraft(activeCommercialEditorRecord, {
+                          syncInterval: e.target.value as CommercialSyncInterval,
+                        })
+                      }
+                    >
+                      {COMMERCIAL_SYNC_INTERVALS.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="comm-modal-env">Entorno</label>
+                    <select
+                      id="comm-modal-env"
+                      value={draft.environment}
+                      disabled={!canEditInteg}
+                      onChange={(e) =>
+                        updateCommercialDraft(activeCommercialEditorRecord, {
+                          environment: e.target.value as 'production' | 'sandbox',
+                        })
+                      }
+                    >
+                      <option value="production">Producción</option>
+                      <option value="sandbox">Sandbox / Pruebas</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="create-modal-actions mkt-modal-actions">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => handleRunCommercialSync(activeCommercialEditorRecord)}
+                  >
+                    <RefreshCw size={13} /> Probar conexión
+                  </button>
+                  <div className="mkt-modal-actions-right">
+                    <button
+                      type="button"
+                      className="button button-ghost"
+                      onClick={() => setEditingCommercialId(null)}
+                    >
+                      Cancelar
+                    </button>
+                    {canEditInteg && (
+                      <button type="submit" className="button button-primary">
+                        <Check size={14} /> Guardar credenciales
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </form>
             </section>
           </div>
         )

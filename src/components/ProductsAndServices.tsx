@@ -182,7 +182,15 @@ const emptyFormData: ProductFormData = {
   billingModel: 'Precio fijo',
 }
 
-export function ProductsAndServices() {
+interface ProductsAndServicesProps {
+  canDelete?: boolean
+  onItemDeleted?: (item: ProductServiceItem) => void
+}
+
+export function ProductsAndServices({
+  canDelete = true,
+  onItemDeleted,
+}: ProductsAndServicesProps) {
   const toast = useToast()
   const [items, setItems] = useState<ProductServiceItem[]>(initialProductsAndServices)
   const [searchQuery, setSearchQuery] = useState('')
@@ -217,6 +225,7 @@ export function ProductsAndServices() {
   const [formData, setFormData] = useState<ProductFormData>(emptyFormData)
   const [viewingItem, setViewingItem] = useState<ProductServiceItem | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // Filtered and sorted items (instant live filter by name, SKU, or category)
   const filteredItems = useMemo(() => {
@@ -367,6 +376,7 @@ export function ProductsAndServices() {
 
   const handleOpenCreate = () => {
     setModalMode('create')
+    setConfirmingDelete(false)
     setFormData({
       ...emptyFormData,
       sku: generateSkuSuggestion('product', 'Hardware', ''),
@@ -376,6 +386,7 @@ export function ProductsAndServices() {
 
   const handleOpenEdit = (item: ProductServiceItem) => {
     setModalMode('edit')
+    setConfirmingDelete(false)
     setFormData({
       id: item.id,
       sku: item.sku,
@@ -420,11 +431,16 @@ export function ProductsAndServices() {
     toast.info(`El artículo ahora está ${nextStatus.toLowerCase()}.`, 'Estado actualizado')
   }
 
-  const handleDeleteItem = (item: ProductServiceItem) => {
-    if (window.confirm(`¿Deseas eliminar "${item.name}" del catálogo?`)) {
-      setItems((prev) => prev.filter((i) => i.id !== item.id))
-      setActiveMenuId(null)
-      toast.info(`"${item.name}" fue eliminado del catálogo.`, 'Artículo eliminado')
+  const handleConfirmDeleteItem = (itemId: string) => {
+    const target = items.find((i) => i.id === itemId)
+    setItems((prev) => prev.filter((i) => i.id !== itemId))
+    if (viewingItem?.id === itemId) setViewingItem(null)
+    if (isModalOpen && formData.id === itemId) setIsModalOpen(false)
+    setActiveMenuId(null)
+    setConfirmingDelete(false)
+    if (target) {
+      onItemDeleted?.(target)
+      toast.info(`"${target.name}" fue eliminado del catálogo.`, 'Artículo eliminado')
     }
   }
 
@@ -990,6 +1006,7 @@ export function ProductsAndServices() {
                         <button
                           type="button"
                           onClick={() => {
+                            setConfirmingDelete(false)
                             setViewingItem(item)
                             setActiveMenuId(null)
                           }}
@@ -1022,13 +1039,18 @@ export function ProductsAndServices() {
                             </>
                           )}
                         </button>
-                        <button
-                          type="button"
-                          className="action-danger"
-                          onClick={() => handleDeleteItem(item)}
-                        >
-                          <Trash2 size={13} /> Eliminar
-                        </button>
+                        {canDelete && (
+                          <button
+                            type="button"
+                            className="action-danger"
+                            onClick={() => {
+                              handleOpenEdit(item)
+                              setConfirmingDelete(true)
+                            }}
+                          >
+                            <Trash2 size={13} /> Eliminar
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1409,17 +1431,59 @@ export function ProductsAndServices() {
               </div>
 
               {/* Modal Actions */}
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setIsModalOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  {modalMode === 'create' ? 'Guardar en catálogo' : 'Actualizar artículo'}
-                </button>
+              <div
+                className={`create-modal-actions ${
+                  modalMode === 'edit' && formData.id && canDelete ? 'has-delete-action' : ''
+                }`}
+              >
+                {modalMode === 'edit' && formData.id && canDelete && (
+                  <div className="modal-delete-slot">
+                    {!confirmingDelete ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDelete(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar artículo
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar <strong>{formData.name.trim() || formData.sku}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => handleConfirmDeleteItem(formData.id!)}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmingDelete(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      setIsModalOpen(false)
+                      setConfirmingDelete(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    {modalMode === 'create' ? 'Guardar en catálogo' : 'Actualizar artículo'}
+                  </button>
+                </div>
               </div>
             </form>
           </section>
@@ -1432,7 +1496,10 @@ export function ProductsAndServices() {
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setViewingItem(null)
+            if (e.target === e.currentTarget) {
+              setViewingItem(null)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section
@@ -1571,25 +1638,63 @@ export function ProductsAndServices() {
               </div>
             </div>
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setViewingItem(null)}
-              >
-                Cerrar
-              </button>
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => {
-                  const item = viewingItem
-                  setViewingItem(null)
-                  handleOpenEdit(item)
-                }}
-              >
-                <Edit3 size={15} /> Editar artículo
-              </button>
+            <div className={`create-modal-actions ${canDelete ? 'has-delete-action' : ''}`}>
+              {canDelete && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar artículo
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingItem.name}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => handleConfirmDeleteItem(viewingItem.id)}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setViewingItem(null)
+                    setConfirmingDelete(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => {
+                    const item = viewingItem
+                    setViewingItem(null)
+                    handleOpenEdit(item)
+                  }}
+                >
+                  <Edit3 size={15} /> Editar artículo
+                </button>
+              </div>
             </div>
           </section>
         </div>

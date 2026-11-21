@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   Clock,
   Download,
+  Edit3,
   Eye,
   FileSpreadsheet,
   Landmark,
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   Users,
   Wallet,
   X,
@@ -35,6 +37,7 @@ interface CrmPayrollProps {
   bankAccounts: BankAccount[]
   onAddPayrollRun: (run: PayrollRunRecord) => void
   onUpdatePayrollRun: (run: PayrollRunRecord) => void
+  onDeletePayrollRun?: (runId: string) => void
   onPayPayrollRun?: (run: PayrollRunRecord) => void
   onOpenEbpWizard?: (run: PayrollRunRecord) => void
 }
@@ -60,6 +63,7 @@ export function CrmPayroll({
   bankAccounts,
   onAddPayrollRun,
   onUpdatePayrollRun,
+  onDeletePayrollRun,
   onPayPayrollRun,
   onOpenEbpWizard,
 }: CrmPayrollProps) {
@@ -72,6 +76,8 @@ export function CrmPayroll({
 
   // Modals
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
+  const [editingRunId, setEditingRunId] = useState<string | null>(null)
+  const [confirmingDeleteRun, setConfirmingDeleteRun] = useState(false)
   const [detailRun, setDetailRun] = useState<PayrollRunRecord | null>(null)
 
   // New Payroll Run Form State
@@ -151,6 +157,8 @@ export function CrmPayroll({
     const defaultFreq: PayrollFrequency = 'Quincenal'
     const defaultStart = '2026-11-16'
     const defaultEnd = '2026-11-30'
+    setEditingRunId(null)
+    setConfirmingDeleteRun(false)
     setFrequency(defaultFreq)
     setPeriodLabel('2da Quincena Noviembre 2026')
     setStartDate(defaultStart)
@@ -162,6 +170,36 @@ export function CrmPayroll({
     setIncludeAllActive(false)
     setApplyAutomaticTaxes(true)
     setDraftRows(buildDraftRowsForFrequency(defaultFreq, false, defaultStart, defaultEnd))
+    setIsNewModalOpen(true)
+  }
+
+  const openEditPayrollModal = (run: PayrollRunRecord) => {
+    setEditingRunId(run.id)
+    setConfirmingDeleteRun(false)
+    setFrequency(run.frequency)
+    setPeriodLabel(run.periodLabel)
+    setStartDate(run.startDate)
+    setEndDate(run.endDate)
+    setPaymentDate(run.paymentDate)
+    setBankAccountId(run.bankAccountId || bankAccounts[0]?.id || '')
+    setInitialStatus(run.status)
+    setNotes(run.notes || '')
+    const includedIds = new Set(run.receipts.map((rec) => rec.employeeId))
+    const receiptByEmpId = new Map(run.receipts.map((rec) => [rec.employeeId, rec]))
+    const periodDays = calculatePeriodDays(run.startDate, run.endDate, run.frequency)
+    const rows: DraftReceiptRow[] = employees.map((emp) => {
+      const existingRec = receiptByEmpId.get(emp.id)
+      return {
+        included: includedIds.has(emp.id),
+        employee: emp,
+        daysWorked: existingRec?.daysWorked ?? periodDays,
+        bonuses: existingRec?.bonuses ?? 0,
+        otherDeductions: existingRec?.otherDeductions ?? 0,
+      }
+    })
+    setIncludeAllActive(rows.every((r) => r.included))
+    setApplyAutomaticTaxes(true)
+    setDraftRows(rows)
     setIsNewModalOpen(true)
   }
 
@@ -285,6 +323,43 @@ export function CrmPayroll({
     const paymentMethodLabel = bankObj
       ? `Transferencia SPEI · ${bankObj.bankName} ${bankObj.accountNumber}`
       : 'Transferencia SPEI'
+
+    if (editingRunId) {
+      const existingRun = payrollRuns.find((r) => r.id === editingRunId)
+      if (!existingRun) return
+      const updatedRun: PayrollRunRecord = {
+        ...existingRun,
+        periodLabel: periodLabel.trim(),
+        frequency,
+        startDate,
+        endDate,
+        paymentDate,
+        status: initialStatus,
+        paymentMethod: paymentMethodLabel,
+        bankAccountId: bankObj?.id,
+        employeesCount: computedDraftLines.length,
+        totalGross: draftTotals.gross,
+        totalBonuses: draftTotals.bonuses,
+        totalDeductions: draftTotals.deductions,
+        totalNet: draftTotals.net,
+        notes: notes.trim() || undefined,
+        receipts: computedDraftLines,
+      }
+      onUpdatePayrollRun(updatedRun)
+      if (existingRun.status !== 'Pagada' && updatedRun.status === 'Pagada') {
+        onPayPayrollRun?.(updatedRun)
+      }
+      if (detailRun?.id === updatedRun.id) {
+        setDetailRun(updatedRun)
+      }
+      toast.success(
+        `Periodo ${updatedRun.folio} actualizado (${money(updatedRun.totalNet)}).`,
+        'Nómina actualizada'
+      )
+      setIsNewModalOpen(false)
+      setEditingRunId(null)
+      return
+    }
 
     const newRun: PayrollRunRecord = {
       id: `pay_${Date.now()}`,
@@ -648,6 +723,14 @@ export function CrmPayroll({
                     >
                       <Eye size={12} /> Detalle
                     </button>
+                    <button
+                      type="button"
+                      className="button-icon-action"
+                      onClick={() => openEditPayrollModal(run)}
+                      title="Editar o eliminar periodo de nómina"
+                    >
+                      <Edit3 size={12} /> Editar
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -664,7 +747,7 @@ export function CrmPayroll({
         )}
       </div>
 
-      {/* Modal: Nuevo pago de nómina */}
+      {/* Modal: Crear / Editar pago de nómina */}
       {isNewModalOpen && (
         <div
           className="modal-backdrop"
@@ -677,7 +760,7 @@ export function CrmPayroll({
             <div className="create-modal-heading">
               <div>
                 <div className="panel-kicker">GENERACIÓN Y PAGO DE NÓMINA</div>
-                <h2>Nuevo pago de nómina</h2>
+                <h2>{editingRunId ? 'Editar periodo de nómina' : 'Nuevo pago de nómina'}</h2>
                 <p>
                   Configura el periodo de pago, ajusta bonos o deducciones por colaborador y registra la dispersión.
                 </p>
@@ -956,24 +1039,72 @@ export function CrmPayroll({
                 </div>
               </div>
 
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setIsNewModalOpen(false)}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="button button-primary"
-                  disabled={computedDraftLines.length === 0}
-                >
-                  <BadgeCheck size={14} />{' '}
-                  {initialStatus === 'Pagada'
-                    ? `Confirmar y pagar ${money(draftTotals.net)}`
-                    : `Guardar periodo (${money(draftTotals.net)})`}
-                </button>
+              <div
+                className={`create-modal-actions ${
+                  editingRunId && onDeletePayrollRun ? 'has-delete-action' : ''
+                }`}
+              >
+                {editingRunId && onDeletePayrollRun && (
+                  <div className="modal-delete-slot">
+                    {!confirmingDeleteRun ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDeleteRun(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar nómina
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar <strong>{periodLabel.trim() || 'este periodo'}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetId = editingRunId
+                            onDeletePayrollRun(targetId)
+                            if (detailRun?.id === targetId) setDetailRun(null)
+                            setIsNewModalOpen(false)
+                            setEditingRunId(null)
+                            setConfirmingDeleteRun(false)
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmingDeleteRun(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setIsNewModalOpen(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="button button-primary"
+                    disabled={computedDraftLines.length === 0}
+                  >
+                    <BadgeCheck size={14} />{' '}
+                    {editingRunId
+                      ? `Guardar cambios (${money(draftTotals.net)})`
+                      : initialStatus === 'Pagada'
+                      ? `Confirmar y pagar ${money(draftTotals.net)}`
+                      : `Guardar periodo (${money(draftTotals.net)})`}
+                  </button>
+                </div>
               </div>
             </form>
           </section>
@@ -1114,6 +1245,17 @@ export function CrmPayroll({
                 )}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    const target = detailRun
+                    setDetailRun(null)
+                    openEditPayrollModal(target)
+                  }}
+                >
+                  <Edit3 size={14} /> Editar periodo
+                </button>
                 {detailRun.status !== 'Pagada' && (
                   <button
                     type="button"

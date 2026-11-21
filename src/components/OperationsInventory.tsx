@@ -42,6 +42,8 @@ interface OperationsInventoryProps {
   onUpdateInventory: (items: InventoryItemLocation[]) => void
   onUpdateTransfers: (transfers: InventoryTransfer[]) => void
   onAddMovement: (movement: StockMovement) => void
+  onDeleteInventoryItem?: (itemId: string) => void
+  onDeleteTransfer?: (transferId: string) => void
   onStartTransfer?: (item?: InventoryItemLocation) => void
 }
 
@@ -65,6 +67,8 @@ export function OperationsInventory({
   onUpdateInventory,
   onUpdateTransfers,
   onAddMovement,
+  onDeleteInventoryItem,
+  onDeleteTransfer,
   onStartTransfer,
 }: OperationsInventoryProps) {
   const toast = useToast()
@@ -98,6 +102,9 @@ export function OperationsInventory({
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false)
   const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false)
   const [selectedTransferDetail, setSelectedTransferDetail] = useState<InventoryTransfer | null>(null)
+  const [selectedStockDetail, setSelectedStockDetail] = useState<InventoryItemLocation | null>(null)
+  const [confirmingDeleteTransfer, setConfirmingDeleteTransfer] = useState(false)
+  const [confirmingDeleteStock, setConfirmingDeleteStock] = useState(false)
 
   // Threshold configuration state
   const [thresholdItemId, setThresholdItemId] = useState('')
@@ -1417,19 +1424,32 @@ export function OperationsInventory({
                           </div>
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            className="button-icon-action"
-                            disabled={item.stock <= 0 || activeWarehouses.length < 2}
-                            onClick={() => (onStartTransfer ? onStartTransfer(item) : handleOpenTransferModal(item))}
-                            title={
-                              item.stock > 0
-                                ? `Trasladar ${item.sku} desde ${item.warehouseName} hacia otra ubicación`
-                                : 'Sin existencias disponibles para trasladar'
-                            }
-                          >
-                            <ArrowLeftRight size={12} /> Trasladar
-                          </button>
+                          <div className="po-actions-row">
+                            <button
+                              type="button"
+                              className="button-icon-action"
+                              onClick={() => {
+                                setConfirmingDeleteStock(false)
+                                setSelectedStockDetail(item)
+                              }}
+                              title={`Ver ficha de ${item.sku} en ${item.warehouseName}`}
+                            >
+                              <Eye size={12} /> Ficha
+                            </button>
+                            <button
+                              type="button"
+                              className="button-icon-action"
+                              disabled={item.stock <= 0 || activeWarehouses.length < 2}
+                              onClick={() => (onStartTransfer ? onStartTransfer(item) : handleOpenTransferModal(item))}
+                              title={
+                                item.stock > 0
+                                  ? `Trasladar ${item.sku} desde ${item.warehouseName} hacia otra ubicación`
+                                  : 'Sin existencias disponibles para trasladar'
+                              }
+                            >
+                              <ArrowLeftRight size={12} /> Trasladar
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -1546,7 +1566,10 @@ export function OperationsInventory({
                           <button
                             type="button"
                             className="button-icon-action"
-                            onClick={() => setSelectedTransferDetail(trf)}
+                            onClick={() => {
+                              setConfirmingDeleteTransfer(false)
+                              setSelectedTransferDetail(trf)
+                            }}
                             title="Ver remisión y detalle completo del traslado"
                           >
                             <Eye size={12} /> Detalle
@@ -2134,7 +2157,10 @@ export function OperationsInventory({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedTransferDetail(null)
+            if (e.target === e.currentTarget) {
+              setSelectedTransferDetail(null)
+              setConfirmingDeleteTransfer(false)
+            }
           }}
         >
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
@@ -2152,7 +2178,10 @@ export function OperationsInventory({
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setSelectedTransferDetail(null)}
+                onClick={() => {
+                  setSelectedTransferDetail(null)
+                  setConfirmingDeleteTransfer(false)
+                }}
                 aria-label="Cerrar detalle"
               >
                 <X size={18} />
@@ -2232,33 +2261,75 @@ export function OperationsInventory({
               </div>
             )}
 
-            <div className="create-modal-actions">
-              {selectedTransferDetail.status === 'En tránsito' && (
-                <>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    style={{ color: '#ba4836' }}
-                    onClick={() => handleCancelTransfer(selectedTransferDetail)}
-                  >
-                    <XCircle size={14} /> Cancelar traslado
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    onClick={() => handleReceiveTransfer(selectedTransferDetail)}
-                  >
-                    <PackageCheck size={14} /> Confirmar recepción en destino
-                  </button>
-                </>
+            <div className={`create-modal-actions ${onDeleteTransfer ? 'has-delete-action' : ''}`}>
+              {onDeleteTransfer && (
+                <div className="modal-delete-slot">
+                  {!confirmingDeleteTransfer ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDeleteTransfer(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar traslado
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{selectedTransferDetail.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteTransfer(selectedTransferDetail.id)
+                          setSelectedTransferDetail(null)
+                          setConfirmingDeleteTransfer(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDeleteTransfer(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setSelectedTransferDetail(null)}
-              >
-                Cerrar
-              </button>
+              <div className="modal-primary-actions-slot">
+                {selectedTransferDetail.status === 'En tránsito' && (
+                  <>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      style={{ color: '#ba4836' }}
+                      onClick={() => handleCancelTransfer(selectedTransferDetail)}
+                    >
+                      <XCircle size={14} /> Cancelar traslado
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => handleReceiveTransfer(selectedTransferDetail)}
+                    >
+                      <PackageCheck size={14} /> Confirmar recepción en destino
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setSelectedTransferDetail(null)
+                    setConfirmingDeleteTransfer(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -2501,6 +2572,125 @@ export function OperationsInventory({
               >
                 Cerrar configuración
               </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Ficha de Existencia en Almacén */}
+      {selectedStockDetail && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedStockDetail(null)
+              setConfirmingDeleteStock(false)
+            }
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">INVENTARIO · FICHA DE EXISTENCIA</div>
+                <h2>{selectedStockDetail.name}</h2>
+                <p>
+                  <span className="sku-badge-small">{selectedStockDetail.sku}</span> · {selectedStockDetail.warehouseName} ({selectedStockDetail.locationBin})
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => {
+                  setSelectedStockDetail(null)
+                  setConfirmingDeleteStock(false)
+                }}
+                aria-label="Cerrar ficha"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="po-detail-summary-grid" style={{ marginBottom: 14 }}>
+              <div className="po-detail-card">
+                <span>Disponible</span>
+                <strong>{selectedStockDetail.stock} {selectedStockDetail.unitOfMeasure}</strong>
+                <small>Mínimo seguridad: {selectedStockDetail.minStock}</small>
+              </div>
+              <div className="po-detail-card">
+                <span>Reservado / En tránsito</span>
+                <strong>{selectedStockDetail.reserved} res. / {selectedStockDetail.inTransit} tráns.</strong>
+                <small>Rack: {selectedStockDetail.locationBin}</small>
+              </div>
+              <div className="po-detail-card">
+                <span>Valorización</span>
+                <strong>{money(selectedStockDetail.stock * selectedStockDetail.cost)}</strong>
+                <small>Costo unit.: {money(selectedStockDetail.cost)}</small>
+              </div>
+            </div>
+
+            <div className={`create-modal-actions ${onDeleteInventoryItem ? 'has-delete-action' : ''}`}>
+              {onDeleteInventoryItem && (
+                <div className="modal-delete-slot">
+                  {!confirmingDeleteStock ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDeleteStock(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar registro
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{selectedStockDetail.sku}</strong> de {selectedStockDetail.warehouseName}?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteInventoryItem(selectedStockDetail.id)
+                          setSelectedStockDetail(null)
+                          setConfirmingDeleteStock(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDeleteStock(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setSelectedStockDetail(null)
+                    setConfirmingDeleteStock(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => {
+                    const targetId = selectedStockDetail.id
+                    setSelectedStockDetail(null)
+                    setConfirmingDeleteStock(false)
+                    handleOpenThresholdModal(targetId)
+                  }}
+                >
+                  <SlidersHorizontal size={14} /> Ajustar umbral
+                </button>
+              </div>
             </div>
           </section>
         </div>

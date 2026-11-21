@@ -62,6 +62,7 @@ interface FinanceEbpProps {
   payables: BillPayable[]
   onUpdatePacks: (next: BankFormatPack[]) => void
   onCreateBatch: (batch: ElectronicPaymentBatch) => void
+  onDeleteBatch?: (batchId: string) => void
   onApplyBatchInFinance: (batch: ElectronicPaymentBatch) => void
   onUpdateBankAccountPackValues: (
     accountId: string,
@@ -104,6 +105,7 @@ export function FinanceEbp({
   payables,
   onUpdatePacks,
   onCreateBatch,
+  onDeleteBatch,
   onApplyBatchInFinance,
   onUpdateBankAccountPackValues,
   onUpdateSupplierBankAccounts,
@@ -125,6 +127,7 @@ export function FinanceEbp({
 
   // Batch preview modal
   const [previewBatch, setPreviewBatch] = useState<ElectronicPaymentBatch | null>(null)
+  const [confirmingDeleteBatch, setConfirmingDeleteBatch] = useState(false)
 
   // Quick Launch Wizard state inside Finanzas > EBP
   const [wizardState, setWizardState] = useState<{
@@ -792,7 +795,10 @@ export function FinanceEbp({
                         <button
                           type="button"
                           className="button-icon-action"
-                          onClick={() => setPreviewBatch(b)}
+                          onClick={() => {
+                            setConfirmingDeleteBatch(false)
+                            setPreviewBatch(b)
+                          }}
                           title="Ver contenido del archivo y re-descargar"
                         >
                           <Eye size={12} /> Archivo
@@ -1645,7 +1651,10 @@ export function FinanceEbp({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewBatch(null)
+            if (e.target === e.currentTarget) {
+              setPreviewBatch(null)
+              setConfirmingDeleteBatch(false)
+            }
           }}
         >
           <section className="create-modal modal-wide ebp-wizard-modal" role="dialog" aria-modal="true">
@@ -1661,7 +1670,10 @@ export function FinanceEbp({
                 type="button"
                 className="icon-button"
                 aria-label="Cerrar"
-                onClick={() => setPreviewBatch(null)}
+                onClick={() => {
+                  setPreviewBatch(null)
+                  setConfirmingDeleteBatch(false)
+                }}
               >
                 <X size={18} />
               </button>
@@ -1722,28 +1734,70 @@ export function FinanceEbp({
               </div>
             )}
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setPreviewBatch(null)}
-              >
-                Cerrar
-              </button>
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => {
-                  downloadEncodedEbpFile(
-                    previewBatch.generatedContent,
-                    previewBatch.generatedFilename,
-                    previewBatch.encoding
-                  )
-                  toast.success(`Archivo ${previewBatch.generatedFilename} descargado.`, 'Descarga')
-                }}
-              >
-                <Download size={14} /> Descargar archivo ({previewBatch.encoding})
-              </button>
+            <div className={`create-modal-actions ${onDeleteBatch ? 'has-delete-action' : ''}`}>
+              {onDeleteBatch && (
+                <div className="modal-delete-slot">
+                  {!confirmingDeleteBatch ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDeleteBatch(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar lote
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{previewBatch.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteBatch(previewBatch.id)
+                          setPreviewBatch(null)
+                          setConfirmingDeleteBatch(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDeleteBatch(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setPreviewBatch(null)
+                    setConfirmingDeleteBatch(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => {
+                    downloadEncodedEbpFile(
+                      previewBatch.generatedContent,
+                      previewBatch.generatedFilename,
+                      previewBatch.encoding
+                    )
+                    toast.success(`Archivo ${previewBatch.generatedFilename} descargado.`, 'Descarga')
+                  }}
+                >
+                  <Download size={14} /> Descargar archivo ({previewBatch.encoding})
+                </button>
+              </div>
             </div>
           </section>
         </div>

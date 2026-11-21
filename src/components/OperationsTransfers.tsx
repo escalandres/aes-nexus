@@ -35,6 +35,7 @@ interface OperationsTransfersProps {
   onUpdateInventory: (items: InventoryItemLocation[]) => void
   onUpdateTransfers: (transfers: InventoryTransfer[]) => void
   onAddMovement: (movement: StockMovement) => void
+  onDeleteTransfer?: (transferId: string) => void
 }
 
 const money = (val: number) =>
@@ -59,6 +60,7 @@ export function OperationsTransfers({
   onUpdateInventory,
   onUpdateTransfers,
   onAddMovement,
+  onDeleteTransfer,
 }: OperationsTransfersProps) {
   const toast = useToast()
 
@@ -92,6 +94,7 @@ export function OperationsTransfers({
   const [statusFilter, setStatusFilter] = useState<'Todos' | TransferStatus>('Todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTransferDetail, setSelectedTransferDetail] = useState<InventoryTransfer | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const getDefaultTargetBin = (sku: string, productId: string, destWhId: string) => {
     const existing = inventory.find(
@@ -1293,7 +1296,10 @@ export function OperationsTransfers({
                       <button
                         type="button"
                         className="button-icon-action"
-                        onClick={() => setSelectedTransferDetail(trf)}
+                        onClick={() => {
+                          setConfirmingDelete(false)
+                          setSelectedTransferDetail(trf)
+                        }}
                       >
                         <Eye size={12} /> Detalle
                       </button>
@@ -1312,7 +1318,10 @@ export function OperationsTransfers({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedTransferDetail(null)
+            if (e.target === e.currentTarget) {
+              setSelectedTransferDetail(null)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
@@ -1330,7 +1339,10 @@ export function OperationsTransfers({
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setSelectedTransferDetail(null)}
+                onClick={() => {
+                  setSelectedTransferDetail(null)
+                  setConfirmingDelete(false)
+                }}
                 aria-label="Cerrar detalle"
               >
                 <X size={18} />
@@ -1410,33 +1422,75 @@ export function OperationsTransfers({
               </div>
             )}
 
-            <div className="create-modal-actions">
-              {selectedTransferDetail.status === 'En tránsito' && (
-                <>
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    style={{ color: '#ba4836' }}
-                    onClick={() => handleCancelTransfer(selectedTransferDetail)}
-                  >
-                    <XCircle size={14} /> Cancelar traslado
-                  </button>
-                  <button
-                    type="button"
-                    className="button button-primary"
-                    onClick={() => handleReceiveTransfer(selectedTransferDetail)}
-                  >
-                    <PackageCheck size={14} /> Confirmar recepción en destino
-                  </button>
-                </>
+            <div className={`create-modal-actions ${onDeleteTransfer ? 'has-delete-action' : ''}`}>
+              {onDeleteTransfer && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar traslado
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{selectedTransferDetail.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteTransfer(selectedTransferDetail.id)
+                          setSelectedTransferDetail(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setSelectedTransferDetail(null)}
-              >
-                Cerrar
-              </button>
+              <div className="modal-primary-actions-slot">
+                {selectedTransferDetail.status === 'En tránsito' && (
+                  <>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      style={{ color: '#ba4836' }}
+                      onClick={() => handleCancelTransfer(selectedTransferDetail)}
+                    >
+                      <XCircle size={14} /> Cancelar traslado
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => handleReceiveTransfer(selectedTransferDetail)}
+                    >
+                      <PackageCheck size={14} /> Confirmar recepción en destino
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setSelectedTransferDetail(null)
+                    setConfirmingDelete(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           </section>
         </div>

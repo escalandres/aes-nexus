@@ -11,6 +11,7 @@ import {
   Plus,
   ReceiptText,
   Search,
+  Trash2,
   WalletCards,
   X,
 } from 'lucide-react'
@@ -37,6 +38,7 @@ interface SalesInvoicesProps {
   presetInvoiceIdToView?: string | null
   onClearPresetInvoiceView?: () => void
   onCreateInvoice: (invoice: InvoiceReceivable) => void
+  onDeleteInvoice?: (invoiceId: string) => void
   onNavigateToFinanceReceivables: () => void
   onNavigateToOrder?: (orderFolio: string) => void
 }
@@ -84,6 +86,7 @@ export function SalesInvoices({
   presetInvoiceIdToView,
   onClearPresetInvoiceView,
   onCreateInvoice,
+  onDeleteInvoice,
   onNavigateToFinanceReceivables,
   onNavigateToOrder,
 }: SalesInvoicesProps) {
@@ -91,6 +94,7 @@ export function SalesInvoices({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [viewingInvoice, setViewingInvoice] = useState<InvoiceReceivable | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
 
   // Emission modal state
@@ -648,7 +652,10 @@ export function SalesInvoices({
                     <button
                       type="button"
                       className="button-icon-action"
-                      onClick={() => setViewingInvoice(inv)}
+                      onClick={() => {
+                        setConfirmingDelete(false)
+                        setViewingInvoice(inv)
+                      }}
                       title="Ver detalle de factura"
                     >
                       <Eye size={12} /> Ver
@@ -1169,41 +1176,85 @@ export function SalesInvoices({
               </div>
             </div>
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setViewingInvoice(null)}
-              >
-                Cerrar
-              </button>
-              {viewingInvoice.orderFolio &&
-                viewingInvoice.orderFolio !== 'DIRECTA' &&
-                onNavigateToOrder && (
-                  <button
-                    type="button"
-                    className="button button-secondary"
-                    onClick={() => {
-                      const targetFolio = viewingInvoice.orderFolio
-                      setViewingInvoice(null)
-                      onNavigateToOrder(targetFolio)
-                    }}
-                  >
-                    <FileText size={14} /> Ver pedido {viewingInvoice.orderFolio}
-                  </button>
-                )}
-              {viewingInvoice.balance > 0 && (
+            <div className={`create-modal-actions ${onDeleteInvoice ? 'has-delete-action' : ''}`}>
+              {onDeleteInvoice && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar factura
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{viewingInvoice.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteInvoice(viewingInvoice.id)
+                          setViewingInvoice(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
-                  className="button button-primary"
+                  className="button button-secondary"
                   onClick={() => {
                     setViewingInvoice(null)
-                    onNavigateToFinanceReceivables()
+                    setConfirmingDelete(false)
                   }}
                 >
-                  <WalletCards size={14} /> Cobrar en Finanzas <ArrowRight size={13} />
+                  Cerrar
                 </button>
-              )}
+                {viewingInvoice.orderFolio &&
+                  viewingInvoice.orderFolio !== 'DIRECTA' &&
+                  onNavigateToOrder && (
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => {
+                        const targetFolio = viewingInvoice.orderFolio
+                        setViewingInvoice(null)
+                        setConfirmingDelete(false)
+                        onNavigateToOrder(targetFolio)
+                      }}
+                    >
+                      <FileText size={14} /> Ver pedido {viewingInvoice.orderFolio}
+                    </button>
+                  )}
+                {viewingInvoice.balance > 0 && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      setViewingInvoice(null)
+                      setConfirmingDelete(false)
+                      onNavigateToFinanceReceivables()
+                    }}
+                  >
+                    <WalletCards size={14} /> Cobrar en Finanzas <ArrowRight size={13} />
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         </div>

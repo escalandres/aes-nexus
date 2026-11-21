@@ -68,6 +68,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     'Nómina y RRHH': ['fullReports', 'schedulePayments', 'manageUsers'],
   },
   Administración: {
+    Subsidiarias: ['sysConfig', 'manageUsers'],
     Departamentos: ['sysConfig', 'manageUsers'],
     Ubicaciones: ['sysConfig', 'manageUsers'],
     Resumen: ['sysConfig', 'manageUsers'],
