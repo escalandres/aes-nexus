@@ -30,12 +30,19 @@ export type RoleSectionPermissions = Record<string, Record<string, SectionAccess
 
 export const SYSTEM_MODULE_SECTIONS = {
   CRM: ['Resumen', 'Clientes', 'Proveedores', 'Empleados', 'Nómina', 'Oportunidades', 'Actividades'],
-  Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Resumen'],
-  Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas'],
+  Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Devoluciones', 'Resumen'],
+  Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas', 'Devoluciones'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
   Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
   Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
-  Administración: ['Subsidiarias', 'Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'],
+  Administración: [
+    'Subsidiarias',
+    'Departamentos',
+    'Ubicaciones',
+    'Flujos de devoluciones',
+    'Resumen',
+    'Historial de Auditoría',
+  ],
   Configuración: [
     'General',
     'Organización',
@@ -45,6 +52,7 @@ export const SYSTEM_MODULE_SECTIONS = {
     'Seguridad',
     'Apariencia',
     'Notificaciones',
+    'Umbrales de stock',
     'Auditoría',
     'Integraciones',
     'Plan y facturación',
@@ -227,6 +235,7 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
       'Órdenes de compra': 'edit',
       Recepciones: 'edit',
       Facturas: 'view',
+      Devoluciones: 'edit',
     },
     Operaciones: {
       Inventario: 'edit',
@@ -242,6 +251,7 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
       'Idioma y región': 'edit',
       Apariencia: 'edit',
       Notificaciones: 'view',
+      'Umbrales de stock': 'edit',
     },
   }),
   Ventas: buildSectionPermissionsMap('none', {
@@ -257,6 +267,7 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
       Cotizaciones: 'full',
       Pedidos: 'edit',
       Facturas: 'create',
+      Devoluciones: 'edit',
       Resumen: 'view',
     },
     Reportes: {
@@ -275,6 +286,7 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
     Compras: {
       Resumen: 'view',
       Facturas: 'edit',
+      Devoluciones: 'view',
     },
     Finanzas: {
       Cobros: 'full',
@@ -312,6 +324,7 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     Cotizaciones: ['createQuotes'],
     Pedidos: ['issueOrders'],
     Facturas: ['issueOrders'],
+    Devoluciones: ['issueOrders', 'receiveGoods'],
     Resumen: ['pipelineReports'],
   },
   Compras: {
@@ -320,6 +333,7 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     'Órdenes de compra': ['approvePurchases'],
     Recepciones: ['receiveGoods'],
     Facturas: ['approvePurchases'],
+    Devoluciones: ['approvePurchases', 'receiveGoods'],
   },
   Operaciones: {
     Inventario: ['inventoryControl', 'stockLedger'],
@@ -348,6 +362,7 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     Subsidiarias: ['sysConfig'],
     Departamentos: ['sysConfig'],
     Ubicaciones: ['sysConfig'],
+    'Flujos de devoluciones': ['sysConfig'],
     Resumen: ['sysConfig'],
     'Historial de Auditoría': ['fullReports'],
   },
@@ -358,6 +373,7 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     'Roles y permisos': ['manageUsers'],
     Seguridad: ['sysConfig'],
     Notificaciones: ['adjustThresholds'],
+    'Umbrales de stock': ['adjustThresholds', 'sysConfig'],
     Auditoría: ['sysConfig'],
     Integraciones: ['sysConfig'],
     'Plan y facturación': ['sysConfig'],
@@ -1215,12 +1231,18 @@ export interface AuditSessionMeta {
   deviceBrowser: string
 }
 
+export type AuditCrudOperation = 'CREATE' | 'UPDATE' | 'DELETE'
+
 export interface AuditEventRecord {
   id: string
   category: AuditCategory
   action: string
   detail: string
   user: string
+  userId?: string
+  crudOperation?: AuditCrudOperation
+  entityType?: string
+  entityId?: string
   timestampIso: string
   seedKey?: 'ev1' | 'ev2' | 'ev3' | 'ev4'
   sessionMeta?: AuditSessionMeta
@@ -1579,6 +1601,10 @@ export const STORAGE_KEYS = {
   externalIntegrations: 'aes_nexus_settings_external_integrations',
   audit: 'aes_nexus_settings_audit',
   plan: 'aes_nexus_settings_plan',
+  categoryStockThresholds: 'aes_nexus_category_stock_thresholds_v1',
+  subsidiaries: 'aes_nexus_subsidiaries_v1',
+  departments: 'aes_nexus_departments_v1',
+  locations: 'aes_nexus_locations_v1',
 } as const
 
 export function readStoredJson<T>(key: string, fallback: T): T {
@@ -1605,6 +1631,7 @@ export const AUDIT_CHANGED_EVENT = 'aes_nexus_audit_changed'
 export const INTEGRATIONS_CHANGED_EVENT = 'aes_nexus_integrations_changed'
 export const COMMERCIAL_INTEGRATIONS_CHANGED_EVENT = 'aes_nexus_commercial_integrations_changed'
 export const DEFAULT_NEW_USER_ROLE_CHANGED_EVENT = 'aes_nexus_default_role_changed'
+export const CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT = 'aes_nexus_category_stock_thresholds_changed'
 export const FALLBACK_DEFAULT_NEW_USER_ROLE: RoleKey = 'Operaciones'
 
 export interface WorkspaceUserRecord {
@@ -1926,4 +1953,170 @@ export function appendAuditLog(entry: Omit<AuditEventRecord, 'id' | 'timestampIs
   writeStoredJson(STORAGE_KEYS.audit, updated)
   window.dispatchEvent(new CustomEvent(AUDIT_CHANGED_EVENT, { detail: { events: updated } }))
   return updated
+}
+
+export type CategoryThresholdMode = 'inherit_default' | 'override_sku'
+
+export interface CategoryStockThresholdRule {
+  id: string
+  category: string
+  minStock: number
+  enabled: boolean
+  mode: CategoryThresholdMode
+  notes?: string
+  updatedAtIso: string
+  isCustom?: boolean
+}
+
+export const DEFAULT_CATEGORY_STOCK_THRESHOLDS: CategoryStockThresholdRule[] = [
+  {
+    id: 'cat_thr_hardware',
+    category: 'Hardware',
+    minStock: 5,
+    enabled: true,
+    mode: 'inherit_default',
+    notes: 'Servidores, terminales POS, lectores y hardware de red física.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+  {
+    id: 'cat_thr_software',
+    category: 'Software y Licencias',
+    minStock: 3,
+    enabled: true,
+    mode: 'inherit_default',
+    notes: 'Licencias empresariales y claves de activación disponibles.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+  {
+    id: 'cat_thr_mantenimiento',
+    category: 'Mantenimiento',
+    minStock: 2,
+    enabled: true,
+    mode: 'inherit_default',
+    notes: 'Refacciones, kits de soporte y pólizas operativas.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+  {
+    id: 'cat_thr_diseno',
+    category: 'Diseño y Desarrollo',
+    minStock: 2,
+    enabled: true,
+    mode: 'inherit_default',
+    notes: 'Paquetes de implementación y activos reutilizables.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+  {
+    id: 'cat_thr_consultoria',
+    category: 'Consultoría',
+    minStock: 1,
+    enabled: false,
+    mode: 'inherit_default',
+    notes: 'Servicios profesionales sin inventario físico directo.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+  {
+    id: 'cat_thr_capacitacion',
+    category: 'Capacitación',
+    minStock: 1,
+    enabled: false,
+    mode: 'inherit_default',
+    notes: 'Talleres y material formativo para equipos.',
+    updatedAtIso: '2026-11-15T09:00:00.000Z',
+  },
+]
+
+export function loadStoredCategoryStockThresholds(): CategoryStockThresholdRule[] {
+  const stored = readStoredJson<CategoryStockThresholdRule[] | null>(
+    STORAGE_KEYS.categoryStockThresholds,
+    null
+  )
+  if (!Array.isArray(stored) || stored.length === 0) {
+    return DEFAULT_CATEGORY_STOCK_THRESHOLDS
+  }
+  const existingKeys = new Set(stored.map((r) => r.category.trim().toLowerCase()))
+  const missingDefaults = DEFAULT_CATEGORY_STOCK_THRESHOLDS.filter(
+    (def) => !existingKeys.has(def.category.trim().toLowerCase())
+  )
+  return [...stored, ...missingDefaults]
+}
+
+export function saveStoredCategoryStockThresholds(rules: CategoryStockThresholdRule[]): void {
+  writeStoredJson(STORAGE_KEYS.categoryStockThresholds, rules)
+  window.dispatchEvent(
+    new CustomEvent(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, { detail: { rules } })
+  )
+}
+
+export function buildProductCategoryLookup(
+  products: ReadonlyArray<{ id: string; sku: string; category: string }>
+): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const p of products) {
+    if (p.id) map.set(p.id, p.category)
+    if (p.sku) map.set(p.sku.trim().toLowerCase(), p.category)
+  }
+  return map
+}
+
+export function resolveInventoryItemCategory(
+  item: { productId: string; sku: string; category?: string },
+  productCategoryMap?: Map<string, string>
+): string {
+  if (item.category && item.category.trim()) return item.category.trim()
+  if (productCategoryMap) {
+    const byId = productCategoryMap.get(item.productId)
+    if (byId) return byId
+    const bySku = productCategoryMap.get(item.sku.trim().toLowerCase())
+    if (bySku) return bySku
+  }
+  return 'Hardware'
+}
+
+export type EffectiveThresholdSource = 'category_override' | 'category_inherit' | 'sku'
+
+export function resolveEffectiveStockThreshold(
+  item: {
+    productId: string
+    sku: string
+    category?: string
+    minStock: number
+    thresholdSource?: 'sku' | 'category'
+  },
+  rules: CategoryStockThresholdRule[],
+  productCategoryMap?: Map<string, string>
+): {
+  effectiveMinStock: number
+  source: EffectiveThresholdSource
+  category: string
+  categoryRule?: CategoryStockThresholdRule
+} {
+  const category = resolveInventoryItemCategory(item, productCategoryMap)
+  const normalizedCat = category.toLowerCase()
+  const rule = rules.find((r) => r.category.trim().toLowerCase() === normalizedCat)
+
+  if (rule && rule.enabled) {
+    if (rule.mode === 'override_sku') {
+      return {
+        effectiveMinStock: Math.max(0, rule.minStock),
+        source: 'category_override',
+        category,
+        categoryRule: rule,
+      }
+    }
+    if (item.thresholdSource === 'category') {
+      return {
+        effectiveMinStock: Math.max(0, rule.minStock),
+        source: 'category_inherit',
+        category,
+        categoryRule: rule,
+      }
+    }
+  }
+
+  return {
+    effectiveMinStock: Math.max(0, item.minStock),
+    source: 'sku',
+    category,
+    categoryRule: rule,
+  }
 }

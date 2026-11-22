@@ -35,6 +35,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Cotizaciones: ['createQuotes'],
     Pedidos: ['issueOrders', 'createQuotes'],
     Facturas: ['issueOrders'],
+    Devoluciones: ['issueOrders', 'createQuotes', 'receiveGoods'],
     Resumen: ['createQuotes', 'issueOrders', 'pipelineReports'],
   },
   Compras: {
@@ -43,6 +44,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     'Órdenes de compra': ['approvePurchases', 'receiveGoods'],
     Recepciones: ['receiveGoods', 'inventoryControl'],
     Facturas: ['approvePurchases', 'schedulePayments', 'expenseControl'],
+    Devoluciones: ['approvePurchases', 'receiveGoods', 'inventoryControl'],
   },
   Operaciones: {
     Inventario: ['inventoryControl', 'adjustThresholds', 'stockLedger'],
@@ -71,6 +73,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Subsidiarias: ['sysConfig', 'manageUsers'],
     Departamentos: ['sysConfig', 'manageUsers'],
     Ubicaciones: ['sysConfig', 'manageUsers'],
+    'Flujos de devoluciones': ['sysConfig', 'manageUsers'],
     Resumen: ['sysConfig', 'manageUsers'],
     'Historial de Auditoría': ['sysConfig', 'manageUsers', 'fullReports'],
   },
@@ -83,6 +86,7 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Seguridad: ['sysConfig'],
     Apariencia: [],
     Notificaciones: ['sysConfig', 'adjustThresholds'],
+    'Umbrales de stock': ['sysConfig', 'adjustThresholds', 'inventoryControl'],
     Auditoría: ['sysConfig', 'fullReports'],
     Integraciones: ['sysConfig'],
     'Plan y facturación': ['sysConfig'],

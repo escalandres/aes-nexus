@@ -24,14 +24,23 @@ import { CrmPayroll } from './components/CrmPayroll'
 import { DirectorySheetModal, DirectoryEditModal } from './components/DirectorySheetModal'
 import { initialEmployees, type EmployeeRecord } from './data/employees'
 import {
+  CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
   ROLES_CHANGED_EVENT,
+  STORAGE_KEYS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
+  buildProductCategoryLookup,
   detectClientDeviceBrowser,
   getWorkspaceUserRoleIds,
+  loadStoredCategoryStockThresholds,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
+  readStoredJson,
+  resolveEffectiveStockThreshold,
   resolveSessionIpAddress,
+  saveStoredCategoryStockThresholds,
+  writeStoredJson,
+  type CategoryStockThresholdRule,
   type RoleDefinition,
   type RoleKey,
   type WorkspaceUserRecord,
@@ -54,7 +63,7 @@ import { QuotesSection } from './components/QuotesSection'
 import { OrdersSection } from './components/OrdersSection'
 import { SalesInvoices } from './components/SalesInvoices'
 import { SalesOverview } from './components/SalesOverview'
-import { initialQuotes, initialOrders, type Quote, type SalesOrder } from './data/sales'
+import { initialQuotes, initialOrders, type Quote, type SalesOrder, type SalesSectionTab } from './data/sales'
 import { initialProductsAndServices } from './data/products'
 import { OperationsInventory } from './components/OperationsInventory'
 import { OperationsTransfers } from './components/OperationsTransfers'
@@ -65,6 +74,24 @@ import { PurchasesOverview } from './components/PurchasesOverview'
 import { PurchasesRequisitions } from './components/PurchasesRequisitions'
 import { PurchasesReceptions } from './components/PurchasesReceptions'
 import { PurchasesInvoices } from './components/PurchasesInvoices'
+import { SalesReturnsSection } from './components/SalesReturnsSection'
+import { PurchasesReturnsSection } from './components/PurchasesReturnsSection'
+import {
+  canUserApproveWorkflowStep,
+  doesTransitionRequireApproval,
+  getAllowedNextStatusesForReturn,
+  loadStoredCustomerReturns,
+  loadStoredReturnWorkflows,
+  loadStoredSupplierReturns,
+  saveStoredCustomerReturns,
+  saveStoredReturnWorkflows,
+  saveStoredSupplierReturns,
+  type CustomerReturn,
+  type CustomerReturnStatus,
+  type ReturnWorkflowsSettings,
+  type SupplierReturn,
+  type SupplierReturnStatus,
+} from './data/returns'
 import {
   initialRequisitions,
   type PurchaseRequisition,
@@ -339,6 +366,129 @@ const initialLocations: PhysicalLocationRecord[] = [
   { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', subsidiaryIds: ['sub_1', 'sub_3'], active: true },
 ]
 
+function loadStoredSubsidiaries(): SubsidiaryRecord[] {
+  const raw = readStoredJson<SubsidiaryRecord[] | null>(STORAGE_KEYS.subsidiaries, null)
+  if (!Array.isArray(raw)) return initialSubsidiaries
+  return raw
+    .filter((item): item is SubsidiaryRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => ({
+      ...item,
+      code: String(item.code || '').toUpperCase(),
+      country: item.country || 'México',
+      currency: String(item.currency || 'MXN').toUpperCase(),
+      isHolding: Boolean(item.isHolding),
+      active: item.active !== false,
+    }))
+}
+
+function normalizeSubsidiaryIdsList(ids: unknown, validSubIds: Set<string>, fallbackIds: string[] = []): string[] {
+  if (!Array.isArray(ids)) return fallbackIds.filter((id) => validSubIds.has(id))
+  const seen = new Set<string>()
+  const next: string[] = []
+  for (const rawId of ids) {
+    if (typeof rawId !== 'string' || !validSubIds.has(rawId) || seen.has(rawId)) continue
+    seen.add(rawId)
+    next.push(rawId)
+  }
+  return next
+}
+
+function loadStoredDepartments(validSubIds: Set<string>): DepartmentRecord[] {
+  const raw = readStoredJson<DepartmentRecord[] | null>(STORAGE_KEYS.departments, null)
+  if (!Array.isArray(raw)) return initialDepartments
+  return raw
+    .filter((item): item is DepartmentRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => {
+      const seedMatch = initialDepartments.find((d) => d.id === item.id)
+      return {
+        ...item,
+        code: String(item.code || '').toUpperCase(),
+        subsidiaryIds: normalizeSubsidiaryIdsList(
+          item.subsidiaryIds,
+          validSubIds,
+          seedMatch?.subsidiaryIds || []
+        ),
+        active: item.active !== false,
+      }
+    })
+}
+
+function loadStoredLocations(validSubIds: Set<string>): PhysicalLocationRecord[] {
+  const raw = readStoredJson<PhysicalLocationRecord[] | null>(STORAGE_KEYS.locations, null)
+  if (!Array.isArray(raw)) return initialLocations
+  return raw
+    .filter((item): item is PhysicalLocationRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => {
+      const seedMatch = initialLocations.find((l) => l.id === item.id)
+      return {
+        ...item,
+        code: String(item.code || '').toUpperCase(),
+        country: item.country || 'México',
+        subsidiaryIds: normalizeSubsidiaryIdsList(
+          item.subsidiaryIds,
+          validSubIds,
+          seedMatch?.subsidiaryIds || []
+        ),
+        active: item.active !== false,
+      }
+    })
+}
+
+function buildWarehousesFromLocations(persistedLocations: PhysicalLocationRecord[]): Warehouse[] {
+  const matchedLocationIds = new Set<string>()
+  const syncedDefaults = initialWarehouses
+    .map((w) => {
+      const matched = persistedLocations.find(
+        (l) =>
+          l.id === w.locationId ||
+          l.code.toLowerCase() === w.code.toLowerCase() ||
+          l.name.toLowerCase() === w.name.toLowerCase()
+      )
+      if (!matched) {
+        return w.locationId ? null : w
+      }
+      matchedLocationIds.add(matched.id)
+      return {
+        ...w,
+        active: matched.active,
+        name: matched.name,
+        city: matched.city,
+        state: matched.state,
+        address: matched.address,
+        locationType: matched.type,
+      }
+    })
+    .filter((w): w is Warehouse => w !== null)
+
+  const extraWarehouses: Warehouse[] = persistedLocations
+    .filter(
+      (loc) =>
+        !matchedLocationIds.has(loc.id) &&
+        loc.id !== 'loc_1' &&
+        !syncedDefaults.some(
+          (w) =>
+            w.locationId === loc.id ||
+            w.code.toLowerCase() === loc.code.toLowerCase() ||
+            w.name.toLowerCase() === loc.name.toLowerCase()
+        )
+    )
+    .map((loc) => ({
+      id: `wh_${loc.id}`,
+      code: loc.code,
+      name: loc.name,
+      city: loc.city,
+      state: loc.state,
+      address: loc.address,
+      capacityPercentage: 0,
+      isDefault: false,
+      active: loc.active,
+      locationId: loc.id,
+      locationType: loc.type,
+    }))
+
+  return [...syncedDefaults, ...extraWarehouses]
+}
+
 const accentOptions = [
   { id: 'green', label: 'Verde', color: '#456a61', description: 'Natural y equilibrado' },
   { id: 'blue', label: 'Azul', color: '#3f6f9f', description: 'Claro y profesional' },
@@ -412,8 +562,8 @@ const pageFromPath = (pathname: string) => {
   if (pathname.startsWith('/operations') || pathname.startsWith('/operaciones')) return 'Operaciones'
   if (pathname.startsWith('/finance') || pathname.startsWith('/finanzas')) return 'Finanzas'
   if (pathname.startsWith('/reports') || pathname.startsWith('/reportes')) return 'Reportes'
+  if (pathname.startsWith('/admin') || pathname.startsWith('/administracion')) return 'Administración'
   const normalized = pathname.replace(/\/$/, '') || '/'
-  if (normalized === '/administracion') return 'Administración'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
 }
 
@@ -432,6 +582,8 @@ const purchasesSectionFromPath = (pathname: string): PurchasesSectionTab =>
       pathname === '/purchases/invoices' ||
       pathname === '/compras/facturas'
     ? 'Facturas'
+    : pathname === '/purchases/returns' || pathname === '/compras/devoluciones'
+    ? 'Devoluciones'
     : 'Resumen'
 
 const crmSectionFromPath = (pathname: string) =>
@@ -449,13 +601,15 @@ const crmSectionFromPath = (pathname: string) =>
     ? 'Actividades'
     : 'Resumen'
 
-const salesSectionFromPath = (pathname: string) =>
+const salesSectionFromPath = (pathname: string): SalesSectionTab =>
   pathname === '/sales/quotes' || pathname === '/ventas/cotizaciones'
     ? 'Cotizaciones'
     : pathname === '/sales/orders' || pathname === '/ventas/pedidos'
     ? 'Pedidos'
     : pathname === '/sales/invoices' || pathname === '/ventas/facturas'
     ? 'Facturas'
+    : pathname === '/sales/returns' || pathname === '/ventas/devoluciones'
+    ? 'Devoluciones'
     : pathname === '/sales/summary' || pathname === '/ventas/resumen'
     ? 'Resumen'
     : 'Catálogo'
@@ -498,36 +652,138 @@ const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
     : 'Resumen ejecutivo'
 
 const adminSectionFromPath = (pathname: string): AdminSectionTab =>
-  pathname === '/admin/subsidiaries' || pathname === '/admin/subsidiarias' || pathname === '/administracion/subsidiarias'
+  pathname.startsWith('/admin/subsidiaries') ||
+  pathname.startsWith('/admin/subsidiarias') ||
+  pathname.startsWith('/administracion/subsidiarias')
     ? 'Subsidiarias'
     : pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
     ? 'Ubicaciones'
+    : pathname === '/admin/return-workflows' ||
+      pathname === '/admin/flujos-devoluciones' ||
+      pathname === '/administracion/flujos-devoluciones'
+    ? 'Flujos de devoluciones'
     : pathname === '/admin/summary' || pathname === '/admin/resumen' || pathname === '/administracion/resumen'
     ? 'Resumen'
     : pathname === '/admin/audit' || pathname === '/admin/auditoria' || pathname === '/administracion/auditoria'
     ? 'Historial de Auditoría'
     : 'Departamentos'
 
+const subsidiaryIdFromPath = (pathname: string): string | null => {
+  const prefixes = ['/admin/subsidiaries/', '/admin/subsidiarias/', '/administracion/subsidiarias/']
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix)) {
+      const slug = pathname.slice(prefix.length).split('/')[0]?.trim()
+      if (!slug) return null
+      if (slug === 'nueva' || slug === 'new') return '__new__'
+      try {
+        return decodeURIComponent(slug)
+      } catch {
+        return slug
+      }
+    }
+  }
+  return null
+}
+
 function AppContent() {
   const toast = useToast()
   const { t } = useI18n()
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
-  const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
+  const [salesSection, setSalesSection] = useState<SalesSectionTab>(() => salesSectionFromPath(window.location.pathname))
   const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
   const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
   const [reportsSection, setReportsSection] = useState<ReportsSectionTab>(() => reportsSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
+  const [selectedSubsidiaryId, setSelectedSubsidiaryId] = useState<string | null>(() =>
+    subsidiaryIdFromPath(window.location.pathname)
+  )
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
+  const [customerReturns, setCustomerReturns] = useState<CustomerReturn[]>(() => loadStoredCustomerReturns())
+  const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>(() => loadStoredSupplierReturns())
+  const [returnWorkflows, setReturnWorkflows] = useState<ReturnWorkflowsSettings>(() => loadStoredReturnWorkflows())
   const [presetOrderToInvoice, setPresetOrderToInvoice] = useState<SalesOrder | null>(null)
   const [presetInvoiceIdToView, setPresetInvoiceIdToView] = useState<string | null>(null)
   const [presetOrderFolioToView, setPresetOrderFolioToView] = useState<string | null>(null)
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(initialWarehouses)
+  const [subsidiaries, setSubsidiaries] = useState<SubsidiaryRecord[]>(() => loadStoredSubsidiaries())
+  const [departments, setDepartments] = useState<DepartmentRecord[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return loadStoredDepartments(validSubIds)
+  })
+  const [locations, setLocations] = useState<PhysicalLocationRecord[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return loadStoredLocations(validSubIds)
+  })
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return buildWarehousesFromLocations(loadStoredLocations(validSubIds))
+  })
   const [inventory, setInventory] = useState<InventoryItemLocation[]>(initialInventory)
   const [transfers, setTransfers] = useState<InventoryTransfer[]>(initialTransfers)
   const [presetTransferItem, setPresetTransferItem] = useState<InventoryItemLocation | null>(null)
+  const [categoryStockThresholds, setCategoryStockThresholds] = useState<CategoryStockThresholdRule[]>(
+    () => loadStoredCategoryStockThresholds()
+  )
+
+  useEffect(() => {
+    const syncCategoryThresholds = (e: Event) => {
+      const custom = e as CustomEvent<{ rules?: CategoryStockThresholdRule[] }>
+      if (custom.detail?.rules) {
+        setCategoryStockThresholds(custom.detail.rules)
+      } else {
+        setCategoryStockThresholds(loadStoredCategoryStockThresholds())
+      }
+    }
+    window.addEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, syncCategoryThresholds)
+    return () =>
+      window.removeEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, syncCategoryThresholds)
+  }, [])
+
+  const productCategoryMap = useMemo(
+    () => buildProductCategoryLookup(initialProductsAndServices),
+    []
+  )
+
+  const effectiveInventory = useMemo<InventoryItemLocation[]>(() => {
+    return inventory.map((item) => {
+      const resolved = resolveEffectiveStockThreshold(
+        item,
+        categoryStockThresholds,
+        productCategoryMap
+      )
+      if (resolved.effectiveMinStock === item.minStock && item.category === resolved.category) {
+        return item
+      }
+      return {
+        ...item,
+        category: resolved.category,
+        minStock: resolved.effectiveMinStock,
+      }
+    })
+  }, [inventory, categoryStockThresholds, productCategoryMap])
+
+  const handleUpdateCategoryThresholds = (nextRules: CategoryStockThresholdRule[]) => {
+    setCategoryStockThresholds(nextRules)
+    saveStoredCategoryStockThresholds(nextRules)
+    const activeSummary = nextRules
+      .filter((r) => r.enabled)
+      .map(
+        (r) =>
+          `${r.category}: ${r.minStock} uds. (${r.mode === 'override_sku' ? 'Forzado' : 'Heredado'})`
+      )
+      .join(' · ')
+    appendAuditLog({
+      category: 'settings',
+      crudOperation: 'UPDATE',
+      entityType: 'Umbral por categoría',
+      action: 'Actualización de umbrales de stock por categoría',
+      detail: activeSummary || `${nextRules.length} categoría(s) configuradas`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+  }
 
   // Notificaciones Push y Alerta Persistente de Stock en Barra Superior
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
@@ -576,10 +832,10 @@ function AppContent() {
     }
   }
 
-  // Ítems de inventario bajo umbral mínimo
+  // Ítems de inventario bajo umbral mínimo (considerando umbrales por categoría y SKU)
   const lowStockItems = useMemo(() => {
-    return inventory.filter((item) => item.stock <= item.minStock)
-  }, [inventory])
+    return effectiveInventory.filter((item) => item.stock <= item.minStock)
+  }, [effectiveInventory])
 
   // Estado del Centro de Notificaciones Superior
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false)
@@ -644,9 +900,18 @@ function AppContent() {
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
-  const [subsidiaries, setSubsidiaries] = useState<SubsidiaryRecord[]>(initialSubsidiaries)
-  const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
-  const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.subsidiaries, subsidiaries)
+  }, [subsidiaries])
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.departments, departments)
+  }, [departments])
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.locations, locations)
+  }, [locations])
 
   // Centro de Notificaciones: Avisos dinámicos conectados a Operaciones, Finanzas y Ventas + estado leído/descartado
   const [notifPrefState, setNotifPrefState] = useState<{
@@ -1116,6 +1381,16 @@ function AppContent() {
       subtitle: !isActive ? 'Suspendido' : rolesText,
     }
   }, [activeSessionId, employees, workspaceUsers, roleDefinitions])
+
+  const activeActorUserId = useMemo(() => {
+    if (activeSessionProfile.kind === 'employee') {
+      return activeSessionProfile.key.slice(4) || activeSessionProfile.baseUserId
+    }
+    if (activeSessionProfile.kind === 'role') {
+      return activeSessionProfile.key
+    }
+    return activeSessionProfile.baseUserId
+  }, [activeSessionProfile])
 
   const {
     isFullAdmin,
@@ -1708,14 +1983,68 @@ function AppContent() {
     setSubsidiaries((prev) => [sub, ...prev])
     appendAuditLog({
       category: 'admin',
+      crudOperation: 'CREATE',
+      entityType: 'Subsidiaria',
+      entityId: sub.id,
       action: 'Creación de subsidiaria',
-      detail: `${sub.code} · ${sub.name} (${sub.taxId})`,
+      detail: `${sub.code} · ${sub.name} (RFC: ${sub.taxId} · ${sub.currency}${sub.isHolding ? ' · Matriz' : ''})`,
       user: activeSessionProfile.name,
+      userId: activeActorUserId,
     })
+  }
+
+  const handleUpdateSubsidiaries = (updatedSubs: SubsidiaryRecord[]) => {
+    const prevById = new Map(subsidiaries.map((s) => [s.id, s]))
+
+    updatedSubs.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.legalName !== next.legalName) changes.push('Razón social actualizada')
+      if (prev.taxId !== next.taxId) changes.push(`RFC: ${prev.taxId} → ${next.taxId}`)
+      if (prev.country !== next.country) changes.push(`País: ${prev.country} → ${next.country}`)
+      if (prev.currency !== next.currency) changes.push(`Divisa: ${prev.currency} → ${next.currency}`)
+      if ((prev.legalRep || '') !== (next.legalRep || '')) {
+        changes.push(`Rep. legal: ${prev.legalRep || '—'} → ${next.legalRep || '—'}`)
+      }
+      if ((prev.fiscalAddress || '') !== (next.fiscalAddress || '')) {
+        changes.push('Domicilio fiscal actualizado')
+      }
+      if (Boolean(prev.isHolding) !== Boolean(next.isHolding)) {
+        changes.push(`Matriz: ${prev.isHolding ? 'Sí' : 'No'} → ${next.isHolding ? 'Sí' : 'No'}`)
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activa' : 'Inactiva'} → ${next.active ? 'Activa' : 'Inactiva'}`)
+      }
+
+      if (changes.length === 0) return
+
+      const isStatusOnly = changes.length === 1 && prev.active !== next.active
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Subsidiaria',
+        entityId: next.id,
+        action: isStatusOnly ? 'Cambio de estado de subsidiaria' : 'Actualización de subsidiaria',
+        detail: isStatusOnly
+          ? `${next.code} · ${next.name} → ${next.active ? 'Activa' : 'Inactiva'}`
+          : `${next.code} · ${next.name} (${changes.join(' · ')})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    })
+
+    setSubsidiaries(updatedSubs)
   }
 
   const handleDeleteSubsidiary = (subsidiaryId: string) => {
     const target = subsidiaries.find((s) => s.id === subsidiaryId)
+    const unlinkedDepts = departments.filter((d) => (d.subsidiaryIds || []).includes(subsidiaryId)).length
+    const unlinkedLocs = locations.filter((l) => (l.subsidiaryIds || []).includes(subsidiaryId)).length
+
     setSubsidiaries((prev) => prev.filter((s) => s.id !== subsidiaryId))
     setDepartments((prev) =>
       prev.map((d) => ({
@@ -1732,9 +2061,17 @@ function AppContent() {
     if (target) {
       appendAuditLog({
         category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Subsidiaria',
+        entityId: target.id,
         action: 'Eliminación de subsidiaria',
-        detail: `${target.code} · ${target.name} (${target.taxId})`,
+        detail: `${target.code} · ${target.name} (${target.taxId})${
+          unlinkedDepts + unlinkedLocs > 0
+            ? ` · ${unlinkedDepts} depto(s) y ${unlinkedLocs} sede(s) desvinculadas`
+            : ''
+        }`,
         user: activeSessionProfile.name,
+        userId: activeActorUserId,
       })
       toast.info(`Subsidiaria “${target.name}” eliminada del sistema.`, 'Subsidiaria eliminada')
     }
@@ -1742,12 +2079,150 @@ function AppContent() {
 
   const handleAddDepartment = (dep: DepartmentRecord) => {
     setDepartments((prev) => [dep, ...prev])
+    const subCodes = (dep.subsidiaryIds || [])
+      .map((id) => subsidiaries.find((s) => s.id === id)?.code || id)
+      .join(', ')
     appendAuditLog({
       category: 'admin',
+      crudOperation: 'CREATE',
+      entityType: 'Departamento',
+      entityId: dep.id,
       action: 'Creación de departamento',
-      detail: `${dep.code} · ${dep.name} (Líder: ${dep.leader})`,
+      detail: `${dep.code} · ${dep.name} (Líder: ${dep.leader}${
+        subCodes ? ` · Subsidiarias: ${subCodes}` : ''
+      })`,
       user: activeSessionProfile.name,
+      userId: activeActorUserId,
     })
+  }
+
+  const handleUpdateDepartments = (updatedDepartments: DepartmentRecord[]) => {
+    const prevById = new Map(departments.map((d) => [d.id, d]))
+    const subCodeById = new Map(subsidiaries.map((s) => [s.id, s.code]))
+
+    const relationOnlyChanges: Array<{
+      dept: DepartmentRecord
+      addedSubId: string | null
+      removedSubId: string | null
+    }> = []
+    const detailedChanges: Array<{
+      dept: DepartmentRecord
+      changes: string[]
+      isStatusOnly: boolean
+    }> = []
+
+    updatedDepartments.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.leader !== next.leader) changes.push(`Líder: ${prev.leader} → ${next.leader}`)
+      if ((prev.costCenter || '') !== (next.costCenter || '')) {
+        changes.push(`CC: ${prev.costCenter || '—'} → ${next.costCenter || '—'}`)
+      }
+      if ((prev.description || '') !== (next.description || '')) {
+        changes.push('Descripción actualizada')
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activo' : 'Inactivo'} → ${next.active ? 'Activo' : 'Inactivo'}`)
+      }
+
+      const prevSubSet = new Set(prev.subsidiaryIds || [])
+      const nextSubSet = new Set(next.subsidiaryIds || [])
+      const addedSubs = Array.from(nextSubSet).filter((id) => !prevSubSet.has(id))
+      const removedSubs = Array.from(prevSubSet).filter((id) => !nextSubSet.has(id))
+
+      if (addedSubs.length > 0) {
+        changes.push(
+          `+Vinculado a: ${addedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+      if (removedSubs.length > 0) {
+        changes.push(
+          `-Desvinculado de: ${removedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+
+      if (changes.length === 0) return
+
+      const onlySingleSubToggle =
+        changes.length === 1 &&
+        ((addedSubs.length === 1 && removedSubs.length === 0) ||
+          (removedSubs.length === 1 && addedSubs.length === 0))
+
+      if (onlySingleSubToggle) {
+        relationOnlyChanges.push({
+          dept: next,
+          addedSubId: addedSubs[0] || null,
+          removedSubId: removedSubs[0] || null,
+        })
+      }
+
+      detailedChanges.push({
+        dept: next,
+        changes,
+        isStatusOnly: changes.length === 1 && prev.active !== next.active,
+      })
+    })
+
+    const sharedAddedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.addedSubId && item.addedSubId === relationOnlyChanges[0].addedSubId
+      )
+        ? relationOnlyChanges[0].addedSubId
+        : null
+
+    const sharedRemovedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.removedSubId && item.removedSubId === relationOnlyChanges[0].removedSubId
+      )
+        ? relationOnlyChanges[0].removedSubId
+        : null
+
+    if (sharedAddedSubId || sharedRemovedSubId) {
+      const targetSubId = (sharedAddedSubId || sharedRemovedSubId)!
+      const subLabel = subCodeById.get(targetSubId) || targetSubId
+      const codes = relationOnlyChanges.map((item) => item.dept.code).join(', ')
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Departamento',
+        entityId: relationOnlyChanges.map((item) => item.dept.id).join(','),
+        action: sharedAddedSubId
+          ? 'Vinculación masiva de departamentos'
+          : 'Desvinculación masiva de departamentos',
+        detail: `${relationOnlyChanges.length} departamento(s) ${
+          sharedAddedSubId ? 'vinculados a' : 'desvinculados de'
+        } ${subLabel} (${codes})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    } else {
+      detailedChanges.forEach(({ dept, changes, isStatusOnly }) => {
+        appendAuditLog({
+          category: 'admin',
+          crudOperation: 'UPDATE',
+          entityType: 'Departamento',
+          entityId: dept.id,
+          action: isStatusOnly
+            ? 'Cambio de estado de departamento'
+            : 'Actualización de departamento',
+          detail: isStatusOnly
+            ? `${dept.code} · ${dept.name} → ${dept.active ? 'Activo' : 'Inactivo'}`
+            : `${dept.code} · ${dept.name} (${changes.join(' · ')})`,
+          user: activeSessionProfile.name,
+          userId: activeActorUserId,
+        })
+      })
+    }
+
+    setDepartments(updatedDepartments)
   }
 
   const handleDeleteDepartment = (departmentId: string) => {
@@ -1756,9 +2231,13 @@ function AppContent() {
     if (target) {
       appendAuditLog({
         category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Departamento',
+        entityId: target.id,
         action: 'Eliminación de departamento',
-        detail: `${target.code} · ${target.name}`,
+        detail: `${target.code} · ${target.name} (Líder: ${target.leader})`,
         user: activeSessionProfile.name,
+        userId: activeActorUserId,
       })
       toast.info(`Departamento “${target.name}” eliminado del sistema.`, 'Departamento eliminado')
     }
@@ -1779,11 +2258,20 @@ function AppContent() {
           : [],
     }
     setLocations((prev) => [normalizedLoc, ...prev])
+    const subCodes = normalizedLoc.subsidiaryIds
+      .map((id) => subsidiaries.find((s) => s.id === id)?.code || id)
+      .join(', ')
     appendAuditLog({
       category: 'admin',
-      action: 'Alta de ubicación física',
-      detail: `${normalizedLoc.code} · ${normalizedLoc.name} (${normalizedLoc.city}, ${normalizedLoc.state})`,
+      crudOperation: 'CREATE',
+      entityType: 'Ubicación física',
+      entityId: normalizedLoc.id,
+      action: 'Creación de ubicación física',
+      detail: `${normalizedLoc.code} · ${normalizedLoc.name} (${normalizedLoc.city}, ${normalizedLoc.state}${
+        subCodes ? ` · Subsidiarias: ${subCodes}` : ''
+      })`,
       user: activeSessionProfile.name,
+      userId: activeActorUserId,
     })
     setWarehouses((prev) => {
       const exists = prev.some(
@@ -1813,6 +2301,133 @@ function AppContent() {
   }
 
   const handleUpdateLocations = (updatedLocations: PhysicalLocationRecord[]) => {
+    const prevById = new Map(locations.map((l) => [l.id, l]))
+    const subCodeById = new Map(subsidiaries.map((s) => [s.id, s.code]))
+
+    const relationOnlyChanges: Array<{
+      loc: PhysicalLocationRecord
+      addedSubId: string | null
+      removedSubId: string | null
+    }> = []
+    const detailedChanges: Array<{
+      loc: PhysicalLocationRecord
+      changes: string[]
+      isStatusOnly: boolean
+    }> = []
+
+    updatedLocations.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.type !== next.type) changes.push(`Tipo: ${prev.type} → ${next.type}`)
+      if (prev.address !== next.address) changes.push('Dirección actualizada')
+      if (prev.city !== next.city || prev.state !== next.state) {
+        changes.push(`Ciudad: ${prev.city}, ${prev.state} → ${next.city}, ${next.state}`)
+      }
+      if (prev.country !== next.country) changes.push(`País: ${prev.country} → ${next.country}`)
+      if ((prev.manager || '') !== (next.manager || '')) {
+        changes.push(`Encargado: ${prev.manager || '—'} → ${next.manager || '—'}`)
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activa' : 'Inactiva'} → ${next.active ? 'Activa' : 'Inactiva'}`)
+      }
+
+      const prevSubSet = new Set(prev.subsidiaryIds || [])
+      const nextSubSet = new Set(next.subsidiaryIds || [])
+      const addedSubs = Array.from(nextSubSet).filter((id) => !prevSubSet.has(id))
+      const removedSubs = Array.from(prevSubSet).filter((id) => !nextSubSet.has(id))
+
+      if (addedSubs.length > 0) {
+        changes.push(
+          `+Vinculada a: ${addedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+      if (removedSubs.length > 0) {
+        changes.push(
+          `-Desvinculada de: ${removedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+
+      if (changes.length === 0) return
+
+      const onlySingleSubToggle =
+        changes.length === 1 &&
+        ((addedSubs.length === 1 && removedSubs.length === 0) ||
+          (removedSubs.length === 1 && addedSubs.length === 0))
+
+      if (onlySingleSubToggle) {
+        relationOnlyChanges.push({
+          loc: next,
+          addedSubId: addedSubs[0] || null,
+          removedSubId: removedSubs[0] || null,
+        })
+      }
+
+      detailedChanges.push({
+        loc: next,
+        changes,
+        isStatusOnly: changes.length === 1 && prev.active !== next.active,
+      })
+    })
+
+    const sharedAddedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.addedSubId && item.addedSubId === relationOnlyChanges[0].addedSubId
+      )
+        ? relationOnlyChanges[0].addedSubId
+        : null
+
+    const sharedRemovedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.removedSubId && item.removedSubId === relationOnlyChanges[0].removedSubId
+      )
+        ? relationOnlyChanges[0].removedSubId
+        : null
+
+    if (sharedAddedSubId || sharedRemovedSubId) {
+      const targetSubId = (sharedAddedSubId || sharedRemovedSubId)!
+      const subLabel = subCodeById.get(targetSubId) || targetSubId
+      const codes = relationOnlyChanges.map((item) => item.loc.code).join(', ')
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Ubicación física',
+        entityId: relationOnlyChanges.map((item) => item.loc.id).join(','),
+        action: sharedAddedSubId
+          ? 'Vinculación masiva de ubicaciones'
+          : 'Desvinculación masiva de ubicaciones',
+        detail: `${relationOnlyChanges.length} ubicación(es) ${
+          sharedAddedSubId ? 'vinculadas a' : 'desvinculadas de'
+        } ${subLabel} (${codes})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    } else {
+      detailedChanges.forEach(({ loc, changes, isStatusOnly }) => {
+        appendAuditLog({
+          category: 'admin',
+          crudOperation: 'UPDATE',
+          entityType: 'Ubicación física',
+          entityId: loc.id,
+          action: isStatusOnly
+            ? 'Cambio de estado de ubicación física'
+            : 'Actualización de ubicación física',
+          detail: isStatusOnly
+            ? `${loc.code} · ${loc.name} → ${loc.active ? 'Activa' : 'Inactiva'}`
+            : `${loc.code} · ${loc.name} (${changes.join(' · ')})`,
+          user: activeSessionProfile.name,
+          userId: activeActorUserId,
+        })
+      })
+    }
+
     setLocations(updatedLocations)
     setWarehouses((prev) =>
       prev.map((w) => {
@@ -1858,9 +2473,13 @@ function AppContent() {
     if (target) {
       appendAuditLog({
         category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Ubicación física',
+        entityId: target.id,
         action: 'Eliminación de ubicación física',
-        detail: `${target.code} · ${target.name}`,
+        detail: `${target.code} · ${target.name} (${target.city}, ${target.state})`,
         user: activeSessionProfile.name,
+        userId: activeActorUserId,
       })
       toast.info(`Ubicación física “${target.name}” eliminada del sistema.`, 'Ubicación eliminada')
     }
@@ -1952,6 +2571,734 @@ function AppContent() {
       detail: `Folio ${invoice.folio} · ${invoice.clientCompany} · ${money(invoice.total)}`,
       user: activeSessionProfile.name,
     })
+  }
+
+  const formatShortReturnDate = () => {
+    const d = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    return `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`
+  }
+
+  const handleUpdateReturnWorkflows = (
+    next: ReturnWorkflowsSettings,
+    summaryDetail: string
+  ) => {
+    setReturnWorkflows(next)
+    saveStoredReturnWorkflows(next)
+    appendAuditLog({
+      category: 'admin',
+      crudOperation: 'UPDATE',
+      entityType: 'Flujos de devoluciones',
+      entityId: 'return_workflows',
+      action: 'Actualización de flujos y aprobaciones de devoluciones',
+      detail: summaryDetail,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(
+      'Flujos de trabajo de devoluciones actualizados y aplicados en Ventas y Compras.',
+      'Flujos guardados'
+    )
+  }
+
+  const handleCreateCustomerReturn = (ret: CustomerReturn) => {
+    setCustomerReturns((prev) => {
+      const next = [ret, ...prev]
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'CREATE',
+      entityType: 'Devolución de cliente',
+      entityId: ret.id,
+      action: 'Registro de devolución de cliente (RMA)',
+      detail: `${ret.folio} · ${ret.clientCompany} · ${ret.orderFolio} · ${money(ret.total)}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Devolución ${ret.folio} registrada para ${ret.clientCompany}.`, 'RMA registrado')
+  }
+
+  const applyCustomerReturnTransition = (
+    target: CustomerReturn,
+    nextStatus: CustomerReturnStatus,
+    options?: { noteOverride?: string; approvedBy?: string }
+  ) => {
+    let appliedInv = Boolean(target.inventoryApplied)
+    let appliedFin = Boolean(target.financeApplied)
+    let creditNoteFolio = target.creditNoteFolio
+
+    if (nextStatus === 'Recibida en almacén' && !appliedInv) {
+      const restockLines = target.items.filter((it) => it.disposition === 'Reingreso a almacén')
+      if (restockLines.length > 0) {
+        setInventory((prev) =>
+          prev.map((inv) => {
+            if (inv.warehouseId !== target.warehouseId) return inv
+            const matched = restockLines.find(
+              (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+            )
+            return matched ? { ...inv, stock: inv.stock + matched.quantity } : inv
+          })
+        )
+        restockLines.forEach((line, idx) => {
+          handleAddMovement({
+            id: `mov_cli_ret_${Date.now()}_${idx}`,
+            folio: `MOV-DEV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+            date: formatShortReturnDate(),
+            type: 'Entrada',
+            sku: line.sku,
+            productName: line.name,
+            quantity: line.quantity,
+            targetWarehouse: target.warehouseName,
+            referenceDoc: target.folio,
+            reason: `Reingreso por devolución de cliente (${target.clientCompany})`,
+            user: activeSessionProfile.name,
+          })
+        })
+      }
+      appliedInv = true
+    }
+
+    if (nextStatus === 'Nota de crédito emitida' && !appliedFin) {
+      creditNoteFolio =
+        creditNoteFolio || `NC-CLI-2026-${String(customerReturns.length + 101).padStart(3, '0')}`
+      if (target.invoiceId || target.invoiceFolio) {
+        setReceivables((prev) =>
+          prev.map((inv) => {
+            const matches =
+              (target.invoiceId && inv.id === target.invoiceId) ||
+              (target.invoiceFolio && inv.folio === target.invoiceFolio)
+            if (!matches) return inv
+            const nextBalance = Math.max(0, inv.balance - target.total)
+            const nextStatusInv =
+              nextBalance === 0
+                ? ('Pagada' as const)
+                : inv.paidAmount > 0 || nextBalance < inv.total
+                ? ('Parcial' as const)
+                : inv.status
+            return {
+              ...inv,
+              balance: nextBalance,
+              status: nextStatusInv,
+              notes: `${inv.notes ? `${inv.notes} · ` : ''}Acreditado por ${creditNoteFolio} (${money(target.total)})`,
+            }
+          })
+        )
+      }
+      appliedFin = true
+    }
+
+    const nowIso = new Date().toISOString()
+    const mergedNotes = options?.noteOverride
+      ? target.notes
+        ? `${target.notes} · ${options.noteOverride}`
+        : options.noteOverride
+      : target.notes
+
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === target.id
+          ? {
+              ...r,
+              status: nextStatus,
+              notes: mergedNotes,
+              inventoryApplied: appliedInv,
+              financeApplied: appliedFin,
+              creditNoteFolio,
+              approvalStatus: options?.approvedBy ? ('approved' as const) : ('not_required' as const),
+              pendingTargetStatus: undefined,
+              approvedBy: options?.approvedBy || r.approvedBy,
+              approvedAtIso: options?.approvedBy ? nowIso : r.approvedAtIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_c_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: nextStatus,
+                  actor: options?.approvedBy || activeSessionProfile.name,
+                  action: options?.approvedBy ? ('approved' as const) : ('transition' as const),
+                  note: options?.noteOverride,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: nextStatus === 'Nota de crédito emitida' ? 'finance' : 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: options?.approvedBy
+        ? `Aprobación y transición de RMA cliente a "${nextStatus}"`
+        : `Actualización de RMA cliente a "${nextStatus}"`,
+      detail: `${target.folio} · ${target.clientCompany}${creditNoteFolio ? ` · ${creditNoteFolio}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    if (nextStatus === 'Recibida en almacén') {
+      toast.success(
+        `Devolución ${target.folio} recibida en ${target.warehouseName}. Existencias y Kardex actualizados.`,
+        'Recepción en almacén'
+      )
+    } else if (nextStatus === 'Nota de crédito emitida') {
+      toast.success(
+        `Nota de crédito ${creditNoteFolio} emitida${target.invoiceFolio ? ` sobre ${target.invoiceFolio}` : ''}.`,
+        'Nota de crédito aplicada'
+      )
+    } else {
+      toast.info(`Devolución ${target.folio} actualizada a "${nextStatus}".`, 'Estado RMA')
+    }
+  }
+
+  const handleRequestCustomerReturnApproval = (
+    returnId: string,
+    targetStatus: CustomerReturnStatus,
+    noteOverride?: string
+  ) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
+    if (!allowed.includes(targetStatus)) {
+      toast.warning(
+        `El flujo configurado no permite pasar de "${target.status}" a "${targetStatus}".`,
+        'Transición restringida'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.customer.steps.find((s) => s.status === targetStatus)
+    const nowIso = new Date().toISOString()
+    const mergedNotes = noteOverride
+      ? target.notes
+        ? `${target.notes} · ${noteOverride}`
+        : noteOverride
+      : target.notes
+
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              notes: mergedNotes,
+              approvalStatus: 'pending' as const,
+              pendingTargetStatus: targetStatus,
+              approvalRequestedBy: activeSessionProfile.name,
+              approvalRequestedAtIso: nowIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_creq_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: targetStatus,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_requested' as const,
+                  note: noteOverride || `Requiere: ${targetRule?.approverRole || 'Administrador'}`,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: `Solicitud de aprobación RMA → "${targetStatus}"`,
+      detail: `${target.folio} · ${target.clientCompany} · Requiere rol: ${targetRule?.approverRole || 'Administrador'}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    toast.info(
+      `Aprobación solicitada para ${target.folio} (${targetRule?.approverRole || 'Administrador'}).`,
+      'En cola de aprobación'
+    )
+  }
+
+  const handleApproveCustomerReturnTransition = (returnId: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    const targetRule = returnWorkflows.customer.steps.find(
+      (s) => s.status === target.pendingTargetStatus
+    )
+    const canApprove = canUserApproveWorkflowStep(
+      targetRule?.approverRole || 'Administrador',
+      activeSessionProfile.roles,
+      isFullAdmin,
+      true
+    )
+    if (!canApprove) {
+      toast.warning(
+        `Esta transición requiere aprobación del rol "${targetRule?.approverRole || 'Administrador'}".`,
+        'Aprobación denegada'
+      )
+      return
+    }
+    applyCustomerReturnTransition(target, target.pendingTargetStatus, {
+      approvedBy: activeSessionProfile.name,
+    })
+  }
+
+  const handleRejectCustomerReturnApproval = (returnId: string, reason?: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending') return
+    const nowIso = new Date().toISOString()
+    const rejectedTarget = target.pendingTargetStatus || target.status
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              approvalStatus: 'rejected' as const,
+              pendingTargetStatus: undefined,
+              rejectionReason: reason,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_crej_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: rejectedTarget,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_rejected' as const,
+                  note: reason || 'Solicitud rechazada por aprobador',
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: `Rechazo de aprobación RMA → "${rejectedTarget}"`,
+      detail: `${target.folio} · ${target.clientCompany}${reason ? ` · ${reason}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
+  }
+
+  const handleAdvanceCustomerReturn = (
+    returnId: string,
+    nextStatus: CustomerReturnStatus,
+    noteOverride?: string
+  ) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
+    if (!allowed.includes(nextStatus)) {
+      toast.warning(
+        `Transición de "${target.status}" a "${nextStatus}" deshabilitada en el flujo.`,
+        'Flujo de devoluciones'
+      )
+      return
+    }
+    if (doesTransitionRequireApproval(returnWorkflows.customer, nextStatus, target.total)) {
+      handleRequestCustomerReturnApproval(returnId, nextStatus, noteOverride)
+      return
+    }
+    applyCustomerReturnTransition(target, nextStatus, { noteOverride })
+  }
+
+  const handleDeleteCustomerReturn = (returnId: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (target && returnWorkflows.customer.preventDeleteAfterSettlement) {
+      const rule = returnWorkflows.customer.steps.find((s) => s.status === target.status)
+      if (rule?.isFinalState || target.inventoryApplied || target.financeApplied) {
+        toast.warning(
+          'No se puede eliminar un expediente liquidado o con impacto aplicado en Kardex/CxC.',
+          'Bloqueado por flujo'
+        )
+        return
+      }
+    }
+    setCustomerReturns((prev) => {
+      const next = prev.filter((r) => r.id !== returnId)
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    if (target) {
+      appendAuditLog({
+        category: 'sales',
+        crudOperation: 'DELETE',
+        entityType: 'Devolución de cliente',
+        entityId: target.id,
+        action: 'Eliminación de devolución de cliente',
+        detail: `${target.folio} · ${target.clientCompany}`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Devolución ${target.folio} eliminada.`, 'RMA eliminado')
+    }
+  }
+
+  const handleCreateSupplierReturn = (ret: SupplierReturn) => {
+    setSupplierReturns((prev) => {
+      const next = [ret, ...prev]
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'CREATE',
+      entityType: 'Devolución a proveedor',
+      entityId: ret.id,
+      action: 'Registro de devolución a proveedor (RTV)',
+      detail: `${ret.folio} · ${ret.supplierCompany} · ${ret.purchaseOrderFolio} · ${money(ret.total)}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Devolución ${ret.folio} creada para ${ret.supplierCompany}.`, 'RTV registrado')
+  }
+
+  const applySupplierReturnTransition = (
+    target: SupplierReturn,
+    nextStatus: SupplierReturnStatus,
+    options?: { noteOverride?: string; rmaOverride?: string; approvedBy?: string }
+  ) => {
+    let appliedInv = Boolean(target.inventoryApplied)
+    let appliedFin = Boolean(target.financeApplied)
+    let creditNoteFolio = target.creditNoteFolio
+
+    if (nextStatus === 'Enviada a proveedor' && !appliedInv) {
+      setInventory((prev) =>
+        prev.map((inv) => {
+          if (inv.warehouseId !== target.warehouseId) return inv
+          const matched = target.items.find(
+            (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+          )
+          return matched ? { ...inv, stock: Math.max(0, inv.stock - matched.quantity) } : inv
+        })
+      )
+      target.items.forEach((line, idx) => {
+        handleAddMovement({
+          id: `mov_prv_ret_${Date.now()}_${idx}`,
+          folio: `MOV-RTV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+          date: formatShortReturnDate(),
+          type: 'Salida',
+          sku: line.sku,
+          productName: line.name,
+          quantity: line.quantity,
+          sourceWarehouse: target.warehouseName,
+          referenceDoc: target.folio,
+          reason: `Salida por devolución a proveedor (${target.supplierCompany})`,
+          user: activeSessionProfile.name,
+        })
+      })
+      appliedInv = true
+    }
+
+    if (nextStatus === 'Acreditada / compensada' && !appliedFin) {
+      creditNoteFolio =
+        creditNoteFolio || `NC-PRV-2026-${String(supplierReturns.length + 201).padStart(3, '0')}`
+      if (target.billId || target.billFolio) {
+        setPayables((prev) =>
+          prev.map((bill) => {
+            const matches =
+              (target.billId && bill.id === target.billId) ||
+              (target.billFolio && bill.folio === target.billFolio)
+            if (!matches) return bill
+            const nextBalance = Math.max(0, bill.balance - target.total)
+            const nextBillStatus =
+              nextBalance === 0
+                ? ('Pagada' as const)
+                : bill.paidAmount > 0 || nextBalance < bill.total
+                ? ('Parcial' as const)
+                : bill.status
+            return {
+              ...bill,
+              balance: nextBalance,
+              status: nextBillStatus,
+            }
+          })
+        )
+      }
+      appliedFin = true
+    }
+
+    const nowIso = new Date().toISOString()
+    const mergedNotes = options?.noteOverride
+      ? target.notes
+        ? `${target.notes} · ${options.noteOverride}`
+        : options.noteOverride
+      : target.notes
+
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === target.id
+          ? {
+              ...r,
+              status: nextStatus,
+              notes: mergedNotes,
+              rmaSupplierCode: options?.rmaOverride || r.rmaSupplierCode,
+              inventoryApplied: appliedInv,
+              financeApplied: appliedFin,
+              creditNoteFolio,
+              approvalStatus: options?.approvedBy ? ('approved' as const) : ('not_required' as const),
+              pendingTargetStatus: undefined,
+              approvedBy: options?.approvedBy || r.approvedBy,
+              approvedAtIso: options?.approvedBy ? nowIso : r.approvedAtIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_p_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: nextStatus,
+                  actor: options?.approvedBy || activeSessionProfile.name,
+                  action: options?.approvedBy ? ('approved' as const) : ('transition' as const),
+                  note: options?.noteOverride,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: nextStatus === 'Acreditada / compensada' ? 'finance' : 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: options?.approvedBy
+        ? `Aprobación y transición de RTV proveedor a "${nextStatus}"`
+        : `Actualización de RTV proveedor a "${nextStatus}"`,
+      detail: `${target.folio} · ${target.supplierCompany}${creditNoteFolio ? ` · ${creditNoteFolio}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    if (nextStatus === 'Enviada a proveedor') {
+      toast.success(
+        `Mercancía de ${target.folio} despachada desde ${target.warehouseName}. Salida registrada en Kardex.`,
+        'Salida despachada'
+      )
+    } else if (nextStatus === 'Acreditada / compensada') {
+      toast.success(
+        `Nota de crédito ${creditNoteFolio} compensada en CxP (${target.supplierCompany}).`,
+        'Crédito CxP aplicado'
+      )
+    } else {
+      toast.info(`Devolución ${target.folio} actualizada a "${nextStatus}".`, 'Estado RTV')
+    }
+  }
+
+  const handleRequestSupplierReturnApproval = (
+    returnId: string,
+    targetStatus: SupplierReturnStatus,
+    noteOverride?: string,
+    rmaOverride?: string
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
+    if (!allowed.includes(targetStatus)) {
+      toast.warning(
+        `El flujo configurado no permite pasar de "${target.status}" a "${targetStatus}".`,
+        'Transición restringida'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.supplier.steps.find((s) => s.status === targetStatus)
+    const nowIso = new Date().toISOString()
+    const mergedNotes = noteOverride
+      ? target.notes
+        ? `${target.notes} · ${noteOverride}`
+        : noteOverride
+      : target.notes
+
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              notes: mergedNotes,
+              rmaSupplierCode: rmaOverride || r.rmaSupplierCode,
+              approvalStatus: 'pending' as const,
+              pendingTargetStatus: targetStatus,
+              approvalRequestedBy: activeSessionProfile.name,
+              approvalRequestedAtIso: nowIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_preq_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: targetStatus,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_requested' as const,
+                  note: noteOverride || `Requiere: ${targetRule?.approverRole || 'Administrador'}`,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: `Solicitud de aprobación RTV → "${targetStatus}"`,
+      detail: `${target.folio} · ${target.supplierCompany} · Requiere rol: ${targetRule?.approverRole || 'Administrador'}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    toast.info(
+      `Aprobación solicitada para ${target.folio} (${targetRule?.approverRole || 'Administrador'}).`,
+      'En cola de aprobación'
+    )
+  }
+
+  const handleApproveSupplierReturnTransition = (returnId: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    const targetRule = returnWorkflows.supplier.steps.find(
+      (s) => s.status === target.pendingTargetStatus
+    )
+    const canApprove = canUserApproveWorkflowStep(
+      targetRule?.approverRole || 'Administrador',
+      activeSessionProfile.roles,
+      isFullAdmin,
+      true
+    )
+    if (!canApprove) {
+      toast.warning(
+        `Esta transición requiere aprobación del rol "${targetRule?.approverRole || 'Administrador'}".`,
+        'Aprobación denegada'
+      )
+      return
+    }
+    applySupplierReturnTransition(target, target.pendingTargetStatus, {
+      approvedBy: activeSessionProfile.name,
+    })
+  }
+
+  const handleRejectSupplierReturnApproval = (returnId: string, reason?: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending') return
+    const nowIso = new Date().toISOString()
+    const rejectedTarget = target.pendingTargetStatus || target.status
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              approvalStatus: 'rejected' as const,
+              pendingTargetStatus: undefined,
+              rejectionReason: reason,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_prej_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: rejectedTarget,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_rejected' as const,
+                  note: reason || 'Solicitud rechazada por aprobador',
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: `Rechazo de aprobación RTV → "${rejectedTarget}"`,
+      detail: `${target.folio} · ${target.supplierCompany}${reason ? ` · ${reason}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
+  }
+
+  const handleAdvanceSupplierReturn = (
+    returnId: string,
+    nextStatus: SupplierReturnStatus,
+    noteOverride?: string,
+    rmaOverride?: string
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
+    if (!allowed.includes(nextStatus)) {
+      toast.warning(
+        `Transición de "${target.status}" a "${nextStatus}" deshabilitada en el flujo.`,
+        'Flujo de devoluciones'
+      )
+      return
+    }
+    if (doesTransitionRequireApproval(returnWorkflows.supplier, nextStatus, target.total)) {
+      handleRequestSupplierReturnApproval(returnId, nextStatus, noteOverride, rmaOverride)
+      return
+    }
+    applySupplierReturnTransition(target, nextStatus, { noteOverride, rmaOverride })
+  }
+
+  const handleDeleteSupplierReturn = (returnId: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (target && returnWorkflows.supplier.preventDeleteAfterSettlement) {
+      const rule = returnWorkflows.supplier.steps.find((s) => s.status === target.status)
+      if (rule?.isFinalState || target.inventoryApplied || target.financeApplied) {
+        toast.warning(
+          'No se puede eliminar un expediente liquidado o con impacto aplicado en Kardex/CxP.',
+          'Bloqueado por flujo'
+        )
+        return
+      }
+    }
+    setSupplierReturns((prev) => {
+      const next = prev.filter((r) => r.id !== returnId)
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    if (target) {
+      appendAuditLog({
+        category: 'inventory',
+        crudOperation: 'DELETE',
+        entityType: 'Devolución a proveedor',
+        entityId: target.id,
+        action: 'Eliminación de devolución a proveedor',
+        detail: `${target.folio} · ${target.supplierCompany}`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Devolución ${target.folio} eliminada.`, 'RTV eliminado')
+    }
   }
 
   const handleCreateRequisition = (req: PurchaseRequisition) => {
@@ -2473,16 +3820,42 @@ function AppContent() {
     }
     setActivePage('Administración')
     setAdminSection(section)
+    setSelectedSubsidiaryId(null)
     const route =
       section === 'Subsidiarias'
         ? '/admin/subsidiaries'
         : section === 'Ubicaciones'
         ? '/admin/locations'
+        : section === 'Flujos de devoluciones'
+        ? '/admin/return-workflows'
         : section === 'Resumen'
         ? '/admin/summary'
         : section === 'Historial de Auditoría'
         ? '/admin/audit'
         : '/admin'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToSubsidiaryDetail = (subsidiaryId: string | null) => {
+    if (
+      !canAccessSection(
+        'Administración',
+        'Subsidiarias',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    ) {
+      notifyAccessDenied('Administración · Subsidiarias')
+      return
+    }
+    setActivePage('Administración')
+    setAdminSection('Subsidiarias')
+    setSelectedSubsidiaryId(subsidiaryId)
+    const route = subsidiaryId
+      ? `/admin/subsidiaries/${subsidiaryId === '__new__' ? 'nueva' : encodeURIComponent(subsidiaryId)}`
+      : '/admin/subsidiaries'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -2571,11 +3944,13 @@ function AppContent() {
         ? '/purchases/receptions'
         : section === 'Facturas'
         ? '/purchases/vendorbill'
+        : section === 'Devoluciones'
+        ? '/purchases/returns'
         : '/purchases'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToSalesSection = (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen') => {
+  const navigateToSalesSection = (section: SalesSectionTab) => {
     if (
       !canAccessSection(
         'Ventas',
@@ -2598,6 +3973,8 @@ function AppContent() {
         ? '/sales/orders'
         : section === 'Facturas'
         ? '/sales/invoices'
+        : section === 'Devoluciones'
+        ? '/sales/returns'
         : section === 'Resumen'
         ? '/sales/summary'
         : '/sales'
@@ -2895,6 +4272,8 @@ function AppContent() {
       setPurchasesSection(purchasesSectionFromPath(window.location.pathname))
       setOperationsSection(operationsSectionFromPath(window.location.pathname))
       setReportsSection(reportsSectionFromPath(window.location.pathname))
+      setAdminSection(adminSectionFromPath(window.location.pathname))
+      setSelectedSubsidiaryId(subsidiaryIdFromPath(window.location.pathname))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -3195,7 +4574,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -3783,6 +5162,13 @@ function AppContent() {
               activeSectionAccess={activeSectionAccess}
               isFullAdmin={isFullAdmin}
               isAccountActive={activeSessionProfile.isActive}
+              inventory={inventory}
+              products={initialProductsAndServices}
+              onUpdateInventory={setInventory}
+              categoryThresholds={categoryStockThresholds}
+              onUpdateCategoryThresholds={handleUpdateCategoryThresholds}
+              currentUserName={activeSessionProfile.name}
+              currentUserId={activeActorUserId}
             />
           ) : activePage === 'CRM' ? (
             <section className="crm-page" aria-labelledby="crm-title">
@@ -4181,6 +5567,14 @@ function AppContent() {
                     {t('tabs.sales.invoices')} <span>{receivables.length}</span>
                   </button>
                 )}
+                {canAccessSection('Ventas', 'Devoluciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
+                  <button
+                    className={salesSection === 'Devoluciones' ? 'active' : ''}
+                    onClick={() => navigateToSalesSection('Devoluciones')}
+                  >
+                    {t('tabs.sales.returns')} <span>{customerReturns.length}</span>
+                  </button>
+                )}
                 {canAccessSection('Ventas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Resumen' ? 'active' : ''}
@@ -4352,6 +5746,69 @@ function AppContent() {
                     navigateToSalesSection('Pedidos')
                   }}
                 />
+              ) : salesSection === 'Devoluciones' ? (
+                <SalesReturnsSection
+                  returns={customerReturns}
+                  orders={orders}
+                  receivables={receivables}
+                  warehouses={warehouses}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    price: p.unitPrice ?? 0,
+                    taxRate: p.taxRate,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  currentUserName={activeSessionProfile.name}
+                  userRoleIds={activeSessionProfile.roles}
+                  isFullAdmin={isFullAdmin}
+                  workflowConfig={returnWorkflows.customer}
+                  canCreate={canCreateInSection(
+                    'Ventas',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'Ventas',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onCreateReturn={handleCreateCustomerReturn}
+                  onAdvanceReturnStatus={handleAdvanceCustomerReturn}
+                  onRequestApproval={handleRequestCustomerReturnApproval}
+                  onApproveTransition={handleApproveCustomerReturnTransition}
+                  onRejectApproval={handleRejectCustomerReturnApproval}
+                  onDeleteReturn={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Devoluciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? handleDeleteCustomerReturn
+                      : undefined
+                  }
+                  onNavigateFinanceReceivables={() => navigateToFinanceSection('Cobros')}
+                  onNavigateOperationsInventory={() => navigateToOperationsSection('Inventario')}
+                  onConfigureWorkflow={
+                    canAccessSection(
+                      'Administración',
+                      'Flujos de devoluciones',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToAdminSection('Flujos de devoluciones')
+                      : undefined
+                  }
+                />
               ) : (
                 <SalesOverview
                   quotes={quotes}
@@ -4513,13 +5970,21 @@ function AppContent() {
                     {t('tabs.purchases.invoices')} <span>{payables.length}</span>
                   </button>
                 )}
+                {canAccessSection('Compras', 'Devoluciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
+                  <button
+                    className={purchasesSection === 'Devoluciones' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Devoluciones')}
+                  >
+                    {t('tabs.purchases.returns')} <span>{supplierReturns.length}</span>
+                  </button>
+                )}
               </nav>
 
               {purchasesSection === 'Requisiciones' ? (
                 <PurchasesRequisitions
                   requisitions={requisitions}
                   warehouses={warehouses}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   catalogProducts={initialProductsAndServices.map((p) => ({
                     id: p.id,
                     sku: p.sku,
@@ -4690,11 +6155,73 @@ function AppContent() {
                   onNavigateToFinancePayables={() => navigateToFinanceSection('Pagos')}
                   onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
                 />
+              ) : purchasesSection === 'Devoluciones' ? (
+                <PurchasesReturnsSection
+                  returns={supplierReturns}
+                  purchaseOrders={purchaseOrders}
+                  payables={payables}
+                  warehouses={warehouses}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    cost: p.cost ?? 0,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  currentUserName={activeSessionProfile.name}
+                  userRoleIds={activeSessionProfile.roles}
+                  isFullAdmin={isFullAdmin}
+                  workflowConfig={returnWorkflows.supplier}
+                  canCreate={canCreateInSection(
+                    'Compras',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'Compras',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onCreateReturn={handleCreateSupplierReturn}
+                  onAdvanceReturnStatus={handleAdvanceSupplierReturn}
+                  onRequestApproval={handleRequestSupplierReturnApproval}
+                  onApproveTransition={handleApproveSupplierReturnTransition}
+                  onRejectApproval={handleRejectSupplierReturnApproval}
+                  onDeleteReturn={
+                    canDeleteInSection(
+                      'Compras',
+                      'Devoluciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? handleDeleteSupplierReturn
+                      : undefined
+                  }
+                  onNavigateFinancePayables={() => navigateToFinanceSection('Pagos')}
+                  onNavigatePurchaseOrders={() => navigateToPurchasesSection('Órdenes de compra')}
+                  onConfigureWorkflow={
+                    canAccessSection(
+                      'Administración',
+                      'Flujos de devoluciones',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToAdminSection('Flujos de devoluciones')
+                      : undefined
+                  }
+                />
               ) : (
                 <PurchasesOverview
                   requisitions={requisitions}
                   purchaseOrders={purchaseOrders}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   payables={payables}
                   departments={departments.filter((d) => d.active).map((d) => d.name)}
                   onNavigateSection={(sec) => navigateToPurchasesSection(sec)}
@@ -4762,6 +6289,20 @@ function AppContent() {
                   inventory={inventory}
                   transfers={transfers}
                   movements={movements}
+                  categoryThresholds={categoryStockThresholds}
+                  productCategoryMap={productCategoryMap}
+                  onOpenCategoryThresholds={
+                    canAccessSection(
+                      'Configuración',
+                      'Umbrales de stock',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToSettingSection('Umbrales de stock')
+                      : undefined
+                  }
                   onUpdateInventory={setInventory}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
@@ -4947,7 +6488,7 @@ function AppContent() {
               ) : (
                 <OperationsOverview
                   warehouses={warehouses}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   movements={movements}
                   purchaseOrders={purchaseOrders}
                   shipments={shipments}
@@ -5290,27 +6831,50 @@ function AppContent() {
               departments={departments}
               locations={locations}
               employees={employees}
+              warehouses={warehouses}
+              purchaseOrders={purchaseOrders}
+              requisitions={requisitions}
+              payables={payables}
+              returnWorkflows={returnWorkflows}
+              customerReturns={customerReturns}
+              supplierReturns={supplierReturns}
+              onUpdateReturnWorkflows={handleUpdateReturnWorkflows}
+              onNavigateReturns={(kind) =>
+                kind === 'customer'
+                  ? navigateToSalesSection('Devoluciones')
+                  : navigateToPurchasesSection('Devoluciones')
+              }
               onAddSubsidiary={handleAddSubsidiary}
-              onUpdateSubsidiaries={setSubsidiaries}
+              onUpdateSubsidiaries={handleUpdateSubsidiaries}
               onDeleteSubsidiary={handleDeleteSubsidiary}
               onAddDepartment={handleAddDepartment}
               onAddLocation={handleAddLocation}
-              onUpdateDepartments={setDepartments}
+              onUpdateDepartments={handleUpdateDepartments}
               onDeleteDepartment={handleDeleteDepartment}
               onUpdateLocations={handleUpdateLocations}
               onDeleteLocation={handleDeleteAdminLocation}
               adminSection={adminSection}
               onNavigateSection={navigateToAdminSection}
-              allowedSections={(['Subsidiarias', 'Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'] as AdminSectionTab[]).filter(
-                (sec) =>
-                  canAccessSection(
-                    'Administración',
-                    sec,
-                    activeCapabilities,
-                    isFullAdmin,
-                    activeSessionProfile.isActive,
-                    activeSectionAccess
-                  )
+              selectedSubsidiaryId={selectedSubsidiaryId}
+              onSelectSubsidiary={navigateToSubsidiaryDetail}
+              allowedSections={(
+                [
+                  'Subsidiarias',
+                  'Departamentos',
+                  'Ubicaciones',
+                  'Flujos de devoluciones',
+                  'Resumen',
+                  'Historial de Auditoría',
+                ] as AdminSectionTab[]
+              ).filter((sec) =>
+                canAccessSection(
+                  'Administración',
+                  sec,
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
+                )
               )}
               currentUserName={activeSessionProfile.name}
               canCreateInTab={(tab) =>
@@ -5346,6 +6910,20 @@ function AppContent() {
               orders={orders}
               quotes={quotes}
               inventory={inventory}
+              categoryThresholds={categoryStockThresholds}
+              productCategoryMap={productCategoryMap}
+              onOpenCategoryThresholds={
+                canAccessSection(
+                  'Configuración',
+                  'Umbrales de stock',
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
+                )
+                  ? () => navigateToSettingSection('Umbrales de stock')
+                  : undefined
+              }
               purchaseOrders={purchaseOrders}
               requisitions={requisitions}
               shipments={shipments}

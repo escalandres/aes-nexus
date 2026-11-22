@@ -8,6 +8,15 @@ export type ItemCategory =
   | 'Mantenimiento'
   | 'Capacitación'
 
+export const PRODUCT_CATALOG_CATEGORIES: ItemCategory[] = [
+  'Hardware',
+  'Software y Licencias',
+  'Consultoría',
+  'Diseño y Desarrollo',
+  'Mantenimiento',
+  'Capacitación',
+]
+
 export type TaxRate = '16%' | '8%' | '0%' | 'Exento'
 
 export type UnitOfMeasure =

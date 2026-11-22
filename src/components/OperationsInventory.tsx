@@ -33,12 +33,20 @@ import type {
 import { Skeleton } from 'boneyard-js/react'
 import { inventoryTableBones } from '../bones/registry'
 import { useToast } from './Toast'
+import {
+  resolveEffectiveStockThreshold,
+  type CategoryStockThresholdRule,
+  type EffectiveThresholdSource,
+} from '../data/settings'
 
 interface OperationsInventoryProps {
   warehouses: Warehouse[]
   inventory: InventoryItemLocation[]
   transfers: InventoryTransfer[]
   movements: StockMovement[]
+  categoryThresholds?: CategoryStockThresholdRule[]
+  productCategoryMap?: Map<string, string>
+  onOpenCategoryThresholds?: () => void
   onUpdateInventory: (items: InventoryItemLocation[]) => void
   onUpdateTransfers: (transfers: InventoryTransfer[]) => void
   onAddMovement: (movement: StockMovement) => void
@@ -64,6 +72,9 @@ export function OperationsInventory({
   inventory,
   transfers,
   movements,
+  categoryThresholds = [],
+  productCategoryMap,
+  onOpenCategoryThresholds,
   onUpdateInventory,
   onUpdateTransfers,
   onAddMovement,
@@ -134,20 +145,47 @@ export function OperationsInventory({
   const [lineQty, setLineQty] = useState(1)
   const [lineTargetBin, setLineTargetBin] = useState('')
 
+  const { effectiveInventory, thresholdMetaById } = useMemo(() => {
+    const meta = new Map<
+      string,
+      { source: EffectiveThresholdSource; category: string }
+    >()
+    const list = inventory.map((item) => {
+      if (categoryThresholds.length === 0) {
+        meta.set(item.id, {
+          source: 'sku',
+          category: item.category || productCategoryMap?.get(item.productId) || 'Hardware',
+        })
+        return item
+      }
+      const res = resolveEffectiveStockThreshold(item, categoryThresholds, productCategoryMap)
+      meta.set(item.id, { source: res.source, category: res.category })
+      if (res.effectiveMinStock === item.minStock && item.category === res.category) {
+        return item
+      }
+      return {
+        ...item,
+        category: res.category,
+        minStock: res.effectiveMinStock,
+      }
+    })
+    return { effectiveInventory: list, thresholdMetaById: meta }
+  }, [inventory, categoryThresholds, productCategoryMap])
+
   // Currently selected item for threshold configuration
   const selectedThresholdItem = useMemo(() => {
     if (thresholdItemId) {
-      const found = inventory.find((i) => i.id === thresholdItemId)
+      const found = effectiveInventory.find((i) => i.id === thresholdItemId)
       if (found) return found
     }
-    return inventory.find((i) => i.stock <= i.minStock) || inventory[0] || null
-  }, [inventory, thresholdItemId])
+    return effectiveInventory.find((i) => i.stock <= i.minStock) || effectiveInventory[0] || null
+  }, [effectiveInventory, thresholdItemId])
 
   // Open threshold configuration modal
   const handleOpenThresholdModal = (itemId?: string) => {
     const target = itemId
-      ? inventory.find((i) => i.id === itemId)
-      : inventory.find((i) => i.stock <= i.minStock) || inventory[0]
+      ? effectiveInventory.find((i) => i.id === itemId)
+      : effectiveInventory.find((i) => i.stock <= i.minStock) || effectiveInventory[0]
     if (target) {
       setThresholdItemId(target.id)
       setThresholdValue(target.minStock)
@@ -161,12 +199,20 @@ export function OperationsInventory({
     if (!selectedThresholdItem) return
 
     const updatedVal = Math.max(0, thresholdValue)
+    const meta = thresholdMetaById.get(selectedThresholdItem.id)
     const updatedList = inventory.map((i) =>
-      i.id === selectedThresholdItem.id ? { ...i, minStock: updatedVal } : i
+      i.id === selectedThresholdItem.id
+        ? { ...i, minStock: updatedVal, thresholdSource: 'sku' as const }
+        : i
     )
     onUpdateInventory(updatedList)
 
-    if (selectedThresholdItem.stock <= updatedVal) {
+    if (meta?.source === 'category_override') {
+      toast.info(
+        `El ajuste individual para ${selectedThresholdItem.sku} (${updatedVal}) quedó guardado, pero la categoría "${meta.category}" tiene una regla maestra forzada.`,
+        'Regla maestra activa'
+      )
+    } else if (selectedThresholdItem.stock <= updatedVal) {
       toast.warning(
         `Alerta activada: El stock disponible (${selectedThresholdItem.stock} uds.) de "${selectedThresholdItem.name}" quedó en o por debajo del nuevo umbral mínimo (${updatedVal}). Se disparó una alerta visual en el Dashboard Ejecutivo.`,
         'Alerta de stock activada'
@@ -181,14 +227,20 @@ export function OperationsInventory({
 
   // Quick batch adjust from table
   const handleQuickSaveItemThreshold = (itemId: string, newMin: number) => {
-    const target = inventory.find((i) => i.id === itemId)
+    const target = effectiveInventory.find((i) => i.id === itemId)
     if (!target) return
+    const meta = thresholdMetaById.get(itemId)
     const safeMin = Math.max(0, newMin)
     const updatedList = inventory.map((i) =>
-      i.id === itemId ? { ...i, minStock: safeMin } : i
+      i.id === itemId ? { ...i, minStock: safeMin, thresholdSource: 'sku' as const } : i
     )
     onUpdateInventory(updatedList)
-    if (target.stock <= safeMin) {
+    if (meta?.source === 'category_override') {
+      toast.info(
+        `Ajuste SKU de ${target.sku} guardado (${safeMin}), pero prevalece la regla maestra de "${meta.category}".`,
+        'Regla maestra activa'
+      )
+    } else if (target.stock <= safeMin) {
       toast.warning(
         `Alerta de stock: ${target.sku} (${target.stock} uds.) cayó en o por debajo del nuevo umbral (${safeMin}). Alerta visible en Dashboard.`,
         'Umbral mínimo modificado'
@@ -203,20 +255,22 @@ export function OperationsInventory({
 
   // Filtered inventory
   const filteredInventory = useMemo(() => {
-    return inventory.filter((item) => {
+    return effectiveInventory.filter((item) => {
       const matchWarehouse =
         selectedWarehouseId === 'all' || item.warehouseId === selectedWarehouseId
       const q = searchQuery.toLowerCase()
+      const meta = thresholdMetaById.get(item.id)
       const matchSearch =
         !q ||
         item.name.toLowerCase().includes(q) ||
         item.sku.toLowerCase().includes(q) ||
         item.locationBin.toLowerCase().includes(q) ||
-        item.warehouseName.toLowerCase().includes(q)
+        item.warehouseName.toLowerCase().includes(q) ||
+        (meta?.category || '').toLowerCase().includes(q)
       const matchLowStock = filterLowStockOnly ? item.stock <= item.minStock : true
       return matchWarehouse && matchSearch && matchLowStock
     })
-  }, [inventory, selectedWarehouseId, searchQuery, filterLowStockOnly])
+  }, [effectiveInventory, thresholdMetaById, selectedWarehouseId, searchQuery, filterLowStockOnly])
 
   // Filtered transfers
   const filteredTransfers = useMemo(() => {
@@ -265,8 +319,8 @@ export function OperationsInventory({
   }, [filteredInventory])
 
   const lowStockCount = useMemo(() => {
-    return inventory.filter((i) => i.stock <= i.minStock).length
-  }, [inventory])
+    return effectiveInventory.filter((i) => i.stock <= i.minStock).length
+  }, [effectiveInventory])
 
   const inTransitTransfersCount = useMemo(() => {
     return transfers.filter((t) => t.status === 'En tránsito').length
@@ -2353,14 +2407,29 @@ export function OperationsInventory({
                   Establece el nivel mínimo de seguridad por producto. Cuando la cantidad física disponible caiga en o por debajo de este límite, el sistema disparará automáticamente una alerta visual en el Dashboard Principal.
                 </p>
               </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setIsThresholdModalOpen(false)}
-                aria-label="Cerrar modal"
-              >
-                <X size={18} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {onOpenCategoryThresholds && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={() => {
+                      setIsThresholdModalOpen(false)
+                      onOpenCategoryThresholds()
+                    }}
+                    title="Configurar umbrales globales por categoría de producto"
+                  >
+                    <Layers size={13} /> Reglas por categoría
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setIsThresholdModalOpen(false)}
+                  aria-label="Cerrar modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             <div className="threshold-modal-body">
@@ -2378,11 +2447,11 @@ export function OperationsInventory({
                       value={thresholdItemId || (selectedThresholdItem ? selectedThresholdItem.id : '')}
                       onChange={(e) => {
                         setThresholdItemId(e.target.value)
-                        const itm = inventory.find((i) => i.id === e.target.value)
+                        const itm = effectiveInventory.find((i) => i.id === e.target.value)
                         if (itm) setThresholdValue(itm.minStock)
                       }}
                     >
-                      {inventory.map((inv) => (
+                      {effectiveInventory.map((inv) => (
                         <option key={inv.id} value={inv.id}>
                           [{inv.sku}] {inv.name} — {inv.warehouseName} (Stock actual: {inv.stock} {inv.unitOfMeasure})
                         </option>
@@ -2477,9 +2546,9 @@ export function OperationsInventory({
               {/* Resumen global y ajuste rápido de todos los productos */}
               <div className="threshold-summary-section">
                 <div className="threshold-table-header">
-                  <h4>Políticas de umbral de stock en almacenes ({inventory.length} referencias)</h4>
+                  <h4>Políticas de umbral de stock en almacenes ({effectiveInventory.length} referencias)</h4>
                   <span className="threshold-legend">
-                    <span className="dot-alert" /> {inventory.filter((i) => i.stock <= i.minStock).length} artículos bajo umbral mínimo
+                    <span className="dot-alert" /> {effectiveInventory.filter((i) => i.stock <= i.minStock).length} artículos bajo umbral mínimo
                   </span>
                 </div>
 
@@ -2496,15 +2565,25 @@ export function OperationsInventory({
                       </tr>
                     </thead>
                     <tbody>
-                      {inventory.map((inv) => {
+                      {effectiveInventory.map((inv) => {
                         const isUnder = inv.stock <= inv.minStock
+                        const meta = thresholdMetaById.get(inv.id)
+                        const originText =
+                          meta?.source === 'category_override'
+                            ? `${meta.category} (Regla maestra)`
+                            : meta?.source === 'category_inherit'
+                            ? `${meta.category} (Heredado)`
+                            : `${meta?.category || 'General'} (SKU)`
                         return (
                           <tr key={inv.id} className={isUnder ? 'tr-warning' : ''}>
                             <td>
                               <span className="sku-badge-small">{inv.sku}</span>
                               <strong style={{ fontSize: '9.5px', color: '#27342c' }}>{inv.name}</strong>
                             </td>
-                            <td style={{ fontSize: '9px', color: '#68776e' }}>{inv.warehouseName}</td>
+                            <td style={{ fontSize: '9px', color: '#68776e' }}>
+                              <div>{inv.warehouseName}</div>
+                              <small style={{ color: '#88948d' }}>{originText}</small>
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               <strong className={`stock-number ${isUnder ? 'text-alert' : ''}`}>
                                 {inv.stock}

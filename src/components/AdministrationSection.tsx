@@ -36,6 +36,7 @@ import {
   Pencil,
   Trash2,
   Check,
+  GitBranch,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -52,14 +53,25 @@ import { useI18n } from '../i18n/I18nContext'
 import {
   AUDIT_CHANGED_EVENT,
   USERS_CHANGED_EVENT,
-  appendAuditLog,
   loadStoredAuditEvents,
   loadStoredWorkspaceUsers,
   type AuditCategory,
+  type AuditCrudOperation,
   type AuditEventRecord,
   type WorkspaceUserRecord,
 } from '../data/settings'
 import type { EmployeeRecord } from '../data/employees'
+import type { PurchaseOrder, Warehouse } from '../data/operations'
+import type { PurchaseRequisition } from '../data/purchases'
+import type { BillPayable } from '../data/finance'
+import {
+  DEFAULT_RETURN_WORKFLOWS,
+  type CustomerReturn,
+  type ReturnWorkflowsSettings,
+  type SupplierReturn,
+} from '../data/returns'
+import { ReturnWorkflowsPanel } from './ReturnWorkflowsPanel'
+import { SubsidiaryDetailView } from './SubsidiaryDetailView'
 
 export interface SubsidiaryRecord {
   id: string
@@ -111,6 +123,7 @@ export type AdminSectionTab =
   | 'Subsidiarias'
   | 'Departamentos'
   | 'Ubicaciones'
+  | 'Flujos de devoluciones'
   | 'Resumen'
   | 'Historial de Auditoría'
 
@@ -119,6 +132,15 @@ interface AdministrationSectionProps {
   departments: DepartmentRecord[]
   locations: PhysicalLocationRecord[]
   employees?: EmployeeRecord[]
+  warehouses?: Warehouse[]
+  purchaseOrders?: PurchaseOrder[]
+  requisitions?: PurchaseRequisition[]
+  payables?: BillPayable[]
+  returnWorkflows?: ReturnWorkflowsSettings
+  customerReturns?: CustomerReturn[]
+  supplierReturns?: SupplierReturn[]
+  onUpdateReturnWorkflows?: (next: ReturnWorkflowsSettings, summaryDetail: string) => void
+  onNavigateReturns?: (kind: 'customer' | 'supplier') => void
   onAddSubsidiary: (sub: SubsidiaryRecord) => void
   onUpdateSubsidiaries: (subs: SubsidiaryRecord[]) => void
   onDeleteSubsidiary?: (subsidiaryId: string) => void
@@ -130,6 +152,8 @@ interface AdministrationSectionProps {
   onDeleteLocation?: (locationId: string) => void
   adminSection: AdminSectionTab
   onNavigateSection: (sec: AdminSectionTab) => void
+  selectedSubsidiaryId?: string | null
+  onSelectSubsidiary?: (id: string | null) => void
   allowedSections?: AdminSectionTab[]
   currentUserName?: string
   canCreateInTab?: (tab: AdminSectionTab) => boolean
@@ -147,7 +171,7 @@ const LOCATION_TYPES: LocationType[] = [
 
 type AdminAuditFilter = 'all' | AuditCategory
 
-type AuditActionKind = 'all' | 'create' | 'update' | 'status' | 'transaction' | 'access'
+type AuditActionKind = 'all' | 'create' | 'update' | 'delete' | 'status' | 'transaction' | 'access'
 
 const AUDIT_CATEGORY_META: Record<
   AuditCategory,
@@ -170,6 +194,7 @@ const AUDIT_ACTION_META: Record<
 > = {
   create: { label: 'Alta / Creación', shortLabel: 'Creación', toneClass: 'act-create' },
   update: { label: 'Modificación / Ajuste', shortLabel: 'Modificación', toneClass: 'act-update' },
+  delete: { label: 'Eliminación / Baja', shortLabel: 'Eliminación', toneClass: 'act-delete' },
   status: { label: 'Estado / Aprobación', shortLabel: 'Estado', toneClass: 'act-status' },
   transaction: { label: 'Operación / Movimiento', shortLabel: 'Operación', toneClass: 'act-transaction' },
   access: { label: 'Acceso / Sesión', shortLabel: 'Acceso', toneClass: 'act-access' },
@@ -177,9 +202,21 @@ const AUDIT_ACTION_META: Record<
 
 function classifyAuditActionKind(
   category: AuditCategory,
-  actionText: string
+  actionText: string,
+  crudOperation?: AuditCrudOperation
 ): Exclude<AuditActionKind, 'all'> {
   const normalized = actionText.toLowerCase()
+  if (crudOperation === 'DELETE') {
+    return 'delete'
+  }
+  if (crudOperation === 'CREATE') {
+    return 'create'
+  }
+  if (
+    /eliminación|elimina|baja|borrad|supresión|remov/.test(normalized)
+  ) {
+    return 'delete'
+  }
   if (
     category === 'session' ||
     /inicio de sesión|sesión|acceso confirmado|2fa|doble factor/.test(normalized)
@@ -238,6 +275,15 @@ export function AdministrationSection({
   departments,
   locations,
   employees = [],
+  warehouses = [],
+  purchaseOrders = [],
+  requisitions = [],
+  payables = [],
+  returnWorkflows = DEFAULT_RETURN_WORKFLOWS,
+  customerReturns = [],
+  supplierReturns = [],
+  onUpdateReturnWorkflows,
+  onNavigateReturns,
   onAddSubsidiary,
   onUpdateSubsidiaries,
   onDeleteSubsidiary,
@@ -249,6 +295,8 @@ export function AdministrationSection({
   onDeleteLocation,
   adminSection,
   onNavigateSection,
+  selectedSubsidiaryId: controlledSubsidiaryId,
+  onSelectSubsidiary,
   allowedSections,
   currentUserName = 'Andrea Morales',
   canCreateInTab,
@@ -261,6 +309,7 @@ export function AdministrationSection({
   const canCreateSub = canCreateInTab ? canCreateInTab('Subsidiarias') : true
   const canEditSub = canEditInTab ? canEditInTab('Subsidiarias') : true
   const canDeleteSub = (canDeleteInTab ? canDeleteInTab('Subsidiarias') : true) && Boolean(onDeleteSubsidiary)
+  const canEditWorkflows = canEditInTab ? canEditInTab('Flujos de devoluciones') : true
 
   const canCreateDept = canCreateInTab ? canCreateInTab('Departamentos') : true
   const canEditDept = canEditInTab ? canEditInTab('Departamentos') : true
@@ -271,6 +320,16 @@ export function AdministrationSection({
   const canDeleteLoc = (canDeleteInTab ? canDeleteInTab('Ubicaciones') : true) && Boolean(onDeleteLocation)
 
   // Search queries & filters
+  const [uncontrolledSubsidiaryId, setUncontrolledSubsidiaryId] = useState<string | null>(null)
+  const selectedSubsidiaryId =
+    controlledSubsidiaryId !== undefined ? controlledSubsidiaryId : uncontrolledSubsidiaryId
+  const setSelectedSubsidiaryId = (id: string | null) => {
+    if (onSelectSubsidiary) {
+      onSelectSubsidiary(id)
+    } else {
+      setUncontrolledSubsidiaryId(id)
+    }
+  }
   const [subsidiarySearch, setSubsidiarySearch] = useState('')
   const [subsidiaryStatusFilter, setSubsidiaryStatusFilter] = useState<'Todas' | 'Activas' | 'Inactivas'>('Todas')
   const [departmentSearch, setDepartmentSearch] = useState('')
@@ -278,6 +337,23 @@ export function AdministrationSection({
   const [locationSearch, setLocationSearch] = useState('')
   const [locationTypeFilter, setLocationTypeFilter] = useState<string>('Todos')
   const [locSubsidiaryFilter, setLocSubsidiaryFilter] = useState<string>('Todas')
+
+  useEffect(() => {
+    if (adminSection !== 'Subsidiarias' && controlledSubsidiaryId === undefined) {
+      setUncontrolledSubsidiaryId(null)
+    }
+  }, [adminSection, controlledSubsidiaryId])
+
+  const openSubsidiaryDetail = (id: string) => {
+    if (onSelectSubsidiary) {
+      onSelectSubsidiary(id)
+      return
+    }
+    setUncontrolledSubsidiaryId(id)
+    if (adminSection !== 'Subsidiarias') {
+      onNavigateSection('Subsidiarias')
+    }
+  }
 
   // Audit history state (synchronized with global audit store & workspace users)
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>(() =>
@@ -484,7 +560,7 @@ export function AdministrationSection({
     auditEvents.forEach((ev) => {
       if (auditFilter !== 'all' && ev.category !== auditFilter) return
       const { actionText } = resolveEventText(ev)
-      const kind = classifyAuditActionKind(ev.category, actionText)
+      const kind = classifyAuditActionKind(ev.category, actionText, ev.crudOperation)
       if (auditActionKindFilter !== 'all' && kind !== auditActionKindFilter) return
       counts.set(actionText, (counts.get(actionText) || 0) + 1)
     })
@@ -514,17 +590,20 @@ export function AdministrationSection({
       if (!q) return true
       const { actionText, detailText } = resolveEventText(ev)
       const catLabel = AUDIT_CATEGORY_META[ev.category]?.label || ev.category
-      const actionKindLabel = AUDIT_ACTION_META[classifyAuditActionKind(ev.category, actionText)].label
+      const actionKindLabel =
+        AUDIT_ACTION_META[classifyAuditActionKind(ev.category, actionText, ev.crudOperation)].label
       const metaText = ev.sessionMeta
         ? `${ev.sessionMeta.roleLabel} ${ev.sessionMeta.ipAddress} ${ev.sessionMeta.deviceBrowser}`.toLowerCase()
         : ''
+      const entityMetaText = `${ev.userId || ''} ${ev.crudOperation || ''} ${ev.entityType || ''} ${ev.entityId || ''}`.toLowerCase()
       return (
         actionText.toLowerCase().includes(q) ||
         detailText.toLowerCase().includes(q) ||
         ev.user.toLowerCase().includes(q) ||
         catLabel.toLowerCase().includes(q) ||
         actionKindLabel.toLowerCase().includes(q) ||
-        metaText.includes(q)
+        metaText.includes(q) ||
+        entityMetaText.includes(q)
       )
     })
   }, [auditEvents, auditSearch, auditUserFilter, auditDateFrom, auditDateTo, t])
@@ -533,7 +612,7 @@ export function AdministrationSection({
     const counts: Record<string, number> = { all: auditBaseScopedEvents.length }
     auditBaseScopedEvents.forEach((ev) => {
       const { actionText } = resolveEventText(ev)
-      const kind = classifyAuditActionKind(ev.category, actionText)
+      const kind = classifyAuditActionKind(ev.category, actionText, ev.crudOperation)
       if (auditActionKindFilter !== 'all' && kind !== auditActionKindFilter) return
       if (auditSpecificActionFilter !== 'all' && actionText !== auditSpecificActionFilter) return
       counts[ev.category] = (counts[ev.category] || 0) + 1
@@ -546,6 +625,7 @@ export function AdministrationSection({
       all: 0,
       create: 0,
       update: 0,
+      delete: 0,
       status: 0,
       transaction: 0,
       access: 0,
@@ -553,7 +633,7 @@ export function AdministrationSection({
     auditBaseScopedEvents.forEach((ev) => {
       if (auditFilter !== 'all' && ev.category !== auditFilter) return
       const { actionText } = resolveEventText(ev)
-      const kind = classifyAuditActionKind(ev.category, actionText)
+      const kind = classifyAuditActionKind(ev.category, actionText, ev.crudOperation)
       counts.all += 1
       counts[kind] += 1
     })
@@ -566,7 +646,7 @@ export function AdministrationSection({
       const { actionText } = resolveEventText(ev)
       if (
         auditActionKindFilter !== 'all' &&
-        classifyAuditActionKind(ev.category, actionText) !== auditActionKindFilter
+        classifyAuditActionKind(ev.category, actionText, ev.crudOperation) !== auditActionKindFilter
       ) {
         return false
       }
@@ -666,7 +746,7 @@ export function AdministrationSection({
             const { actionText } = resolveEventText(ev)
             if (
               auditActionKindFilter !== 'all' &&
-              classifyAuditActionKind(ev.category, actionText) !== auditActionKindFilter
+              classifyAuditActionKind(ev.category, actionText, ev.crudOperation) !== auditActionKindFilter
             ) {
               return false
             }
@@ -847,11 +927,16 @@ export function AdministrationSection({
   const handleExportAuditCsv = () => {
     const header = [
       'Fecha y hora',
+      'Timestamp ISO',
       'Módulo',
       'Tipo de acción',
+      'Operación CRUD',
+      'Entidad',
+      'ID Entidad',
       'Acción',
       'Detalle',
       'Usuario',
+      'ID Usuario',
       'Rol',
       'IP',
       'Dispositivo / Navegador',
@@ -860,14 +945,20 @@ export function AdministrationSection({
       const { actionText, detailText } = resolveEventText(ev)
       const dt = new Date(ev.timestampIso)
       const catLabel = AUDIT_CATEGORY_META[ev.category]?.label || ev.category
-      const kindLabel = AUDIT_ACTION_META[classifyAuditActionKind(ev.category, actionText)].label
+      const kindLabel =
+        AUDIT_ACTION_META[classifyAuditActionKind(ev.category, actionText, ev.crudOperation)].label
       return [
         `${formatDate(dt)} ${formatTime(dt)}`,
+        ev.timestampIso,
         catLabel,
         kindLabel,
+        ev.crudOperation || '—',
+        ev.entityType || '—',
+        ev.entityId || '—',
         actionText,
         detailText,
         ev.user,
+        ev.userId || '—',
         ev.sessionMeta?.roleLabel || '—',
         ev.sessionMeta?.ipAddress || '—',
         ev.sessionMeta?.deviceBrowser || '—',
@@ -898,23 +989,6 @@ export function AdministrationSection({
   }
 
   // Subsidiary modal helpers
-  const openNewSubsidiaryModal = () => {
-    setEditingSubsidiary(null)
-    setConfirmingDeleteSubsidiary(false)
-    setSubCode('')
-    setSubName('')
-    setSubLegalName('')
-    setSubTaxId('')
-    setSubCountry('México')
-    setSubCurrency('MXN')
-    setSubLegalRep('')
-    setSubFiscalAddress('')
-    setSubIsHolding(subsidiaries.length === 0)
-    setSubLinkedDeptIds([])
-    setSubLinkedLocationIds([])
-    setIsSubsidiaryModalOpen(true)
-  }
-
   const openEditSubsidiaryModal = (sub: SubsidiaryRecord) => {
     setEditingSubsidiary(sub)
     setConfirmingDeleteSubsidiary(false)
@@ -978,12 +1052,6 @@ export function AdministrationSection({
         return s
       })
       onUpdateSubsidiaries(updatedSubs)
-      appendAuditLog({
-        category: 'admin',
-        action: 'Actualización de subsidiaria',
-        detail: `${payload.code} · ${payload.name} (${payload.taxId}) · ${subLinkedDeptIds.length} deptos. / ${subLinkedLocationIds.length} sedes`,
-        user: currentUserName,
-      })
       toast.success(`Subsidiaria “${payload.name}” actualizada.`, 'Subsidiaria actualizada')
     } else {
       if (subIsHolding) {
@@ -1042,12 +1110,6 @@ export function AdministrationSection({
     if (!sub) return
     const updated = subsidiaries.map((s) => (s.id === id ? { ...s, active: !s.active } : s))
     onUpdateSubsidiaries(updated)
-    appendAuditLog({
-      category: 'admin',
-      action: 'Cambio de estado de subsidiaria',
-      detail: `${sub.code} · ${sub.name} → ${sub.active ? 'Inactiva' : 'Activa'}`,
-      user: currentUserName,
-    })
     toast.info(
       `Subsidiaria ${sub.name} ahora está ${sub.active ? 'Inactiva' : 'Activa'}.`,
       'Estado actualizado'
@@ -1119,12 +1181,6 @@ export function AdministrationSection({
       onUpdateDepartments(
         departments.map((d) => (d.id === editingDepartment.id ? updatedDept : d))
       )
-      appendAuditLog({
-        category: 'admin',
-        action: 'Actualización de departamento',
-        detail: `${updatedDept.code} · ${updatedDept.name} (${deptSubsidiaryIds.length} subsidiaria(s))`,
-        user: currentUserName,
-      })
       toast.success(`Departamento “${updatedDept.name}” actualizado.`, 'Departamento actualizado')
     } else {
       const newDept: DepartmentRecord = {
@@ -1232,12 +1288,6 @@ export function AdministrationSection({
         subsidiaryIds: locSubsidiaryIds,
       }
       onUpdateLocations(locations.map((l) => (l.id === editingLocation.id ? updatedLoc : l)))
-      appendAuditLog({
-        category: 'admin',
-        action: 'Actualización de ubicación física',
-        detail: `${updatedLoc.code} · ${updatedLoc.name} (${locSubsidiaryIds.length} subsidiaria(s))`,
-        user: currentUserName,
-      })
       toast.success(`Ubicación “${updatedLoc.name}” actualizada.`, 'Ubicación actualizada')
     } else {
       const newLocation: PhysicalLocationRecord = {
@@ -1282,14 +1332,6 @@ export function AdministrationSection({
     const updated = departments.map((d) => (d.id === id ? { ...d, active: !d.active } : d))
     onUpdateDepartments(updated)
     const dept = departments.find((d) => d.id === id)
-    if (dept) {
-      appendAuditLog({
-        category: 'admin',
-        action: 'Cambio de estado de departamento',
-        detail: `${dept.code} · ${dept.name} → ${dept.active ? 'Inactivo' : 'Activo'}`,
-        user: currentUserName,
-      })
-    }
     toast.info(
       `Departamento ${dept?.name} ahora está ${dept?.active ? 'Inactivo' : 'Activo'}.`,
       'Estado actualizado'
@@ -1300,14 +1342,6 @@ export function AdministrationSection({
     const updated = locations.map((l) => (l.id === id ? { ...l, active: !l.active } : l))
     onUpdateLocations(updated)
     const loc = locations.find((l) => l.id === id)
-    if (loc) {
-      appendAuditLog({
-        category: 'admin',
-        action: 'Cambio de estado de ubicación física',
-        detail: `${loc.code} · ${loc.name} → ${loc.active ? 'Inactiva' : 'Activa'}`,
-        user: currentUserName,
-      })
-    }
     toast.info(
       `Ubicación ${loc?.name} ahora está ${loc?.active ? 'Inactiva' : 'Activa'}.`,
       'Estado actualizado'
@@ -1372,7 +1406,10 @@ export function AdministrationSection({
         {isTabVisible('Subsidiarias') && (
           <button
             className={adminSection === 'Subsidiarias' ? 'active' : ''}
-            onClick={() => onNavigateSection('Subsidiarias')}
+            onClick={() => {
+              setSelectedSubsidiaryId(null)
+              onNavigateSection('Subsidiarias')
+            }}
           >
             <Landmark size={13} />
             Subsidiarias <span>{subsidiaries.length}</span>
@@ -1394,6 +1431,19 @@ export function AdministrationSection({
           >
             <MapPin size={13} />
             Ubicaciones físicas <span>{locations.length}</span>
+          </button>
+        )}
+        {isTabVisible('Flujos de devoluciones') && (
+          <button
+            className={adminSection === 'Flujos de devoluciones' ? 'active' : ''}
+            onClick={() => onNavigateSection('Flujos de devoluciones')}
+          >
+            <GitBranch size={13} />
+            Flujos de devoluciones{' '}
+            <span>
+              {returnWorkflows.customer.steps.filter((s) => s.enabled && s.requiresApproval).length +
+                returnWorkflows.supplier.steps.filter((s) => s.enabled && s.requiresApproval).length}
+            </span>
           </button>
         )}
         {isTabVisible('Resumen') && (
@@ -1418,198 +1468,253 @@ export function AdministrationSection({
 
       {/* Section 0: Subsidiarias */}
       {adminSection === 'Subsidiarias' && (
-        <div className="finance-section-container">
-          <div className="ops-header-strip">
-            <div className="ops-header-left">
-              <div className="ops-icon-box fin-icon-box">
-                <Landmark size={20} />
+        selectedSubsidiaryId ? (
+          <SubsidiaryDetailView
+            subsidiaryId={selectedSubsidiaryId}
+            subsidiaries={subsidiaries}
+            departments={departments}
+            locations={locations}
+            employees={employees}
+            warehouses={warehouses}
+            purchaseOrders={purchaseOrders}
+            requisitions={requisitions}
+            payables={payables}
+            currentUserName={currentUserName}
+            canCreateSub={canCreateSub}
+            canEditSub={canEditSub}
+            canDeleteSub={canDeleteSub}
+            canCreateDept={canCreateDept}
+            canCreateLoc={canCreateLoc}
+            onBack={() => setSelectedSubsidiaryId(null)}
+            onSelectSubsidiary={(id) => setSelectedSubsidiaryId(id)}
+            onAddSubsidiary={onAddSubsidiary}
+            onUpdateSubsidiaries={onUpdateSubsidiaries}
+            onDeleteSubsidiary={onDeleteSubsidiary}
+            onAddDepartment={onAddDepartment}
+            onUpdateDepartments={onUpdateDepartments}
+            onAddLocation={onAddLocation}
+            onUpdateLocations={onUpdateLocations}
+          />
+        ) : (
+          <div className="finance-section-container">
+            <div className="ops-header-strip">
+              <div className="ops-header-left">
+                <div className="ops-icon-box fin-icon-box">
+                  <Landmark size={20} />
+                </div>
+                <div>
+                  <h2>Subsidiarias y Entidades Legales</h2>
+                  <p>
+                    Razones sociales del grupo empresarial vinculadas con sus departamentos operativos y sedes físicas.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2>Subsidiarias y Entidades Legales</h2>
-                <p>
-                  Razones sociales del grupo empresarial vinculadas con sus departamentos operativos y sedes físicas.
-                </p>
+
+              <div className="ops-header-right">
+                <div className="ops-stat-item">
+                  <span className="ops-stat-label">Total subsidiarias</span>
+                  <strong className="ops-stat-val">{subsidiaries.length}</strong>
+                </div>
+                <div className="ops-stat-item">
+                  <span className="ops-stat-label">Subsidiarias activas</span>
+                  <span className="ops-stat-pill ok">
+                    {subsidiaries.filter((s) => s.active).length} activas
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="ops-header-right">
-              <div className="ops-stat-item">
-                <span className="ops-stat-label">Total subsidiarias</span>
-                <strong className="ops-stat-val">{subsidiaries.length}</strong>
-              </div>
-              <div className="ops-stat-item">
-                <span className="ops-stat-label">Subsidiarias activas</span>
-                <span className="ops-stat-pill ok">
-                  {subsidiaries.filter((s) => s.active).length} activas
-                </span>
-              </div>
-            </div>
-          </div>
+            <div className="ops-toolbar">
+              <div className="ops-filter-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <div className="ops-search-input-wrap" style={{ minWidth: '300px' }}>
+                  <Search size={14} />
+                  <input
+                    type="text"
+                    placeholder="Buscar por código, nombre, razón social, RFC o país..."
+                    value={subsidiarySearch}
+                    onChange={(e) => setSubsidiarySearch(e.target.value)}
+                  />
+                  {subsidiarySearch && (
+                    <button
+                      className="search-clear-btn"
+                      onClick={() => setSubsidiarySearch('')}
+                      title="Limpiar búsqueda"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
 
-          <div className="ops-toolbar">
-            <div className="ops-filter-group" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <div className="ops-search-input-wrap" style={{ minWidth: '300px' }}>
-                <Search size={14} />
-                <input
-                  type="text"
-                  placeholder="Buscar por código, nombre, razón social, RFC o país..."
-                  value={subsidiarySearch}
-                  onChange={(e) => setSubsidiarySearch(e.target.value)}
-                />
-                {subsidiarySearch && (
-                  <button
-                    className="search-clear-btn"
-                    onClick={() => setSubsidiarySearch('')}
-                    title="Limpiar búsqueda"
+                <div className="accounting-select-wrap">
+                  <label htmlFor="filter-sub-status">Estado:</label>
+                  <select
+                    id="filter-sub-status"
+                    className="accounting-filter-select"
+                    value={subsidiaryStatusFilter}
+                    onChange={(e) =>
+                      setSubsidiaryStatusFilter(e.target.value as 'Todas' | 'Activas' | 'Inactivas')
+                    }
                   >
-                    <X size={13} />
+                    <option value="Todas">Todas ({subsidiaries.length})</option>
+                    <option value="Activas">
+                      Activas ({subsidiaries.filter((s) => s.active).length})
+                    </option>
+                    <option value="Inactivas">
+                      Inactivas ({subsidiaries.filter((s) => !s.active).length})
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="ops-actions-group">
+                {canCreateSub && (
+                  <button
+                    className="button button-primary"
+                    onClick={() => setSelectedSubsidiaryId('__new__')}
+                  >
+                    <Plus size={14} /> Nueva subsidiaria
                   </button>
                 )}
               </div>
-
-              <div className="accounting-select-wrap">
-                <label htmlFor="filter-sub-status">Estado:</label>
-                <select
-                  id="filter-sub-status"
-                  className="accounting-filter-select"
-                  value={subsidiaryStatusFilter}
-                  onChange={(e) =>
-                    setSubsidiaryStatusFilter(e.target.value as 'Todas' | 'Activas' | 'Inactivas')
-                  }
-                >
-                  <option value="Todas">Todas ({subsidiaries.length})</option>
-                  <option value="Activas">
-                    Activas ({subsidiaries.filter((s) => s.active).length})
-                  </option>
-                  <option value="Inactivas">
-                    Inactivas ({subsidiaries.filter((s) => !s.active).length})
-                  </option>
-                </select>
-              </div>
             </div>
 
-            <div className="ops-actions-group">
-              {canCreateSub && (
-                <button
-                  className="button button-primary"
-                  onClick={openNewSubsidiaryModal}
-                >
-                  <Plus size={14} /> Nueva subsidiaria
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="table-wrap ops-table-wrap">
-            <table className="data-table ops-data-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '110px' }}>CÓDIGO</th>
-                  <th>SUBSIDIARIA / RAZÓN SOCIAL</th>
-                  <th>RFC / TAX ID</th>
-                  <th>PAÍS Y DIVISA</th>
-                  <th>DEPARTAMENTOS Y SEDES</th>
-                  <th>ESTADO</th>
-                  <th style={{ textAlign: 'right', width: '150px' }}>ACCIONES</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSubsidiaries.length === 0 ? (
+            <div className="table-wrap ops-table-wrap">
+              <table className="data-table ops-data-table">
+                <thead>
                   <tr>
-                    <td colSpan={7} className="empty-cell">
-                      No se encontraron subsidiarias registradas con los criterios seleccionados.
-                    </td>
+                    <th style={{ width: '110px' }}>CÓDIGO</th>
+                    <th>SUBSIDIARIA / RAZÓN SOCIAL</th>
+                    <th>RFC / TAX ID</th>
+                    <th>PAÍS Y DIVISA</th>
+                    <th>DEPARTAMENTOS Y SEDES</th>
+                    <th>ESTADO</th>
+                    <th style={{ textAlign: 'right', width: '230px' }}>ACCIONES</th>
                   </tr>
-                ) : (
-                  filteredSubsidiaries.map((sub) => {
-                    const linkedDepts = departments.filter((d) =>
-                      (d.subsidiaryIds || []).includes(sub.id)
-                    )
-                    const linkedLocs = locations.filter((l) =>
-                      (l.subsidiaryIds || []).includes(sub.id)
-                    )
-                    return (
-                      <tr key={sub.id}>
-                        <td>
-                          <span className="accounting-code-badge">{sub.code}</span>
-                        </td>
-                        <td>
-                          <div className="prod-cell">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <strong>{sub.name}</strong>
-                              {sub.isHolding && (
-                                <span className="admin-holding-pill">Matriz</span>
+                </thead>
+                <tbody>
+                  {filteredSubsidiaries.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="empty-cell">
+                        No se encontraron subsidiarias registradas con los criterios seleccionados.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredSubsidiaries.map((sub) => {
+                      const linkedDepts = departments.filter((d) =>
+                        (d.subsidiaryIds || []).includes(sub.id)
+                      )
+                      const linkedLocs = locations.filter((l) =>
+                        (l.subsidiaryIds || []).includes(sub.id)
+                      )
+                      return (
+                        <tr
+                          key={sub.id}
+                          className="sub-clickable-row"
+                          onClick={() => setSelectedSubsidiaryId(sub.id)}
+                          title="Clic para abrir vista consolidada de subsidiaria"
+                        >
+                          <td>
+                            <span className="accounting-code-badge">{sub.code}</span>
+                          </td>
+                          <td>
+                            <div className="prod-cell">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <button
+                                  type="button"
+                                  className="sub-table-name-link"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedSubsidiaryId(sub.id)
+                                  }}
+                                  title="Abrir vista detallada de la subsidiaria"
+                                >
+                                  {sub.name}
+                                </button>
+                                {sub.isHolding && (
+                                  <span className="admin-holding-pill">Matriz</span>
+                                )}
+                              </div>
+                              <small>{sub.legalName}</small>
+                            </div>
+                          </td>
+                          <td>
+                            <span className="location-bin-tag mono">{sub.taxId}</span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              <span style={{ fontSize: '9.5px', color: '#2f3e35' }}>{sub.country}</span>
+                              <small style={{ color: '#7f8f84' }}>
+                                Divisa base: <strong>{sub.currency}</strong>
+                              </small>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="admin-subsidiary-pills">
+                              <span className="admin-subsidiary-pill">
+                                <strong>{linkedDepts.length}</strong>
+                                <span>deptos.</span>
+                              </span>
+                              <span className="admin-subsidiary-pill">
+                                <strong>{linkedLocs.length}</strong>
+                                <span>ubicaciones</span>
+                              </span>
+                            </div>
+                          </td>
+                          <td>
+                            {sub.active ? (
+                              <span className="stock-ok-badge">
+                                <CheckCircle2 size={11} /> Activa
+                              </span>
+                            ) : (
+                              <span className="stock-alert-badge">
+                                <AlertCircle size={11} /> Inactiva
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <div
+                              style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="button-icon-action"
+                                onClick={() => setSelectedSubsidiaryId(sub.id)}
+                                title="Abrir gestión detallada de subsidiaria y relaciones"
+                              >
+                                <SlidersHorizontal size={11} /> Gestionar
+                              </button>
+                              {canEditSub && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="button-icon-action"
+                                    onClick={() => openEditSubsidiaryModal(sub)}
+                                    title="Edición rápida en modal"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="button-icon-action"
+                                    onClick={() => toggleSubsidiaryStatus(sub.id)}
+                                    title={sub.active ? 'Inhabilitar subsidiaria' : 'Reactivar subsidiaria'}
+                                  >
+                                    {sub.active ? 'Inhabilitar' : 'Reactivar'}
+                                  </button>
+                                </>
                               )}
                             </div>
-                            <small>{sub.legalName}</small>
-                          </div>
-                        </td>
-                        <td>
-                          <span className="location-bin-tag mono">{sub.taxId}</span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <span style={{ fontSize: '9.5px', color: '#2f3e35' }}>{sub.country}</span>
-                            <small style={{ color: '#7f8f84' }}>
-                              Divisa base: <strong>{sub.currency}</strong>
-                            </small>
-                          </div>
-                        </td>
-                        <td>
-                          <div className="admin-subsidiary-pills">
-                            <span className="admin-subsidiary-pill">
-                              <strong>{linkedDepts.length}</strong>
-                              <span>deptos.</span>
-                            </span>
-                            <span className="admin-subsidiary-pill">
-                              <strong>{linkedLocs.length}</strong>
-                              <span>ubicaciones</span>
-                            </span>
-                          </div>
-                        </td>
-                        <td>
-                          {sub.active ? (
-                            <span className="stock-ok-badge">
-                              <CheckCircle2 size={11} /> Activa
-                            </span>
-                          ) : (
-                            <span className="stock-alert-badge">
-                              <AlertCircle size={11} /> Inactiva
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
-                            {canEditSub && (
-                              <>
-                                <button
-                                  type="button"
-                                  className="button-icon-action"
-                                  onClick={() => openEditSubsidiaryModal(sub)}
-                                  title="Editar subsidiaria y relaciones"
-                                >
-                                  <Pencil size={11} /> Editar
-                                </button>
-                                <button
-                                  type="button"
-                                  className="button-icon-action"
-                                  onClick={() => toggleSubsidiaryStatus(sub.id)}
-                                  title={sub.active ? 'Inhabilitar subsidiaria' : 'Reactivar subsidiaria'}
-                                >
-                                  {sub.active ? 'Inhabilitar' : 'Reactivar'}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )
       )}
 
       {/* Section 1: Departamentos */}
@@ -2013,8 +2118,13 @@ export function AdministrationSection({
                   (l.subsidiaryIds || []).includes(sub.id)
                 ).length
                 return (
-                  <div key={sub.id} className="admin-summary-item-card">
-                    <div>
+                  <button
+                    key={sub.id}
+                    type="button"
+                    className="admin-summary-item-card admin-summary-item-clickable"
+                    onClick={() => openSubsidiaryDetail(sub.id)}
+                  >
+                    <div style={{ textAlign: 'left', minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <strong style={{ fontSize: '10.5px', color: '#2a3830' }}>{sub.name}</strong>
                         {sub.isHolding && <span className="admin-holding-pill">Matriz</span>}
@@ -2023,11 +2133,11 @@ export function AdministrationSection({
                         {sub.legalName} · {sub.taxId} · {sub.country} ({sub.currency})
                       </small>
                       <small style={{ fontSize: '8.5px', color: '#456a61', display: 'block', marginTop: '4px' }}>
-                        {deptCount} departamento(s) · {locCount} ubicación(es)
+                        {deptCount} departamento(s) · {locCount} ubicación(es) · Abrir gestión →
                       </small>
                     </div>
                     <span className="accounting-code-badge">{sub.code}</span>
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -2150,7 +2260,7 @@ export function AdministrationSection({
               {canCreateSub && (
                 <button
                   className="button button-secondary"
-                  onClick={openNewSubsidiaryModal}
+                  onClick={() => openSubsidiaryDetail('__new__')}
                 >
                   <Plus size={13} /> Agregar subsidiaria
                 </button>
@@ -2174,6 +2284,23 @@ export function AdministrationSection({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Section 3B: Flujos de trabajo de Devoluciones */}
+      {adminSection === 'Flujos de devoluciones' && (
+        <ReturnWorkflowsPanel
+          workflows={returnWorkflows}
+          customerReturns={customerReturns}
+          supplierReturns={supplierReturns}
+          canEdit={canEditWorkflows}
+          currentUserName={currentUserName}
+          onSaveWorkflows={(next, summaryDetail) => {
+            if (onUpdateReturnWorkflows) {
+              onUpdateReturnWorkflows(next, summaryDetail)
+            }
+          }}
+          onNavigateReturns={onNavigateReturns}
+        />
       )}
 
       {/* Section 4: Historial de Auditoría */}
@@ -2582,6 +2709,7 @@ export function AdministrationSection({
                     { id: 'all', label: 'Todas' },
                     { id: 'create', label: 'Creación' },
                     { id: 'update', label: 'Modificación' },
+                    { id: 'delete', label: 'Eliminación' },
                     { id: 'status', label: 'Estado' },
                     { id: 'transaction', label: 'Operación' },
                     { id: 'access', label: 'Acceso' },
@@ -2826,7 +2954,11 @@ export function AdministrationSection({
                           toneClass: 'cat-settings',
                           chartColor: '#547082',
                         }
-                        const actionKind = classifyAuditActionKind(ev.category, actionText)
+                        const actionKind = classifyAuditActionKind(
+                          ev.category,
+                          actionText,
+                          ev.crudOperation
+                        )
                         const actionMeta = AUDIT_ACTION_META[actionKind]
                         const isUserFiltered =
                           auditUserFilter !== 'all' &&
@@ -2864,6 +2996,7 @@ export function AdministrationSection({
                                     <span aria-hidden="true">·</span>
                                     <span className={`admin-audit-kind-text ${actionMeta.toneClass}`}>
                                       {actionKind === 'create' && <PlusCircle size={11} aria-hidden="true" />}
+                                      {actionKind === 'delete' && <Trash2 size={11} aria-hidden="true" />}
                                       {actionKind === 'status' && <RefreshCw size={11} aria-hidden="true" />}
                                       {actionKind === 'transaction' && (
                                         <ArrowLeftRight size={11} aria-hidden="true" />
@@ -2874,6 +3007,15 @@ export function AdministrationSection({
                                       {actionKind === 'access' && <LogIn size={11} aria-hidden="true" />}
                                       {actionMeta.shortLabel}
                                     </span>
+                                    {ev.entityType && (
+                                      <>
+                                        <span aria-hidden="true">·</span>
+                                        <span className="admin-audit-entity-tag font-mono tabular-nums">
+                                          {ev.entityType}
+                                          {ev.entityId ? ` (${ev.entityId})` : ''}
+                                        </span>
+                                      </>
+                                    )}
                                   </span>
                                 </div>
 
@@ -2944,6 +3086,11 @@ export function AdministrationSection({
                                 >
                                   {ev.user}
                                 </button>
+                                {ev.userId && (
+                                  <span className="admin-audit-userid font-mono tabular-nums">
+                                    ID: {ev.userId}
+                                  </span>
+                                )}
                               </div>
 
                               {isExpanded && (
@@ -2960,13 +3107,36 @@ export function AdministrationSection({
                                       </strong>
                                     </div>
                                     <div>
+                                      <span>Timestamp ISO</span>
+                                      <strong className="font-mono tabular-nums">{ev.timestampIso}</strong>
+                                    </div>
+                                    <div>
+                                      <span>Usuario / ID actor</span>
+                                      <strong className="tabular-nums">
+                                        {ev.user}
+                                        {ev.userId ? ` (${ev.userId})` : ''}
+                                      </strong>
+                                    </div>
+                                    <div>
                                       <span>Módulo origen</span>
                                       <strong>{catMeta.label}</strong>
                                     </div>
                                     <div>
                                       <span>Clasificación</span>
-                                      <strong>{actionMeta.label}</strong>
+                                      <strong>
+                                        {actionMeta.label}
+                                        {ev.crudOperation ? ` · ${ev.crudOperation}` : ''}
+                                      </strong>
                                     </div>
+                                    {(ev.entityType || ev.entityId) && (
+                                      <div>
+                                        <span>Entidad afectada</span>
+                                        <strong className="font-mono tabular-nums">
+                                          {ev.entityType || 'Registro'}
+                                          {ev.entityId ? ` · ${ev.entityId}` : ''}
+                                        </strong>
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="admin-audit-trace-actions">
                                     <button

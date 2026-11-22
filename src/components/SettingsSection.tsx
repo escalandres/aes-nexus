@@ -47,6 +47,11 @@ import {
   Store,
   Clock,
   Loader2,
+  Boxes,
+  SlidersHorizontal,
+  Minus,
+  Layers,
+  ArrowRight,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -54,11 +59,14 @@ import { CountryFlag } from './CountryFlag'
 import { useI18n } from '../i18n/I18nContext'
 import { SUPPORTED_LANGUAGES } from '../i18n/translations'
 import type { SupportedLocale } from '../i18n/types'
-import type { Warehouse } from '../data/operations'
+import type { InventoryItemLocation, Warehouse } from '../data/operations'
+import { PRODUCT_CATALOG_CATEGORIES, type ProductServiceItem } from '../data/products'
 import type { PhysicalLocationRecord, LocationType } from './AdministrationSection'
 import {
   AUDIT_CHANGED_EVENT,
+  CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
   COMMERCIAL_INTEGRATIONS_CHANGED_EVENT,
+  DEFAULT_CATEGORY_STOCK_THRESHOLDS,
   COMMERCIAL_MARKETPLACE_CATALOG,
   COMMERCIAL_SYNC_INTERVALS,
   DEFAULT_INTEGRATIONS,
@@ -75,6 +83,7 @@ import {
   SYSTEM_MODULE_SECTIONS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
+  buildProductCategoryLookup,
   buildSectionPermissionsMap,
   cloneSectionPermissions,
   deriveCapabilitiesFromSectionPermissions,
@@ -86,15 +95,20 @@ import {
   levelAllowsHttpMethod,
   loadDefaultNewUserRole,
   loadStoredAuditEvents,
+  loadStoredCategoryStockThresholds,
   loadStoredCommercialIntegrations,
   loadStoredExternalIntegrations,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
   readStoredJson,
+  resolveEffectiveStockThreshold,
   saveDefaultNewUserRole,
+  saveStoredCategoryStockThresholds,
   writeStoredJson,
   type AuditEventRecord,
   type BuiltInRoleKey,
+  type CategoryStockThresholdRule,
+  type CategoryThresholdMode,
   type CommercialCategory,
   type CommercialIntegrationRecord,
   type CommercialMarketplaceApp,
@@ -201,6 +215,13 @@ export interface SettingsSectionProps {
   onNavigateAdminLocations?: () => void
   onWorkspaceMetaChange?: (meta: { workspaceName: string; avatarColor: string }) => void
   receivablesCount?: number
+  inventory?: InventoryItemLocation[]
+  products?: ProductServiceItem[]
+  onUpdateInventory?: (items: InventoryItemLocation[]) => void
+  categoryThresholds?: CategoryStockThresholdRule[]
+  onUpdateCategoryThresholds?: (rules: CategoryStockThresholdRule[]) => void
+  currentUserName?: string
+  currentUserId?: string
   activeCapabilities?: Set<RoleCapabilityId>
   activeSectionAccess?: RoleSectionPermissions
   isFullAdmin?: boolean
@@ -224,6 +245,13 @@ export function SettingsSection({
   onNavigateAdminLocations,
   onWorkspaceMetaChange,
   receivablesCount = 0,
+  inventory = [],
+  products = [],
+  onUpdateInventory,
+  categoryThresholds,
+  onUpdateCategoryThresholds,
+  currentUserName = 'Andrea Morales',
+  currentUserId,
   activeCapabilities,
   activeSectionAccess,
   isFullAdmin = true,
@@ -632,8 +660,433 @@ export function SettingsSection({
   })
 
   const recordAudit = (entry: Omit<AuditEventRecord, 'id' | 'timestampIso'>) => {
-    const next = appendAuditLog(entry)
+    const next = appendAuditLog({
+      ...entry,
+      userId: entry.userId || currentUserId,
+    })
     setAuditEvents(next)
+  }
+
+  // Category Critical Stock Thresholds State
+  const [categoryRulesDraft, setCategoryRulesDraft] = useState<CategoryStockThresholdRule[]>(() =>
+    categoryThresholds && categoryThresholds.length > 0
+      ? categoryThresholds
+      : loadStoredCategoryStockThresholds()
+  )
+  const [catThresholdSearch, setCatThresholdSearch] = useState('')
+  const [catThresholdStatusFilter, setCatThresholdStatusFilter] = useState<
+    'all' | 'enabled' | 'critical' | 'custom'
+  >('all')
+  const [skuPreviewCategoryFilter, setSkuPreviewCategoryFilter] = useState<string>('all')
+  const [skuPreviewSourceFilter, setSkuPreviewSourceFilter] = useState<
+    'all' | 'sku' | 'category' | 'critical'
+  >('all')
+  const [showAddCategoryRuleModal, setShowAddCategoryRuleModal] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [newCategoryMinStock, setNewCategoryMinStock] = useState<number>(5)
+  const [newCategoryMode, setNewCategoryMode] = useState<CategoryThresholdMode>('inherit_default')
+  const [newCategoryNotes, setNewCategoryNotes] = useState('')
+  const [hasUnsavedCategoryThresholds, setHasUnsavedCategoryThresholds] = useState(false)
+
+  useEffect(() => {
+    if (categoryThresholds && categoryThresholds.length > 0 && !hasUnsavedCategoryThresholds) {
+      setCategoryRulesDraft(categoryThresholds)
+    }
+  }, [categoryThresholds, hasUnsavedCategoryThresholds])
+
+  useEffect(() => {
+    const handleSyncRules = (e: Event) => {
+      const custom = e as CustomEvent<{ rules?: CategoryStockThresholdRule[] }>
+      if (Array.isArray(custom.detail?.rules)) {
+        setCategoryRulesDraft(custom.detail.rules)
+        setHasUnsavedCategoryThresholds(false)
+      }
+    }
+    window.addEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, handleSyncRules)
+    return () =>
+      window.removeEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, handleSyncRules)
+  }, [])
+
+  const productCategoryLookup = useMemo(() => buildProductCategoryLookup(products), [products])
+
+  const canEditStockThresholds = canEditInSection(
+    'Configuración',
+    'Umbrales de stock',
+    activeSectionAccess,
+    isFullAdmin,
+    isAccountActive
+  )
+
+  const categoryCoverageStats = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        catalogSkuCount: number
+        inventoryRowsCount: number
+        criticalRowsCount: number
+        totalPhysicalStock: number
+      }
+    >()
+
+    const ensureEntry = (cat: string) => {
+      const key = cat.trim().toLowerCase()
+      let entry = map.get(key)
+      if (!entry) {
+        entry = {
+          catalogSkuCount: 0,
+          inventoryRowsCount: 0,
+          criticalRowsCount: 0,
+          totalPhysicalStock: 0,
+        }
+        map.set(key, entry)
+      }
+      return entry
+    }
+
+    products.forEach((p) => {
+      const entry = ensureEntry(p.category)
+      entry.catalogSkuCount += 1
+    })
+
+    inventory.forEach((item) => {
+      const resolved = resolveEffectiveStockThreshold(
+        item,
+        categoryRulesDraft,
+        productCategoryLookup
+      )
+      const entry = ensureEntry(resolved.category)
+      entry.inventoryRowsCount += 1
+      entry.totalPhysicalStock += item.stock
+      if (item.stock <= resolved.effectiveMinStock) {
+        entry.criticalRowsCount += 1
+      }
+    })
+
+    return map
+  }, [products, inventory, categoryRulesDraft, productCategoryLookup])
+
+  const filteredCategoryRules = useMemo(() => {
+    const q = catThresholdSearch.trim().toLowerCase()
+    return categoryRulesDraft.filter((rule) => {
+      const stats = categoryCoverageStats.get(rule.category.trim().toLowerCase())
+      const matchesSearch =
+        !q ||
+        rule.category.toLowerCase().includes(q) ||
+        (rule.notes || '').toLowerCase().includes(q)
+      if (!matchesSearch) return false
+      if (catThresholdStatusFilter === 'enabled') return rule.enabled
+      if (catThresholdStatusFilter === 'critical') return (stats?.criticalRowsCount || 0) > 0
+      if (catThresholdStatusFilter === 'custom') {
+        return Boolean(
+          rule.isCustom ||
+            !PRODUCT_CATALOG_CATEGORIES.some(
+              (c) => c.toLowerCase() === rule.category.trim().toLowerCase()
+            )
+        )
+      }
+      return true
+    })
+  }, [categoryRulesDraft, catThresholdSearch, catThresholdStatusFilter, categoryCoverageStats])
+
+  const resolvedInventoryPreview = useMemo(() => {
+    return inventory.map((item) => {
+      const resolved = resolveEffectiveStockThreshold(
+        item,
+        categoryRulesDraft,
+        productCategoryLookup
+      )
+      const isCritical = item.stock <= resolved.effectiveMinStock
+      return {
+        item,
+        ...resolved,
+        isCritical,
+      }
+    })
+  }, [inventory, categoryRulesDraft, productCategoryLookup])
+
+  const filteredSkuPreviewRows = useMemo(() => {
+    return resolvedInventoryPreview.filter((row) => {
+      if (
+        skuPreviewCategoryFilter !== 'all' &&
+        row.category.trim().toLowerCase() !== skuPreviewCategoryFilter.trim().toLowerCase()
+      ) {
+        return false
+      }
+      if (skuPreviewSourceFilter === 'sku') return row.source === 'sku'
+      if (skuPreviewSourceFilter === 'category') {
+        return row.source === 'category_override' || row.source === 'category_inherit'
+      }
+      if (skuPreviewSourceFilter === 'critical') return row.isCritical
+      return true
+    })
+  }, [resolvedInventoryPreview, skuPreviewCategoryFilter, skuPreviewSourceFilter])
+
+  const stockThresholdsKpis = useMemo(() => {
+    const activeCount = categoryRulesDraft.filter((r) => r.enabled).length
+    const overrideCount = categoryRulesDraft.filter(
+      (r) => r.enabled && r.mode === 'override_sku'
+    ).length
+    const criticalCount = resolvedInventoryPreview.filter((r) => r.isCritical).length
+    const categoryDrivenCount = resolvedInventoryPreview.filter(
+      (r) => r.source === 'category_override' || r.source === 'category_inherit'
+    ).length
+    return {
+      activeCount,
+      totalCategories: categoryRulesDraft.length,
+      overrideCount,
+      criticalCount,
+      categoryDrivenCount,
+    }
+  }, [categoryRulesDraft, resolvedInventoryPreview])
+
+  const persistCategoryThresholdRules = (
+    nextRules: CategoryStockThresholdRule[],
+    auditAction: string,
+    auditDetail: string
+  ) => {
+    setCategoryRulesDraft(nextRules)
+    setHasUnsavedCategoryThresholds(false)
+    if (onUpdateCategoryThresholds) {
+      onUpdateCategoryThresholds(nextRules)
+    } else {
+      saveStoredCategoryStockThresholds(nextRules)
+      recordAudit({
+        category: 'settings',
+        crudOperation: 'UPDATE',
+        entityType: 'Umbral por categoría',
+        action: auditAction,
+        detail: auditDetail,
+        user: currentUserName,
+      })
+    }
+  }
+
+  const updateDraftRule = (
+    ruleId: string,
+    patch: Partial<CategoryStockThresholdRule>
+  ) => {
+    if (!canEditStockThresholds) return
+    setCategoryRulesDraft((prev) =>
+      prev.map((rule) =>
+        rule.id === ruleId
+          ? {
+              ...rule,
+              ...patch,
+              minStock:
+                patch.minStock !== undefined
+                  ? Math.max(0, Math.round(patch.minStock))
+                  : rule.minStock,
+              updatedAtIso: new Date().toISOString(),
+            }
+          : rule
+      )
+    )
+    setHasUnsavedCategoryThresholds(true)
+  }
+
+  const handleSaveCategoryThresholds = () => {
+    if (!canEditStockThresholds) return
+    const activeSummary = categoryRulesDraft
+      .filter((r) => r.enabled)
+      .map((r) => `${r.category}: ${r.minStock} uds. (${r.mode === 'override_sku' ? 'Forzado' : 'Heredado'})`)
+      .join(' · ')
+    persistCategoryThresholdRules(
+      categoryRulesDraft,
+      'Actualización de umbrales de stock por categoría',
+      activeSummary || `${categoryRulesDraft.length} categoría(s) configuradas`
+    )
+    toast.success(
+      'Los umbrales críticos por categoría se guardaron y están sincronizados con las alertas de inventario.',
+      'Umbrales guardados'
+    )
+  }
+
+  const handleResetCategoryThresholds = () => {
+    if (!canEditStockThresholds) return
+    const defaults = DEFAULT_CATEGORY_STOCK_THRESHOLDS.map((d) => ({
+      ...d,
+      updatedAtIso: new Date().toISOString(),
+    }))
+    persistCategoryThresholdRules(
+      defaults,
+      'Restablecimiento de umbrales de stock por categoría',
+      'Se restauraron los umbrales críticos recomendados para todas las categorías.'
+    )
+    toast.info('Umbrales por categoría restablecidos a valores recomendados.', 'Umbrales restaurados')
+  }
+
+  const handleSyncCategoryToSkus = (rule: CategoryStockThresholdRule) => {
+    if (!canEditStockThresholds || !onUpdateInventory) return
+    const normalizedCat = rule.category.trim().toLowerCase()
+    let updatedCount = 0
+    const nextInventory = inventory.map((item) => {
+      const itemCat = resolveEffectiveStockThreshold(
+        item,
+        categoryRulesDraft,
+        productCategoryLookup
+      ).category
+      if (itemCat.trim().toLowerCase() === normalizedCat) {
+        updatedCount += 1
+        return {
+          ...item,
+          category: itemCat,
+          minStock: Math.max(0, rule.minStock),
+          thresholdSource: 'category' as const,
+        }
+      }
+      return item
+    })
+
+    if (updatedCount === 0) {
+      toast.info(
+        `Actualmente no hay existencias registradas en almacén bajo la categoría “${rule.category}”. La regla aplicará en cuanto ingresen productos.`,
+        'Sin registros en almacén'
+      )
+      return
+    }
+
+    onUpdateInventory(nextInventory)
+    if (hasUnsavedCategoryThresholds) {
+      persistCategoryThresholdRules(
+        categoryRulesDraft,
+        'Sincronización de umbral por categoría a SKUs',
+        `${rule.category} (${rule.minStock} uds.) aplicado a ${updatedCount} registro(s) de almacén`
+      )
+    } else {
+      recordAudit({
+        category: 'inventory',
+        crudOperation: 'UPDATE',
+        entityType: 'Umbral por categoría',
+        entityId: rule.id,
+        action: 'Sincronización de umbral por categoría a SKUs',
+        detail: `${rule.category} → ${rule.minStock} uds. aplicado a ${updatedCount} registro(s) en almacén`,
+        user: currentUserName,
+      })
+    }
+
+    toast.success(
+      `Umbral crítico de ${rule.minStock} uds. sincronizado en ${updatedCount} registro(s) de “${rule.category}”.`,
+      'SKUs sincronizados'
+    )
+  }
+
+  const handleSyncAllEnabledCategories = () => {
+    if (!canEditStockThresholds || !onUpdateInventory) return
+    const activeRuleMap = new Map(
+      categoryRulesDraft
+        .filter((r) => r.enabled)
+        .map((r) => [r.category.trim().toLowerCase(), r])
+    )
+    let updatedCount = 0
+    const nextInventory = inventory.map((item) => {
+      const cat = resolveEffectiveStockThreshold(
+        item,
+        categoryRulesDraft,
+        productCategoryLookup
+      ).category
+      const matched = activeRuleMap.get(cat.trim().toLowerCase())
+      if (matched) {
+        updatedCount += 1
+        return {
+          ...item,
+          category: cat,
+          minStock: Math.max(0, matched.minStock),
+          thresholdSource: 'category' as const,
+        }
+      }
+      return item
+    })
+    onUpdateInventory(nextInventory)
+    persistCategoryThresholdRules(
+      categoryRulesDraft,
+      'Aplicación global de umbrales por categoría',
+      `Reglas por categoría sincronizadas en ${updatedCount} registro(s) de almacén`
+    )
+    toast.success(
+      `Se actualizaron ${updatedCount} registro(s) de inventario conforme a su categoría.`,
+      'Sincronización masiva completada'
+    )
+  }
+
+  const handleInheritSingleSkuFromCategory = (itemId: string, catMinStock: number, categoryName: string) => {
+    if (!canEditStockThresholds || !onUpdateInventory) return
+    const target = inventory.find((i) => i.id === itemId)
+    if (!target) return
+    onUpdateInventory(
+      inventory.map((i) =>
+        i.id === itemId
+          ? {
+              ...i,
+              category: categoryName,
+              minStock: Math.max(0, catMinStock),
+              thresholdSource: 'category',
+            }
+          : i
+      )
+    )
+    recordAudit({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Umbral por SKU',
+      entityId: itemId,
+      action: 'Vinculación de SKU a umbral de categoría',
+      detail: `${target.sku} (${categoryName}) ahora hereda umbral de categoría (${catMinStock} uds.)`,
+      user: currentUserName,
+    })
+    toast.success(
+      `${target.sku} ahora hereda el umbral de la categoría “${categoryName}” (${catMinStock} uds.).`,
+      'Umbral heredado'
+    )
+  }
+
+  const handleCreateCustomCategoryRule = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canEditStockThresholds) return
+    const cleanName = newCategoryName.trim()
+    if (!cleanName) {
+      toast.warning('Indica el nombre de la categoría de producto.', 'Nombre requerido')
+      return
+    }
+    const exists = categoryRulesDraft.some(
+      (r) => r.category.trim().toLowerCase() === cleanName.toLowerCase()
+    )
+    if (exists) {
+      toast.warning(`Ya existe una regla configurada para “${cleanName}”.`, 'Categoría duplicada')
+      return
+    }
+    const created: CategoryStockThresholdRule = {
+      id: `cat_thr_${Date.now()}`,
+      category: cleanName,
+      minStock: Math.max(0, Math.round(newCategoryMinStock)),
+      enabled: true,
+      mode: newCategoryMode,
+      notes: newCategoryNotes.trim() || undefined,
+      updatedAtIso: new Date().toISOString(),
+      isCustom: true,
+    }
+    const nextRules = [...categoryRulesDraft, created]
+    persistCategoryThresholdRules(
+      nextRules,
+      'Creación de umbral por categoría de producto',
+      `${created.category} · Mín. ${created.minStock} uds. (${created.mode === 'override_sku' ? 'Forzado' : 'Heredado'})`
+    )
+    setShowAddCategoryRuleModal(false)
+    setNewCategoryName('')
+    setNewCategoryMinStock(5)
+    setNewCategoryMode('inherit_default')
+    setNewCategoryNotes('')
+    toast.success(`Regla creada para la categoría “${created.category}”.`, 'Categoría agregada')
+  }
+
+  const handleDeleteCustomCategoryRule = (rule: CategoryStockThresholdRule) => {
+    if (!canEditStockThresholds || !rule.isCustom) return
+    const nextRules = categoryRulesDraft.filter((r) => r.id !== rule.id)
+    persistCategoryThresholdRules(
+      nextRules,
+      'Eliminación de umbral por categoría personalizada',
+      `${rule.category} (Mín. ${rule.minStock} uds.)`
+    )
+    toast.info(`Se eliminó la regla personalizada para “${rule.category}”.`, 'Categoría eliminada')
   }
 
   // Modal for inviting user
@@ -2666,14 +3119,36 @@ export function SettingsSection({
   )
 
   const handleExportAuditCsv = () => {
-    const header = ['Fecha/Hora', 'Categoría', 'Acción', 'Detalle', 'Responsable']
+    const header = [
+      'Fecha/Hora',
+      'Timestamp ISO',
+      'Categoría',
+      'Operación CRUD',
+      'Entidad',
+      'ID Entidad',
+      'Acción',
+      'Detalle',
+      'Responsable',
+      'ID Usuario',
+    ]
     const rows = filteredAuditEvents.map((ev) => {
       const actionText = ev.seedKey ? t(`settings.audit.${ev.seedKey}.action` as const) : ev.action
       const detailText = ev.seedKey ? t(`settings.audit.${ev.seedKey}.detail` as const) : ev.detail
       const timeText = ev.seedKey
         ? t(`settings.audit.${ev.seedKey}.time` as const)
         : `${formatDate(new Date(ev.timestampIso))} ${formatTime(new Date(ev.timestampIso))}`
-      return [timeText, ev.category, actionText, detailText, ev.user]
+      return [
+        timeText,
+        ev.timestampIso,
+        ev.category,
+        ev.crudOperation || '—',
+        ev.entityType || '—',
+        ev.entityId || '—',
+        actionText,
+        detailText,
+        ev.user,
+        ev.userId || '—',
+      ]
         .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
         .join(',')
     })
@@ -2941,6 +3416,7 @@ export function SettingsSection({
       items: [
         { name: 'Apariencia', label: t('settings.item.Apariencia'), icon: Palette },
         { name: 'Notificaciones', label: t('settings.item.Notificaciones'), icon: Mail, badge: notifPreferences.pushStockAlerts ? t('settings.badge.pushOn') : undefined },
+        { name: 'Umbrales de stock', label: t('settings.item.Umbrales de stock'), icon: Boxes, count: categoryRulesDraft.filter((r) => r.enabled).length },
         { name: 'Auditoría', label: t('settings.item.Auditoría'), icon: ClipboardList },
       ],
     },
@@ -4753,6 +5229,13 @@ export function SettingsSection({
                     <h3>{t('settings.notifications.inventoryTitle')}</h3>
                     <p>{t('settings.notifications.inventoryDesc')}</p>
                   </div>
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={() => onSelectSetting('Umbrales de stock')}
+                  >
+                    <Boxes size={13} /> Umbrales por categoría <ArrowRight size={12} />
+                  </button>
                 </div>
 
                 <div className="notif-toggle-row">
@@ -4854,6 +5337,613 @@ export function SettingsSection({
                   </label>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* 8B. UMBRALES DE STOCK CRÍTICO POR CATEGORÍA */}
+          {activeSetting === 'Umbrales de stock' && (
+            <div className="settings-form-container">
+              <div className="settings-panel-heading">
+                <div>
+                  <h2>Umbrales de Stock Crítico por Categoría</h2>
+                  <p>
+                    Personaliza el mínimo de seguridad por categoría de producto para disparar alertas de reorden en grupo, o prioriza ajustes individuales por SKU.
+                  </p>
+                </div>
+                <div className="settings-cat-thr-header-actions">
+                  {canEditStockThresholds && (
+                    <>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setShowAddCategoryRuleModal(true)}
+                      >
+                        <Plus size={14} /> Nueva categoría
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-ghost"
+                        onClick={handleResetCategoryThresholds}
+                        title="Restaurar valores sugeridos para cada categoría"
+                      >
+                        <RotateCcw size={14} /> Restablecer
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        onClick={handleSaveCategoryThresholds}
+                      >
+                        <Check size={14} /> Guardar políticas
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {hasUnsavedCategoryThresholds && (
+                <div className="settings-cat-thr-unsaved-bar" role="status">
+                  <span>
+                    <AlertTriangle size={14} /> Tienes cambios sin guardar en los umbrales por categoría.
+                  </span>
+                  <button
+                    type="button"
+                    className="button button-primary button-sm"
+                    onClick={handleSaveCategoryThresholds}
+                  >
+                    Guardar ahora
+                  </button>
+                </div>
+              )}
+
+              {/* Resumen cuantitativo limpio (sin píldoras decorativas) */}
+              <div className="settings-cat-thr-kpis">
+                <article className="settings-cat-thr-kpi">
+                  <span className="settings-cat-thr-kpi-label">CATEGORÍAS MONITOREADAS</span>
+                  <strong className="settings-cat-thr-kpi-value tabular-nums">
+                    {stockThresholdsKpis.activeCount} / {stockThresholdsKpis.totalCategories}
+                  </strong>
+                  <small>Reglas activas para control de stock</small>
+                </article>
+                <article className="settings-cat-thr-kpi">
+                  <span className="settings-cat-thr-kpi-label">REGLAS MAESTRAS</span>
+                  <strong className="settings-cat-thr-kpi-value tabular-nums">
+                    {stockThresholdsKpis.overrideCount}
+                  </strong>
+                  <small>Priorizan categoría sobre SKU individual</small>
+                </article>
+                <article className="settings-cat-thr-kpi">
+                  <span className="settings-cat-thr-kpi-label">EXISTENCIAS CUBIERTAS</span>
+                  <strong className="settings-cat-thr-kpi-value tabular-nums">
+                    {inventory.length}
+                  </strong>
+                  <small>
+                    {stockThresholdsKpis.categoryDrivenCount} regidas por regla de categoría
+                  </small>
+                </article>
+                <article className="settings-cat-thr-kpi">
+                  <span className="settings-cat-thr-kpi-label">EN STOCK CRÍTICO</span>
+                  <strong
+                    className={`settings-cat-thr-kpi-value tabular-nums ${
+                      stockThresholdsKpis.criticalCount > 0 ? 'is-critical' : 'is-safe'
+                    }`}
+                  >
+                    {stockThresholdsKpis.criticalCount}
+                  </strong>
+                  <small>Alertas activas con la política actual</small>
+                </article>
+              </div>
+
+              {/* Reglas por Categoría */}
+              <div className="settings-section-card">
+                <div className="card-header-row">
+                  <div>
+                    <h3>Políticas de Stock Crítico por Categoría de Producto</h3>
+                    <p>
+                      Define cuántas unidades mínimas activan la alerta crítica en cada familia y si la regla prevalece sobre el umbral individual del SKU.
+                    </p>
+                  </div>
+                  {canEditStockThresholds && onUpdateInventory && (
+                    <button
+                      type="button"
+                      className="button button-secondary button-sm"
+                      onClick={handleSyncAllEnabledCategories}
+                      title="Sincronizar el mínimo de cada categoría activa en los registros existentes de inventario"
+                    >
+                      <RefreshCw size={13} /> Sincronizar todos los SKU
+                    </button>
+                  )}
+                </div>
+
+                <div className="settings-cat-thr-toolbar">
+                  <div className="settings-cat-thr-search">
+                    <Search size={14} />
+                    <input
+                      type="text"
+                      value={catThresholdSearch}
+                      onChange={(e) => setCatThresholdSearch(e.target.value)}
+                      placeholder="Buscar categoría o descripción..."
+                      aria-label="Buscar categoría de producto"
+                    />
+                    {catThresholdSearch && (
+                      <button
+                        type="button"
+                        className="search-clear-btn"
+                        onClick={() => setCatThresholdSearch('')}
+                        aria-label="Limpiar búsqueda"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="audit-filter-tabs" role="tablist" aria-label="Filtrar categorías">
+                    {(
+                      [
+                        { id: 'all', label: `Todas (${categoryRulesDraft.length})` },
+                        {
+                          id: 'enabled',
+                          label: `Activas (${categoryRulesDraft.filter((r) => r.enabled).length})`,
+                        },
+                        { id: 'critical', label: 'Con alertas críticas' },
+                        { id: 'custom', label: 'Personalizadas' },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={catThresholdStatusFilter === tab.id}
+                        className={`audit-filter-btn ${
+                          catThresholdStatusFilter === tab.id ? 'active' : ''
+                        }`}
+                        onClick={() => setCatThresholdStatusFilter(tab.id)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="settings-cat-thr-table-wrap">
+                  <table className="settings-cat-thr-table">
+                    <thead>
+                      <tr>
+                        <th>Categoría de producto</th>
+                        <th>Monitoreo</th>
+                        <th style={{ textAlign: 'center' }}>Umbral crítico</th>
+                        <th>Precedencia frente a SKU</th>
+                        <th>Evaluación actual</th>
+                        <th style={{ textAlign: 'right' }}>Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredCategoryRules.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="settings-cat-thr-empty">
+                            No hay categorías que coincidan con los filtros seleccionados.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredCategoryRules.map((rule) => {
+                          const stats = categoryCoverageStats.get(
+                            rule.category.trim().toLowerCase()
+                          ) || {
+                            catalogSkuCount: 0,
+                            inventoryRowsCount: 0,
+                            criticalRowsCount: 0,
+                            totalPhysicalStock: 0,
+                          }
+                          const isCustom = Boolean(
+                            rule.isCustom ||
+                              !PRODUCT_CATALOG_CATEGORIES.some(
+                                (c) => c.toLowerCase() === rule.category.trim().toLowerCase()
+                              )
+                          )
+
+                          return (
+                            <tr
+                              key={rule.id}
+                              className={!rule.enabled ? 'is-muted-row' : undefined}
+                            >
+                              <td>
+                                <div className="settings-cat-thr-name-cell">
+                                  <div className="settings-cat-thr-title-line">
+                                    <strong>{rule.category}</strong>
+                                    {isCustom && (
+                                      <span className="settings-cat-thr-meta-sep">
+                                        · Personalizada
+                                      </span>
+                                    )}
+                                  </div>
+                                  {rule.notes && <p>{rule.notes}</p>}
+                                  <span className="settings-cat-thr-meta-line tabular-nums">
+                                    {stats.catalogSkuCount} SKU(s) en catálogo ·{' '}
+                                    {stats.inventoryRowsCount} registro(s) en almacén
+                                    {stats.inventoryRowsCount > 0
+                                      ? ` · ${stats.totalPhysicalStock} uds. físicas`
+                                      : ''}
+                                  </span>
+                                </div>
+                              </td>
+                              <td>
+                                <label
+                                  className="toggle-switch-wrap"
+                                  title={
+                                    rule.enabled
+                                      ? `Pausar regla de ${rule.category}`
+                                      : `Activar regla de ${rule.category}`
+                                  }
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={rule.enabled}
+                                    disabled={!canEditStockThresholds}
+                                    onChange={(e) =>
+                                      updateDraftRule(rule.id, { enabled: e.target.checked })
+                                    }
+                                  />
+                                  <span className="toggle-slider" />
+                                </label>
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div className="settings-cat-thr-stepper">
+                                  <button
+                                    type="button"
+                                    className="stepper-btn"
+                                    disabled={!canEditStockThresholds || rule.minStock <= 0}
+                                    onClick={() =>
+                                      updateDraftRule(rule.id, {
+                                        minStock: Math.max(0, rule.minStock - 1),
+                                      })
+                                    }
+                                    aria-label={`Disminuir umbral para ${rule.category}`}
+                                  >
+                                    <Minus size={12} />
+                                  </button>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    disabled={!canEditStockThresholds}
+                                    value={rule.minStock}
+                                    onChange={(e) =>
+                                      updateDraftRule(rule.id, {
+                                        minStock: Math.max(0, parseInt(e.target.value, 10) || 0),
+                                      })
+                                    }
+                                    className="stepper-input tabular-nums"
+                                    aria-label={`Umbral crítico para ${rule.category}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="stepper-btn"
+                                    disabled={!canEditStockThresholds}
+                                    onClick={() =>
+                                      updateDraftRule(rule.id, { minStock: rule.minStock + 1 })
+                                    }
+                                    aria-label={`Aumentar umbral para ${rule.category}`}
+                                  >
+                                    <Plus size={12} />
+                                  </button>
+                                  <span className="settings-cat-thr-unit">uds.</span>
+                                </div>
+                              </td>
+                              <td>
+                                <select
+                                  className="settings-cat-thr-mode-select"
+                                  value={rule.mode}
+                                  disabled={!canEditStockThresholds || !rule.enabled}
+                                  aria-label={`Modo de precedencia para ${rule.category}`}
+                                  onChange={(e) =>
+                                    updateDraftRule(rule.id, {
+                                      mode: e.target.value as CategoryThresholdMode,
+                                    })
+                                  }
+                                >
+                                  <option value="inherit_default">
+                                    Heredado (respetar ajuste por SKU)
+                                  </option>
+                                  <option value="override_sku">
+                                    Regla maestra (forzar sobre SKU)
+                                  </option>
+                                </select>
+                              </td>
+                              <td>
+                                {!rule.enabled ? (
+                                  <span className="settings-cat-thr-status is-neutral">
+                                    Regla pausada
+                                  </span>
+                                ) : stats.inventoryRowsCount === 0 ? (
+                                  <span className="settings-cat-thr-status is-neutral">
+                                    Sin existencias en almacén
+                                  </span>
+                                ) : stats.criticalRowsCount > 0 ? (
+                                  <span className="settings-cat-thr-status is-critical tabular-nums">
+                                    <AlertTriangle size={12} aria-hidden="true" />
+                                    {stats.criticalRowsCount} en stock crítico
+                                  </span>
+                                ) : (
+                                  <span className="settings-cat-thr-status is-safe">
+                                    <CheckCircle2 size={12} aria-hidden="true" />
+                                    Nivel seguro
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div className="settings-cat-thr-row-actions">
+                                  {canEditStockThresholds && onUpdateInventory && (
+                                    <button
+                                      type="button"
+                                      className="button button-ghost button-sm"
+                                      onClick={() => handleSyncCategoryToSkus(rule)}
+                                      disabled={stats.inventoryRowsCount === 0}
+                                      title="Aplicar este umbral directamente a todos los SKUs de la categoría"
+                                    >
+                                      Sincronizar SKUs
+                                    </button>
+                                  )}
+                                  {canEditStockThresholds && isCustom && (
+                                    <button
+                                      type="button"
+                                      className="icon-button"
+                                      onClick={() => handleDeleteCustomCategoryRule(rule)}
+                                      title={`Eliminar categoría ${rule.category}`}
+                                      aria-label={`Eliminar categoría ${rule.category}`}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Cobertura por SKU y Excepciones Individuales */}
+              <div className="settings-section-card">
+                <div className="card-header-row">
+                  <div>
+                    <h3>Resolución por SKU y Excepciones Individuales</h3>
+                    <p>
+                      Comprueba qué umbral efectivo aplica en cada almacén según la regla de categoría y las personalizaciones puntuales por SKU.
+                    </p>
+                  </div>
+                  <div className="settings-cat-thr-preview-filters">
+                    <select
+                      className="settings-cat-thr-mode-select"
+                      value={skuPreviewCategoryFilter}
+                      onChange={(e) => setSkuPreviewCategoryFilter(e.target.value)}
+                      aria-label="Filtrar preview por categoría"
+                    >
+                      <option value="all">Todas las categorías</option>
+                      {categoryRulesDraft.map((rule) => (
+                        <option key={rule.id} value={rule.category}>
+                          {rule.category}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="settings-cat-thr-mode-select"
+                      value={skuPreviewSourceFilter}
+                      onChange={(e) =>
+                        setSkuPreviewSourceFilter(
+                          e.target.value as 'all' | 'sku' | 'category' | 'critical'
+                        )
+                      }
+                      aria-label="Filtrar preview por origen de umbral"
+                    >
+                      <option value="all">Todos los orígenes ({resolvedInventoryPreview.length})</option>
+                      <option value="category">Regidos por categoría</option>
+                      <option value="sku">Con ajuste individual por SKU</option>
+                      <option value="critical">Solo en stock crítico</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="settings-cat-thr-table-wrap">
+                  <table className="settings-cat-thr-table">
+                    <thead>
+                      <tr>
+                        <th>SKU / Producto</th>
+                        <th>Categoría · Almacén</th>
+                        <th style={{ textAlign: 'right' }}>Stock actual</th>
+                        <th style={{ textAlign: 'right' }}>Umbral efectivo</th>
+                        <th>Origen aplicado</th>
+                        <th style={{ textAlign: 'right' }}>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSkuPreviewRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="settings-cat-thr-empty">
+                            No hay referencias de inventario que coincidan con este filtro.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredSkuPreviewRows.map(
+                          ({ item, effectiveMinStock, source, category, categoryRule, isCritical }) => (
+                            <tr key={item.id} className={isCritical ? 'is-critical-row' : undefined}>
+                              <td>
+                                <div className="settings-cat-thr-name-cell">
+                                  <div className="settings-cat-thr-title-line">
+                                    <code className="settings-cat-thr-sku">{item.sku}</code>
+                                    <strong>{item.name}</strong>
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <span className="settings-cat-thr-meta-line">
+                                  {category} · {item.warehouseName}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <strong
+                                  className={`tabular-nums ${
+                                    isCritical ? 'settings-cat-thr-val-critical' : ''
+                                  }`}
+                                >
+                                  {item.stock} {item.unitOfMeasure}
+                                </strong>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div className="settings-cat-thr-effective-cell tabular-nums">
+                                  <strong>
+                                    {effectiveMinStock} {item.unitOfMeasure}
+                                  </strong>
+                                  {source === 'category_override' &&
+                                    item.minStock !== effectiveMinStock && (
+                                      <small>SKU base: {item.minStock}</small>
+                                    )}
+                                </div>
+                              </td>
+                              <td>
+                                <span className="settings-cat-thr-source-text">
+                                  {source === 'category_override' ? (
+                                    <>
+                                      <Layers size={12} aria-hidden="true" /> Categoría (Regla maestra)
+                                    </>
+                                  ) : source === 'category_inherit' ? (
+                                    <>
+                                      <Layers size={12} aria-hidden="true" /> Categoría (Heredado)
+                                    </>
+                                  ) : (
+                                    <>
+                                      <SlidersHorizontal size={12} aria-hidden="true" /> Ajuste por SKU
+                                    </>
+                                  )}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {source === 'sku' &&
+                                  categoryRule &&
+                                  categoryRule.enabled &&
+                                  canEditStockThresholds &&
+                                  onUpdateInventory && (
+                                    <button
+                                      type="button"
+                                      className="button button-ghost button-sm"
+                                      onClick={() =>
+                                        handleInheritSingleSkuFromCategory(
+                                          item.id,
+                                          categoryRule.minStock,
+                                          category
+                                        )
+                                      }
+                                    >
+                                      Heredar ({categoryRule.minStock})
+                                    </button>
+                                  )}
+                              </td>
+                            </tr>
+                          )
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {showAddCategoryRuleModal && (
+                <div
+                  className="modal-backdrop"
+                  role="presentation"
+                  onMouseDown={(e) => {
+                    if (e.target === e.currentTarget) setShowAddCategoryRuleModal(false)
+                  }}
+                >
+                  <form
+                    className="create-modal settings-cat-thr-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="new-cat-thr-title"
+                    onSubmit={handleCreateCustomCategoryRule}
+                  >
+                    <div className="create-modal-heading">
+                      <div>
+                        <div className="eyebrow">
+                          <span className="eyebrow-line" /> CONFIGURACIÓN · UMBRALES POR CATEGORÍA
+                        </div>
+                        <h2 id="new-cat-thr-title">Nueva Regla por Categoría de Producto</h2>
+                      </div>
+                      <button
+                        type="button"
+                        className="icon-button"
+                        onClick={() => setShowAddCategoryRuleModal(false)}
+                        aria-label="Cerrar modal"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="form-grid-2">
+                      <label className="form-field">
+                        <span>Nombre de la categoría *</span>
+                        <input
+                          type="text"
+                          required
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          placeholder="ej. Refacciones y Consumibles"
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Umbral crítico inicial (uds.) *</span>
+                        <input
+                          type="number"
+                          min={0}
+                          required
+                          value={newCategoryMinStock}
+                          onChange={(e) =>
+                            setNewCategoryMinStock(Math.max(0, parseInt(e.target.value, 10) || 0))
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <label className="form-field" style={{ marginTop: '12px' }}>
+                      <span>Precedencia frente a ajuste por SKU</span>
+                      <select
+                        value={newCategoryMode}
+                        onChange={(e) => setNewCategoryMode(e.target.value as CategoryThresholdMode)}
+                      >
+                        <option value="inherit_default">
+                          Heredado (aplica si el SKU hereda categoría o al sincronizar)
+                        </option>
+                        <option value="override_sku">
+                          Regla maestra (forzar este umbral sobre cualquier SKU de la categoría)
+                        </option>
+                      </select>
+                    </label>
+
+                    <label className="form-field" style={{ marginTop: '12px' }}>
+                      <span>Notas o alcance operativo (opcional)</span>
+                      <input
+                        type="text"
+                        value={newCategoryNotes}
+                        onChange={(e) => setNewCategoryNotes(e.target.value)}
+                        placeholder="ej. Cables, fuentes de poder y refacciones críticas"
+                      />
+                    </label>
+
+                    <div className="create-modal-actions" style={{ marginTop: '18px' }}>
+                      <button
+                        type="button"
+                        className="button button-ghost"
+                        onClick={() => setShowAddCategoryRuleModal(false)}
+                      >
+                        Cancelar
+                      </button>
+                      <button type="submit" className="button button-primary">
+                        <Check size={14} /> Crear categoría
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
             </div>
           )}
 
@@ -6559,6 +7649,8 @@ export function SettingsSection({
                               </div>
                               <span className="audit-detail">
                                 {detailText} · <em>{item.user}</em>
+                                {item.userId ? ` (${item.userId})` : ''}
+                                {item.crudOperation ? ` · ${item.crudOperation}` : ''}
                               </span>
                             </div>
                           </div>

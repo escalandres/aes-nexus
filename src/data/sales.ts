@@ -13,6 +13,14 @@ export interface SalesLineItem {
   total: number
 }
 
+export type SalesSectionTab =
+  | 'Catálogo'
+  | 'Cotizaciones'
+  | 'Pedidos'
+  | 'Facturas'
+  | 'Devoluciones'
+  | 'Resumen'
+
 export type QuoteStatus = 'Borrador' | 'Enviada' | 'Aprobada' | 'Rechazada' | 'Vencida'
 
 export interface Quote {
