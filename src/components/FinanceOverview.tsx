@@ -27,7 +27,8 @@ interface FinanceOverviewProps {
   payables: BillPayable[]
   expenses: ExpenseRecord[]
   transactions: PaymentTransaction[]
-  onNavigateSection: (sec: 'Cobros' | 'Pagos' | 'Gastos de la empresa' | 'Resumen') => void
+  onNavigateSection: (sec: 'Cobros' | 'Pagos' | 'Resumen') => void
+  onNavigateExpenses?: () => void
 }
 
 const money = (val: number) =>
@@ -44,6 +45,7 @@ export function FinanceOverview({
   expenses: _expenses,
   transactions,
   onNavigateSection,
+  onNavigateExpenses,
 }: FinanceOverviewProps) {
   // Total cash in banks
   const totalCash = useMemo(() => {
@@ -224,7 +226,7 @@ export function FinanceOverview({
               </button>
               <button
                 className="shortcut-btn"
-                onClick={() => onNavigateSection('Gastos de la empresa')}
+                onClick={() => (onNavigateExpenses ? onNavigateExpenses() : onNavigateSection('Pagos'))}
               >
                 <CreditCard size={14} /> Registrar gasto
               </button>

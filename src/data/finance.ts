@@ -59,14 +59,33 @@ export type CompanyExpenseCategory =
   | 'Gastos operativos'
   | 'Gastos financieros'
 
+export type ExpenseNature =
+  | 'Administrativo'
+  | 'Operativo'
+  | 'Financiero'
+  | 'Costo de venta'
+  | 'Impuestos'
+
+export type ExpenseStatus = 'Pendiente' | 'Aprobado' | 'Pagado' | 'Cancelado'
+
+export type ExpenseRecurrenceFrequency = 'Mensual' | 'Quincenal' | 'Anual'
+
 export interface ExpenseRecord {
   id: string
   folio: string
   date: string
   category: ExpenseCategory
   companyCategory?: CompanyExpenseCategory
+  expenseNature?: ExpenseNature
+  status?: ExpenseStatus
   costBehavior?: 'Fijo' | 'Variable'
+  departmentId?: string
   departmentName?: string
+  costCenter?: string
+  locationId?: string
+  locationName?: string
+  accountCode?: string
+  accountName?: string
   bankAccountName?: string
   description: string
   beneficiary: string
@@ -75,11 +94,88 @@ export interface ExpenseRecord {
   total: number
   paymentMethod: string
   referenceDoc?: string
+  issuerRfc?: string
   user: string
+  isRecurring?: boolean
+  recurrenceId?: string
 }
 
-export function resolveCompanyExpenseCategory(exp: Pick<ExpenseRecord, 'category' | 'companyCategory'>): CompanyExpenseCategory {
+export interface ExpenseBudgetRule {
+  id: string
+  nature: ExpenseNature
+  category?: ExpenseCategory
+  departmentName?: string
+  monthlyLimit: number
+  warningThresholdPct: number
+  criticalThresholdPct?: number
+  alertsEnabled?: boolean
+  active: boolean
+}
+
+export interface RecurringExpenseTemplate {
+  id: string
+  title: string
+  nature: ExpenseNature
+  category: ExpenseCategory
+  costBehavior: 'Fijo' | 'Variable'
+  beneficiary: string
+  description: string
+  amount: number
+  hasTax: boolean
+  paymentMethod: string
+  bankAccountId: string
+  bankAccountName: string
+  departmentId?: string
+  departmentName: string
+  costCenter?: string
+  locationId?: string
+  locationName?: string
+  accountCode?: string
+  accountName?: string
+  frequency: ExpenseRecurrenceFrequency
+  nextRunDate: string
+  lastGeneratedDate?: string
+  active: boolean
+}
+
+export function resolveExpenseNature(
+  exp: Pick<ExpenseRecord, 'category' | 'companyCategory' | 'expenseNature'>
+): ExpenseNature {
+  if (exp.expenseNature) return exp.expenseNature
+  if (exp.category === 'Impuestos y derechos') return 'Impuestos'
+  if (exp.companyCategory === 'Gastos financieros' || exp.category === 'Comisiones e intereses') {
+    return 'Financiero'
+  }
+  if (
+    exp.companyCategory === 'Gastos operativos' ||
+    exp.category === 'Servicios' ||
+    exp.category === 'Logística y fletes' ||
+    exp.category === 'Viáticos y representación'
+  ) {
+    return 'Operativo'
+  }
+  return 'Administrativo'
+}
+
+export function mapExpenseNatureToCompanyCategory(nature: ExpenseNature): CompanyExpenseCategory {
+  switch (nature) {
+    case 'Financiero':
+      return 'Gastos financieros'
+    case 'Operativo':
+    case 'Costo de venta':
+      return 'Gastos operativos'
+    case 'Administrativo':
+    case 'Impuestos':
+    default:
+      return 'Gastos administrativos'
+  }
+}
+
+export function resolveCompanyExpenseCategory(
+  exp: Pick<ExpenseRecord, 'category' | 'companyCategory' | 'expenseNature'>
+): CompanyExpenseCategory {
   if (exp.companyCategory) return exp.companyCategory
+  if (exp.expenseNature) return mapExpenseNatureToCompanyCategory(exp.expenseNature)
   switch (exp.category) {
     case 'Comisiones e intereses':
       return 'Gastos financieros'
@@ -374,8 +470,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '05 nov 2026',
     category: 'Arrendamiento',
     companyCategory: 'Gastos administrativos',
+    expenseNature: 'Administrativo',
+    status: 'Pagado',
     costBehavior: 'Fijo',
-    departmentName: 'Administración y Dirección',
+    departmentId: 'dep_1',
+    departmentName: 'Dirección General',
+    costCenter: 'CC-100',
+    locationId: 'loc_2',
+    locationName: 'Almacén Central Vallejo',
+    accountCode: '6001-001',
+    accountName: 'Gastos de arrendamiento y bodegas',
     bankAccountName: 'BBVA México',
     description: 'Renta mensual de bodega y oficinas Calz. Vallejo',
     beneficiary: 'Inmobiliaria Industrial Vallejo S.A.',
@@ -384,7 +488,10 @@ export const initialExpenses: ExpenseRecord[] = [
     total: 37120,
     paymentMethod: 'Transferencia SPEI',
     referenceDoc: 'FAC-INM-8821',
+    issuerRfc: 'IIV980312K91',
     user: 'Andrea Morales',
+    isRecurring: true,
+    recurrenceId: 'rec_exp_1',
   },
   {
     id: 'exp_2',
@@ -392,8 +499,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '04 nov 2026',
     category: 'Servicios',
     companyCategory: 'Gastos operativos',
+    expenseNature: 'Operativo',
+    status: 'Pagado',
     costBehavior: 'Fijo',
-    departmentName: 'Operaciones y Almacén',
+    departmentId: 'dep_2',
+    departmentName: 'Operaciones y Logística',
+    costCenter: 'CC-200',
+    locationId: 'loc_2',
+    locationName: 'Almacén Central Vallejo',
+    accountCode: '6003-001',
+    accountName: 'Servicios públicos y energía eléctrica',
     bankAccountName: 'BBVA México',
     description: 'Suministro de energía eléctrica CFE Nave A y B',
     beneficiary: 'Comisión Federal de Electricidad',
@@ -402,7 +517,10 @@ export const initialExpenses: ExpenseRecord[] = [
     total: 8642,
     paymentMethod: 'Domiciliación bancaria',
     referenceDoc: 'CFE-OCT-9901',
+    issuerRfc: 'CSS160330CP7',
     user: 'Andrea Morales',
+    isRecurring: true,
+    recurrenceId: 'rec_exp_2',
   },
   {
     id: 'exp_3',
@@ -410,8 +528,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '02 nov 2026',
     category: 'Software y herramientas',
     companyCategory: 'Gastos administrativos',
+    expenseNature: 'Administrativo',
+    status: 'Pagado',
     costBehavior: 'Fijo',
+    departmentId: 'dep_5',
     departmentName: 'Tecnología y Sistemas',
+    costCenter: 'CC-500',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '6004-001',
+    accountName: 'Software, licencias y hosting en la nube',
     bankAccountName: 'BBVA México',
     description: 'Suscripción nube, hosting servidores y respaldos dedicados',
     beneficiary: 'Nube Digital / Cloud Services',
@@ -421,6 +547,8 @@ export const initialExpenses: ExpenseRecord[] = [
     paymentMethod: 'Tarjeta corporativa',
     referenceDoc: 'INV-CLOUD-44',
     user: 'Andrea Morales',
+    isRecurring: true,
+    recurrenceId: 'rec_exp_3',
   },
   {
     id: 'exp_4',
@@ -428,16 +556,25 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '31 oct 2026',
     category: 'Logística y fletes',
     companyCategory: 'Gastos operativos',
+    expenseNature: 'Costo de venta',
+    status: 'Pagado',
     costBehavior: 'Variable',
-    departmentName: 'Operaciones y Almacén',
+    departmentId: 'dep_2',
+    departmentName: 'Operaciones y Logística',
+    costCenter: 'CC-200',
+    locationId: 'loc_3',
+    locationName: 'Sucursal y Bodega Monterrey',
+    accountCode: '5001-001',
+    accountName: 'Costo de ventas de mercancías',
     bankAccountName: 'Banorte',
-    description: 'Flete consolidado traslado de stock CDMX - Monterrey',
+    description: 'Flete consolidado y empaque directo de pedidos CDMX - Monterrey',
     beneficiary: 'Logística del Valle',
     amount: 14200,
     tax: 2272,
     total: 16472,
     paymentMethod: 'Transferencia SPEI',
     referenceDoc: 'FLET-TRF-001',
+    issuerRfc: 'LDV140822M44',
     user: 'Andrea Morales',
   },
   {
@@ -446,8 +583,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '30 oct 2026',
     category: 'Nómina y honorarios',
     companyCategory: 'Gastos administrativos',
+    expenseNature: 'Administrativo',
+    status: 'Pagado',
     costBehavior: 'Fijo',
+    departmentId: 'dep_3',
     departmentName: 'Finanzas y Tesorería',
+    costCenter: 'CC-300',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '6002-001',
+    accountName: 'Sueldos, nómina y honorarios asimilados',
     bankAccountName: 'BBVA México',
     description: 'Honorarios asesoría contable y dictamen fiscal mensual',
     beneficiary: 'Despacho Contable García & Asoc.',
@@ -456,6 +601,7 @@ export const initialExpenses: ExpenseRecord[] = [
     total: 13920,
     paymentMethod: 'Transferencia SPEI',
     referenceDoc: 'HON-OCT-2026',
+    issuerRfc: 'DCG051109RT2',
     user: 'Andrea Morales',
   },
   {
@@ -464,8 +610,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '29 oct 2026',
     category: 'Comisiones e intereses',
     companyCategory: 'Gastos financieros',
+    expenseNature: 'Financiero',
+    status: 'Pagado',
     costBehavior: 'Variable',
+    departmentId: 'dep_3',
     departmentName: 'Finanzas y Tesorería',
+    costCenter: 'CC-300',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '7001-001',
+    accountName: 'Comisiones bancarias e intereses financieros',
     bankAccountName: 'BBVA México',
     description: 'Comisiones bancarias por dispersión SPEI, anualidad TPV y manejo de cuenta',
     beneficiary: 'BBVA México S.A.',
@@ -482,8 +636,16 @@ export const initialExpenses: ExpenseRecord[] = [
     date: '25 oct 2026',
     category: 'Comisiones e intereses',
     companyCategory: 'Gastos financieros',
+    expenseNature: 'Financiero',
+    status: 'Pagado',
     costBehavior: 'Fijo',
+    departmentId: 'dep_3',
     departmentName: 'Finanzas y Tesorería',
+    costCenter: 'CC-300',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '7001-001',
+    accountName: 'Comisiones bancarias e intereses financieros',
     bankAccountName: 'Banorte',
     description: 'Intereses ordinarios devengados de línea de crédito revolvente capital de trabajo',
     beneficiary: 'Grupo Financiero Banorte',
@@ -493,6 +655,185 @@ export const initialExpenses: ExpenseRecord[] = [
     paymentMethod: 'Domiciliación bancaria',
     referenceDoc: 'INT-BNT-202610',
     user: 'Gabriela Morales',
+    isRecurring: true,
+    recurrenceId: 'rec_exp_4',
+  },
+  {
+    id: 'exp_8',
+    folio: 'GST-2026-008',
+    date: '06 nov 2026',
+    category: 'Impuestos y derechos',
+    companyCategory: 'Gastos administrativos',
+    expenseNature: 'Impuestos',
+    status: 'Pendiente',
+    costBehavior: 'Fijo',
+    departmentId: 'dep_3',
+    departmentName: 'Finanzas y Tesorería',
+    costCenter: 'CC-300',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '2005-001',
+    accountName: 'Impuestos y retenciones por pagar',
+    bankAccountName: 'BBVA México',
+    description: 'Impuesto sobre nómina (3% CDMX) y derechos de funcionamiento mensual',
+    beneficiary: 'Tesorería de la Ciudad de México',
+    amount: 9400,
+    tax: 0,
+    total: 9400,
+    paymentMethod: 'Transferencia SPEI',
+    referenceDoc: 'ISN-NOV-2026',
+    user: 'Gabriela Morales',
+  },
+]
+
+export const initialExpenseBudgets: ExpenseBudgetRule[] = [
+  {
+    id: 'bud_admin',
+    nature: 'Administrativo',
+    monthlyLimit: 62000,
+    warningThresholdPct: 80,
+    criticalThresholdPct: 95,
+    alertsEnabled: true,
+    active: true,
+  },
+  {
+    id: 'bud_op',
+    nature: 'Operativo',
+    monthlyLimit: 18000,
+    warningThresholdPct: 80,
+    criticalThresholdPct: 95,
+    alertsEnabled: true,
+    active: true,
+  },
+  {
+    id: 'bud_fin',
+    nature: 'Financiero',
+    monthlyLimit: 10000,
+    warningThresholdPct: 80,
+    criticalThresholdPct: 95,
+    alertsEnabled: true,
+    active: true,
+  },
+  {
+    id: 'bud_cogs',
+    nature: 'Costo de venta',
+    monthlyLimit: 24000,
+    warningThresholdPct: 80,
+    criticalThresholdPct: 95,
+    alertsEnabled: true,
+    active: true,
+  },
+  {
+    id: 'bud_tax',
+    nature: 'Impuestos',
+    monthlyLimit: 11200,
+    warningThresholdPct: 80,
+    criticalThresholdPct: 95,
+    alertsEnabled: true,
+    active: true,
+  },
+]
+
+export const initialRecurringExpenses: RecurringExpenseTemplate[] = [
+  {
+    id: 'rec_exp_1',
+    title: 'Renta mensual bodega y oficinas Vallejo',
+    nature: 'Administrativo',
+    category: 'Arrendamiento',
+    costBehavior: 'Fijo',
+    beneficiary: 'Inmobiliaria Industrial Vallejo S.A.',
+    description: 'Renta mensual de bodega y oficinas Calz. Vallejo',
+    amount: 32000,
+    hasTax: true,
+    paymentMethod: 'Transferencia SPEI',
+    bankAccountId: 'bank_1',
+    bankAccountName: 'BBVA México',
+    departmentId: 'dep_1',
+    departmentName: 'Dirección General',
+    costCenter: 'CC-100',
+    locationId: 'loc_2',
+    locationName: 'Almacén Central Vallejo',
+    accountCode: '6001-001',
+    accountName: 'Gastos de arrendamiento y bodegas',
+    frequency: 'Mensual',
+    nextRunDate: '2026-12-05',
+    lastGeneratedDate: '2026-11-05',
+    active: true,
+  },
+  {
+    id: 'rec_exp_2',
+    title: 'Suministro eléctrico CFE Naves A y B',
+    nature: 'Operativo',
+    category: 'Servicios',
+    costBehavior: 'Fijo',
+    beneficiary: 'Comisión Federal de Electricidad',
+    description: 'Suministro bimestral / mensual de energía eléctrica CFE Nave A y B',
+    amount: 7450,
+    hasTax: true,
+    paymentMethod: 'Domiciliación bancaria',
+    bankAccountId: 'bank_1',
+    bankAccountName: 'BBVA México',
+    departmentId: 'dep_2',
+    departmentName: 'Operaciones y Logística',
+    costCenter: 'CC-200',
+    locationId: 'loc_2',
+    locationName: 'Almacén Central Vallejo',
+    accountCode: '6003-001',
+    accountName: 'Servicios públicos y energía eléctrica',
+    frequency: 'Mensual',
+    nextRunDate: '2026-12-04',
+    lastGeneratedDate: '2026-11-04',
+    active: true,
+  },
+  {
+    id: 'rec_exp_3',
+    title: 'Hosting nube, respaldos y licencias SaaS',
+    nature: 'Administrativo',
+    category: 'Software y herramientas',
+    costBehavior: 'Fijo',
+    beneficiary: 'Nube Digital / Cloud Services',
+    description: 'Suscripción nube, hosting servidores y respaldos dedicados',
+    amount: 6800,
+    hasTax: true,
+    paymentMethod: 'Tarjeta corporativa',
+    bankAccountId: 'bank_1',
+    bankAccountName: 'BBVA México',
+    departmentId: 'dep_5',
+    departmentName: 'Tecnología y Sistemas',
+    costCenter: 'CC-500',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '6004-001',
+    accountName: 'Software, licencias y hosting en la nube',
+    frequency: 'Mensual',
+    nextRunDate: '2026-12-02',
+    lastGeneratedDate: '2026-11-02',
+    active: true,
+  },
+  {
+    id: 'rec_exp_4',
+    title: 'Intereses línea revolvente capital de trabajo',
+    nature: 'Financiero',
+    category: 'Comisiones e intereses',
+    costBehavior: 'Fijo',
+    beneficiary: 'Grupo Financiero Banorte',
+    description: 'Intereses ordinarios devengados de línea de crédito revolvente capital de trabajo',
+    amount: 6400,
+    hasTax: false,
+    paymentMethod: 'Domiciliación bancaria',
+    bankAccountId: 'bank_2',
+    bankAccountName: 'Banorte',
+    departmentId: 'dep_3',
+    departmentName: 'Finanzas y Tesorería',
+    costCenter: 'CC-300',
+    locationId: 'loc_1',
+    locationName: 'Sede Corporativa Reforma',
+    accountCode: '7001-001',
+    accountName: 'Comisiones bancarias e intereses financieros',
+    frequency: 'Quincenal',
+    nextRunDate: '2026-11-25',
+    lastGeneratedDate: '2026-10-25',
+    active: true,
   },
 ]
 

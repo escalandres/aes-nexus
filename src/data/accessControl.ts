@@ -57,9 +57,14 @@ const SECTION_CAPABILITY_REQUIREMENTS: Record<string, Record<string, RoleCapabil
     Cobros: ['manageReceivables'],
     Pagos: ['schedulePayments'],
     'Pagos Bancarios': ['schedulePayments'],
-    'Gastos de la empresa': ['expenseControl'],
     'Cuentas contables': ['balanceReports'],
     Resumen: ['manageReceivables', 'schedulePayments', 'balanceReports', 'expenseControl'],
+  },
+  Gastos: {
+    'Resumen y control': ['expenseControl', 'balanceReports', 'fullReports'],
+    'Registro y pólizas': ['expenseControl'],
+    'Presupuestos y alertas': ['expenseControl', 'balanceReports'],
+    'Gastos recurrentes': ['expenseControl'],
   },
   Reportes: {
     'Resumen ejecutivo': ['fullReports', 'balanceReports', 'pipelineReports'],

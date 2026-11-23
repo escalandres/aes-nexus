@@ -3,12 +3,16 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BookOpen,
+  Building2,
   Calculator,
   ChevronDown,
   ChevronRight,
   Layers,
+  MapPin,
   Percent,
+  RotateCcw,
   Scale,
+  SlidersHorizontal,
   TrendingUp,
 } from 'lucide-react'
 import {
@@ -26,7 +30,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import {
-  resolveCompanyExpenseCategory,
+  resolveExpenseNature,
   type ChartAccount,
   type ExpenseRecord,
   type InvoiceReceivable,
@@ -107,8 +111,12 @@ export interface ComputedIncomeStatement {
     adminTotal: number
     operatingCount: number
     operatingTotal: number
+    cogsCount: number
+    cogsTotal: number
     financialCount: number
     financialTotal: number
+    taxesCount: number
+    taxesTotal: number
     fixedTotal: number
     variableTotal: number
   }
@@ -204,8 +212,11 @@ export function computeIncomeStatementData(params: {
           : 0
         : 1
 
-  const allExpensesTotal = allExpenses.reduce((s, e) => s + e.total, 0)
-  const scopedExpensesMatchingCurrency = scopedExpenses.filter(
+  const validAllExpenses = allExpenses.filter((e) => e.status !== 'Cancelado')
+  const validScopedExpenses = scopedExpenses.filter((e) => e.status !== 'Cancelado')
+
+  const allExpensesTotal = validAllExpenses.reduce((s, e) => s + e.total, 0)
+  const scopedExpensesMatchingCurrency = validScopedExpenses.filter(
     () => currencyFilter === 'Todas' || currencyFilter === 'MXN'
   )
   const scopedExpensesTotal = scopedExpensesMatchingCurrency.reduce((s, e) => s + e.total, 0)
@@ -218,24 +229,34 @@ export function computeIncomeStatementData(params: {
           : 0
         : 1
 
-  // Company expenses grouped by FinanceCompanyExpenses corporate categories
+  // Company expenses grouped by all 5 accounting natures (Administrativo, Operativo, Costo de venta, Financiero, Impuestos)
   let adminExpenses = 0
   let adminCount = 0
   let operatingExpenses = 0
   let operatingCount = 0
+  let cogsCompanyExpenses = 0
+  let cogsCompanyCount = 0
   let finCompanyExpenses = 0
   let finCount = 0
+  let directExpenseTaxes = 0
+  let directExpenseTaxesCount = 0
   let fixedCompanyExpenses = 0
   let variableCompanyExpenses = 0
 
   scopedExpensesMatchingCurrency.forEach((exp) => {
-    const cat = resolveCompanyExpenseCategory(exp)
-    if (cat === 'Gastos administrativos') {
+    const nature = resolveExpenseNature(exp)
+    if (nature === 'Administrativo') {
       adminExpenses += exp.total
       adminCount += 1
-    } else if (cat === 'Gastos operativos') {
+    } else if (nature === 'Operativo') {
       operatingExpenses += exp.total
       operatingCount += 1
+    } else if (nature === 'Costo de venta') {
+      cogsCompanyExpenses += exp.total
+      cogsCompanyCount += 1
+    } else if (nature === 'Impuestos') {
+      directExpenseTaxes += exp.total
+      directExpenseTaxesCount += 1
     } else {
       finCompanyExpenses += exp.total
       finCount += 1
@@ -295,10 +316,11 @@ export function computeIncomeStatementData(params: {
       ? chartRevenue * revenueScopeRatio
       : chartRevenue * revenueScopeRatio + incrementalReceivables
 
+  const resolvedCogsFromExpenses = sourceMode === 'accounting' ? 0 : cogsCompanyExpenses
   const cogs =
     sourceMode === 'accounting'
       ? chartCogs * revenueScopeRatio
-      : chartCogs * revenueScopeRatio + incrementalCogs
+      : chartCogs * revenueScopeRatio + incrementalCogs + resolvedCogsFromExpenses
 
   const grossProfit = totalRevenue - cogs
   const grossMarginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
@@ -328,19 +350,32 @@ export function computeIncomeStatementData(params: {
 
   const ebt = operatingIncome - financialExpenses + otherIncome
   const normalizedTaxRate = Math.max(0, Math.min(60, taxRate))
-  const taxes = ebt > 0 ? ebt * (normalizedTaxRate / 100) : 0
+  const estimatedIsrTax = ebt > 0 ? ebt * (normalizedTaxRate / 100) : 0
+  const resolvedDirectTaxes = sourceMode === 'accounting' ? 0 : directExpenseTaxes
+  const taxes = estimatedIsrTax + resolvedDirectTaxes
   const netIncome = ebt - taxes
   const netMarginPct = totalRevenue > 0 ? (netIncome / totalRevenue) * 100 : 0
 
   // Break-even calculations (Costos Fijos vs Costos Variables)
+  // Costos variables: COGS de inventario/pedidos + gastos etiquetados Variable (evitando duplicar Costo de venta si ya entró en COGS)
+  const variableNonCogsCompanyExpenses = scopedExpensesMatchingCurrency
+    .filter((e) => resolveExpenseNature(e) !== 'Costo de venta' && e.costBehavior === 'Variable')
+    .reduce((s, e) => s + e.total, 0)
+  const fixedAllExpensesExcludingDirectVariableCogs = scopedExpensesMatchingCurrency
+    .filter((e) => !(resolveExpenseNature(e) === 'Costo de venta' && e.costBehavior === 'Variable'))
+    .filter((e) => e.costBehavior !== 'Variable')
+    .reduce((s, e) => s + e.total, 0)
+
   const variableCosts =
-    sourceMode === 'accounting' ? cogs : cogs + variableCompanyExpenses
+    sourceMode === 'accounting'
+      ? cogs
+      : cogs + variableNonCogsCompanyExpenses
   const fixedCosts =
     sourceMode === 'accounting'
       ? Math.max(0, opAndAdminExpenses + financialExpenses)
       : Math.max(
           0,
-          fixedCompanyExpenses +
+          fixedAllExpensesExcludingDirectVariableCogs +
             payrollAndChartOpEx +
             nonOverlappingChartFinEx * expenseScopeRatio
         )
@@ -392,7 +427,7 @@ export function computeIncomeStatementData(params: {
       id: 'pnl_cogs',
       label: 'Costos de venta',
       sign: '−',
-      sourceLabel: `Cuentas 5xxx (${cogsAccounts.length})${incrementalCogs > 0 ? ' + pedidos' : ''}`,
+      sourceLabel: `Cuentas 5xxx (${cogsAccounts.length})${incrementalCogs > 0 ? ' + pedidos' : ''}${resolvedCogsFromExpenses > 0 ? ` + Costo venta Gastos (${cogsCompanyCount})` : ''}`,
       amount: cogs,
       pctOfRevenue: pctRev(cogs),
       priorAmount: priorCogs,
@@ -419,7 +454,7 @@ export function computeIncomeStatementData(params: {
       sourceLabel:
         sourceMode === 'accounting'
           ? `Cuentas 6xxx (${opExAccounts.length})`
-          : `Gastos de la empresa (${adminCount + operatingCount}) + Cuentas 6xxx`,
+          : `Módulo Gastos (${adminCount + operatingCount}) + Cuentas 6xxx`,
       amount: opAndAdminExpenses,
       pctOfRevenue: pctRev(opAndAdminExpenses),
       priorAmount: priorOpAdmin,
@@ -434,7 +469,7 @@ export function computeIncomeStatementData(params: {
             id: 'pnl_opex_admin',
             label: 'Gastos administrativos',
             sign: '−',
-            sourceLabel: `Finanzas > Gastos de la empresa (${adminCount} pólizas)`,
+            sourceLabel: `Gastos > Administración (${adminCount} pólizas)`,
             amount: resolvedAdminExpenses,
             pctOfRevenue: pctRev(resolvedAdminExpenses),
             priorAmount: resolvedAdminExpenses * 0.91,
@@ -446,7 +481,7 @@ export function computeIncomeStatementData(params: {
             id: 'pnl_opex_op',
             label: 'Gastos operativos',
             sign: '−',
-            sourceLabel: `Finanzas > Gastos de la empresa (${operatingCount} pólizas)`,
+            sourceLabel: `Gastos > Operación (${operatingCount} pólizas)`,
             amount: resolvedOperatingExpenses,
             pctOfRevenue: pctRev(resolvedOperatingExpenses),
             priorAmount: resolvedOperatingExpenses * 0.91,
@@ -520,9 +555,14 @@ export function computeIncomeStatementData(params: {
     },
     {
       id: 'pnl_taxes',
-      label: `Impuestos (ISR estimado ${normalizedTaxRate}%)`,
+      label: `Impuestos y derechos (${normalizedTaxRate}% ISR${resolvedDirectTaxes > 0 ? ' + pólizas fiscales' : ''})`,
       sign: '−',
-      sourceLabel: ebt > 0 ? `Provisión fiscal ${normalizedTaxRate}% sobre UAI` : 'Sin base gravable positiva',
+      sourceLabel:
+        ebt > 0
+          ? `Provisión ISR ${normalizedTaxRate}%${resolvedDirectTaxes > 0 ? ` + Impuestos directos (${directExpenseTaxesCount} pólizas)` : ''}`
+          : resolvedDirectTaxes > 0
+            ? `Impuestos y derechos directos (${directExpenseTaxesCount} pólizas)`
+            : 'Sin base gravable positiva',
       amount: taxes,
       pctOfRevenue: pctRev(taxes),
       priorAmount: priorTaxes,
@@ -617,12 +657,45 @@ export function computeIncomeStatementData(params: {
       adminTotal: adminExpenses,
       operatingCount,
       operatingTotal: operatingExpenses,
+      cogsCount: cogsCompanyCount,
+      cogsTotal: cogsCompanyExpenses,
       financialCount: finCount,
       financialTotal: finCompanyExpenses,
+      taxesCount: directExpenseTaxesCount,
+      taxesTotal: directExpenseTaxes,
       fixedTotal: fixedCompanyExpenses,
       variableTotal: variableCompanyExpenses,
     },
   }
+}
+
+export interface CostCenterBranchRow {
+  id: string
+  code: string
+  name: string
+  revenue: number
+  fixedCosts: number
+  variableCosts: number
+  payrollCosts: number
+  operatingResult: number
+  breakEvenSales: number
+  coveragePct: number
+  expensesCount: number
+}
+
+export interface CostCenterDepartmentRow {
+  id: string
+  code: string
+  costCenter: string
+  name: string
+  leader: string
+  fixedExpenses: number
+  variableExpenses: number
+  payrollCosts: number
+  totalCost: number
+  sharePct: number
+  breakEvenSupportSales: number
+  expensesCount: number
 }
 
 interface IncomeStatementReportProps {
@@ -636,6 +709,12 @@ interface IncomeStatementReportProps {
   onNavigateModule: (moduleName: string) => void
   quotes?: Quote[]
   purchaseOrders?: PurchaseOrder[]
+  branchBreakdown?: CostCenterBranchRow[]
+  departmentBreakdown?: CostCenterDepartmentRow[]
+  activeLocationFilter?: string
+  activeDepartmentFilter?: string
+  onToggleLocationFilter?: (locationId: string) => void
+  onToggleDepartmentFilter?: (departmentId: string) => void
 }
 
 const money = (val: number) =>
@@ -662,9 +741,64 @@ export function IncomeStatementReport({
   taxRate,
   onChangeTaxRate,
   onNavigateModule,
+  branchBreakdown = [],
+  departmentBreakdown = [],
+  activeLocationFilter = 'all',
+  activeDepartmentFilter = 'all',
+  onToggleLocationFilter,
+  onToggleDepartmentFilter,
 }: IncomeStatementReportProps) {
   const [expandOpExDetail, setExpandOpExDetail] = useState(true)
+  const [costCenterTab, setCostCenterTab] = useState<'branches' | 'departments'>('branches')
   const [brand, setBrand] = useState<CompanyBrandSnapshot>(() => loadCompanyBrandSnapshot())
+
+  // What-If Break-Even Simulator State (strictly non-mutating)
+  const [simSalesDeltaPct, setSimSalesDeltaPct] = useState<number>(0)
+  const [simFixedDeltaPct, setSimFixedDeltaPct] = useState<number>(0)
+  const [simVariableDeltaPct, setSimVariableDeltaPct] = useState<number>(0)
+
+  const hasSimulationActive =
+    simSalesDeltaPct !== 0 || simFixedDeltaPct !== 0 || simVariableDeltaPct !== 0
+
+  const simulated = useMemo(() => {
+    const rev = Math.max(0, data.totalRevenue * (1 + simSalesDeltaPct / 100))
+    const fixed = Math.max(0, data.fixedCosts * (1 + simFixedDeltaPct / 100))
+    const variable = Math.max(0, data.variableCosts * (1 + simVariableDeltaPct / 100))
+    const contribution = rev - variable
+    const cmRatio = rev > 0 ? contribution / rev : 0
+    const cmRatioPct = cmRatio * 100
+    const breakEven = cmRatio > 0 ? fixed / cmRatio : 0
+    const safetyAmount = rev - breakEven
+    const safetyPct = rev > 0 ? (safetyAmount / rev) * 100 : 0
+    const operatingResult = contribution - fixed
+
+    const maxAxis = Math.max(rev * 1.35, breakEven * 1.4, data.totalRevenue * 1.35, 100000)
+    const steps = 6
+    const varRate = rev > 0 ? variable / rev : 0.45
+    const curveData = Array.from({ length: steps + 1 }, (_, i) => {
+      const ratio = i / steps
+      const salesAtPoint = Math.round(maxAxis * ratio)
+      const totalCostAtPoint = Math.round(fixed + salesAtPoint * varRate)
+      return {
+        volumeLabel: `${Math.round(ratio * 100)}%`,
+        sales: salesAtPoint,
+        totalCosts: totalCostAtPoint,
+        fixedCosts: Math.round(fixed),
+      }
+    })
+
+    return {
+      rev,
+      fixed,
+      variable,
+      cmRatioPct,
+      breakEven,
+      safetyAmount,
+      safetyPct,
+      operatingResult,
+      curveData,
+    }
+  }, [data.totalRevenue, data.fixedCosts, data.variableCosts, simSalesDeltaPct, simFixedDeltaPct, simVariableDeltaPct])
 
   useEffect(() => {
     const syncBrand = () => setBrand(loadCompanyBrandSnapshot())
@@ -855,7 +989,7 @@ export function IncomeStatementReport({
           <div>
             <h2>Estado de Resultados Integral (P&amp;L)</h2>
             <p>
-              Integrado en tiempo real con <strong>Gastos de la empresa</strong> y{' '}
+              Integrado en tiempo real con el módulo de <strong>Gastos</strong> y{' '}
               <strong>Cuentas contables</strong> · Cifras expresadas según filtros activos.
             </p>
           </div>
@@ -1025,46 +1159,136 @@ export function IncomeStatementReport({
           </div>
         </section>
 
-        {/* Chart 2: Break-Even Analysis */}
+        {/* Chart 2: Break-Even Analysis + Interactive What-If Simulator */}
         <section className="overview-panel-card">
-          <div className="overview-card-head">
-            <h2>Análisis de Punto de Equilibrio</h2>
-            <div className="overview-card-head-sub">
-              <Calculator size={16} />
-              <p>
-                Cruce entre ventas y costos totales (fijos + variables) · Margen de contribución{' '}
-                <strong className="mono">{data.contributionMarginRatioPct.toFixed(1)}%</strong>.
-              </p>
+          <div className="overview-card-head overview-card-head-split">
+            <div>
+              <h2>Análisis de Punto de Equilibrio y Simulador</h2>
+              <div className="overview-card-head-sub">
+                <Calculator size={16} />
+                <p>
+                  {hasSimulationActive
+                    ? `Escenario simulado activo · Margen de contribución ${simulated.cmRatioPct.toFixed(1)}%`
+                    : `Cruce entre ventas y costos totales (fijos + variables) · Margen de contribución ${data.contributionMarginRatioPct.toFixed(1)}%.`}
+                </p>
+              </div>
             </div>
+            {hasSimulationActive && (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => {
+                  setSimSalesDeltaPct(0)
+                  setSimFixedDeltaPct(0)
+                  setSimVariableDeltaPct(0)
+                }}
+              >
+                <RotateCcw size={13} /> Restablecer base
+              </button>
+            )}
           </div>
 
           <div className="pnl-breakeven-metrics">
             <div>
-              <small>Costos fijos</small>
-              <strong className="mono">{money(data.fixedCosts)}</strong>
+              <small>Costos fijos {hasSimulationActive ? '(Simulado)' : ''}</small>
+              <strong className="mono">
+                {money(hasSimulationActive ? simulated.fixed : data.fixedCosts)}
+              </strong>
             </div>
             <div>
-              <small>Costos variables</small>
-              <strong className="mono">{money(data.variableCosts)}</strong>
+              <small>Costos variables {hasSimulationActive ? '(Simulado)' : ''}</small>
+              <strong className="mono">
+                {money(hasSimulationActive ? simulated.variable : data.variableCosts)}
+              </strong>
             </div>
             <div>
-              <small>Punto de equilibrio</small>
-              <strong className="mono">{money(data.breakEvenSales)}</strong>
+              <small>Punto de equilibrio {hasSimulationActive ? '(Simulado)' : ''}</small>
+              <strong className="mono">
+                {money(hasSimulationActive ? simulated.breakEven : data.breakEvenSales)}
+              </strong>
+              {hasSimulationActive && (
+                <small className="pnl-sim-base-ref mono">Base: {money(data.breakEvenSales)}</small>
+              )}
             </div>
             <div>
               <small>Margen de seguridad</small>
               <strong
-                className={`mono ${data.safetyMarginAmount >= 0 ? 'pnl-val-positive' : 'pnl-val-negative'}`}
+                className={`mono ${(hasSimulationActive ? simulated.safetyAmount : data.safetyMarginAmount) >= 0 ? 'pnl-val-positive' : 'pnl-val-negative'}`}
               >
-                {money(data.safetyMarginAmount)} ({data.safetyMarginPct.toFixed(1)}%)
+                {money(hasSimulationActive ? simulated.safetyAmount : data.safetyMarginAmount)} (
+                {(hasSimulationActive ? simulated.safetyPct : data.safetyMarginPct).toFixed(1)}%)
               </strong>
+            </div>
+          </div>
+
+          {/* Interactive What-If Sliders */}
+          <div className="pnl-sim-panel" aria-label="Simulador de escenarios Qué pasa si">
+            <div className="pnl-sim-header">
+              <span>
+                <SlidersHorizontal size={13} /> Simulador &ldquo;Qué pasa si&rdquo; (no modifica datos reales)
+              </span>
+              <span className="mono pnl-sim-ebit-tag">
+                EBIT proyectado: <strong>{money(simulated.operatingResult)}</strong>
+              </span>
+            </div>
+            <div className="pnl-sim-sliders">
+              <label className="pnl-sim-control">
+                <div>
+                  <span>Precio / Ventas</span>
+                  <strong className="mono">
+                    {simSalesDeltaPct > 0 ? `+${simSalesDeltaPct}%` : `${simSalesDeltaPct}%`}
+                  </strong>
+                </div>
+                <input
+                  type="range"
+                  min={-25}
+                  max={40}
+                  step={1}
+                  value={simSalesDeltaPct}
+                  onChange={(e) => setSimSalesDeltaPct(Number(e.target.value))}
+                />
+              </label>
+
+              <label className="pnl-sim-control">
+                <div>
+                  <span>Costos fijos</span>
+                  <strong className="mono">
+                    {simFixedDeltaPct > 0 ? `+${simFixedDeltaPct}%` : `${simFixedDeltaPct}%`}
+                  </strong>
+                </div>
+                <input
+                  type="range"
+                  min={-30}
+                  max={30}
+                  step={1}
+                  value={simFixedDeltaPct}
+                  onChange={(e) => setSimFixedDeltaPct(Number(e.target.value))}
+                />
+              </label>
+
+              <label className="pnl-sim-control">
+                <div>
+                  <span>Costos variables</span>
+                  <strong className="mono">
+                    {simVariableDeltaPct > 0 ? `+${simVariableDeltaPct}%` : `${simVariableDeltaPct}%`}
+                  </strong>
+                </div>
+                <input
+                  type="range"
+                  min={-25}
+                  max={25}
+                  step={1}
+                  value={simVariableDeltaPct}
+                  onChange={(e) => setSimVariableDeltaPct(Number(e.target.value))}
+                />
+              </label>
             </div>
           </div>
 
           <div className="reports-recharts-box">
             <ResponsiveContainer width="100%" height={230}>
               <LineChart
-                data={data.breakEvenCurveData}
+                data={hasSimulationActive ? simulated.curveData : data.breakEvenCurveData}
                 margin={{ top: 10, right: 14, left: 0, bottom: 4 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.22)" />
@@ -1075,7 +1299,7 @@ export function IncomeStatementReport({
                 <Line
                   type="monotone"
                   dataKey="sales"
-                  name="Ingresos por ventas"
+                  name={hasSimulationActive ? 'Ingresos simulados' : 'Ingresos por ventas'}
                   stroke="#2f855a"
                   strokeWidth={2.5}
                   dot={{ r: 3 }}
@@ -1083,7 +1307,7 @@ export function IncomeStatementReport({
                 <Line
                   type="monotone"
                   dataKey="totalCosts"
-                  name="Costos totales"
+                  name={hasSimulationActive ? 'Costos totales simulados' : 'Costos totales'}
                   stroke="#c05621"
                   strokeWidth={2.3}
                   dot={{ r: 3 }}
@@ -1091,7 +1315,7 @@ export function IncomeStatementReport({
                 <Line
                   type="monotone"
                   dataKey="fixedCosts"
-                  name="Costos fijos"
+                  name={hasSimulationActive ? 'Costos fijos simulados' : 'Costos fijos'}
                   stroke="#64748b"
                   strokeWidth={1.8}
                   strokeDasharray="5 4"
@@ -1108,22 +1332,22 @@ export function IncomeStatementReport({
         <section className="overview-panel-card">
           <div className="overview-card-head overview-card-head-split">
             <div>
-              <h2>Origen: Gastos de la Empresa</h2>
-              <p>Clasificación viva tomada de Finanzas &gt; Gastos de la empresa.</p>
+              <h2>Origen: Módulo de Gastos y Pólizas</h2>
+              <p>Clasificación viva de las 5 naturalezas contables (excluye pólizas canceladas).</p>
             </div>
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => onNavigateModule('Finanzas')}
+              onClick={() => onNavigateModule('Gastos')}
             >
-              <Layers size={13} /> Ir a Finanzas
+              <Layers size={13} /> Ir a Gastos
             </button>
           </div>
           <div className="table-wrap ops-table-wrap">
             <table className="data-table ops-data-table">
               <thead>
                 <tr>
-                  <th>CATEGORÍA EMPRESARIAL</th>
+                  <th>NATURALEZA CONTABLE</th>
                   <th style={{ textAlign: 'right' }}>PÓLIZAS</th>
                   <th style={{ textAlign: 'right' }}>IMPORTE TOTAL</th>
                 </tr>
@@ -1140,9 +1364,19 @@ export function IncomeStatementReport({
                   <td style={{ textAlign: 'right' }} className="mono"><strong>{money(data.companyExpenseBreakdown.operatingTotal)}</strong></td>
                 </tr>
                 <tr>
+                  <td><strong>Costos de venta directos</strong></td>
+                  <td style={{ textAlign: 'right' }} className="mono">{data.companyExpenseBreakdown.cogsCount}</td>
+                  <td style={{ textAlign: 'right' }} className="mono"><strong>{money(data.companyExpenseBreakdown.cogsTotal)}</strong></td>
+                </tr>
+                <tr>
                   <td><strong>Gastos financieros</strong></td>
                   <td style={{ textAlign: 'right' }} className="mono">{data.companyExpenseBreakdown.financialCount}</td>
                   <td style={{ textAlign: 'right' }} className="mono"><strong>{money(data.companyExpenseBreakdown.financialTotal)}</strong></td>
+                </tr>
+                <tr>
+                  <td><strong>Impuestos y derechos</strong></td>
+                  <td style={{ textAlign: 'right' }} className="mono">{data.companyExpenseBreakdown.taxesCount}</td>
+                  <td style={{ textAlign: 'right' }} className="mono"><strong>{money(data.companyExpenseBreakdown.taxesTotal)}</strong></td>
                 </tr>
                 <tr className="pnl-row-subtotal">
                   <td><strong>Clasificación por comportamiento (Fijo / Variable)</strong></td>
@@ -1202,6 +1436,176 @@ export function IncomeStatementReport({
           </div>
         </section>
       </div>
+
+      {/* Cost Center Profitability & Break-Even Breakdown (Branches & Departments) */}
+      {(branchBreakdown.length > 0 || departmentBreakdown.length > 0) && (
+        <section className="overview-panel-card">
+          <div className="overview-card-head overview-card-head-split">
+            <div>
+              <h2>Rentabilidad y punto de equilibrio por centro de costo</h2>
+              <p>
+                Desglose por sucursal y departamento conectado a Administración y Gastos. Haz clic
+                en Filtrar P&amp;L para aislar el Estado de Resultados de esa unidad.
+              </p>
+            </div>
+            <div className="warehouse-tab-selector" role="tablist" aria-label="Desglose por centro de costo">
+              <button
+                type="button"
+                className={`wh-tab ${costCenterTab === 'branches' ? 'active' : ''}`}
+                onClick={() => setCostCenterTab('branches')}
+              >
+                <MapPin size={13} /> Por sucursal ({branchBreakdown.length})
+              </button>
+              <button
+                type="button"
+                className={`wh-tab ${costCenterTab === 'departments' ? 'active' : ''}`}
+                onClick={() => setCostCenterTab('departments')}
+              >
+                <Building2 size={13} /> Por departamento ({departmentBreakdown.length})
+              </button>
+            </div>
+          </div>
+
+          <div className="table-wrap ops-table-wrap">
+            {costCenterTab === 'branches' ? (
+              <table className="data-table ops-data-table">
+                <thead>
+                  <tr>
+                    <th>CÓDIGO</th>
+                    <th>SUCURSAL / UBICACIÓN</th>
+                    <th style={{ textAlign: 'right' }}>INGRESOS</th>
+                    <th style={{ textAlign: 'right' }}>COSTOS FIJOS</th>
+                    <th style={{ textAlign: 'right' }}>COSTOS VARIABLES</th>
+                    <th style={{ textAlign: 'right' }}>NÓMINA</th>
+                    <th style={{ textAlign: 'right' }}>RESULTADO OP.</th>
+                    <th style={{ textAlign: 'right' }}>P. EQUILIBRIO</th>
+                    <th style={{ textAlign: 'right' }}>COBERTURA</th>
+                    {onToggleLocationFilter && <th style={{ textAlign: 'right' }}>ALCANCE P&amp;L</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {branchBreakdown.map((br) => {
+                    const isSelected = activeLocationFilter === br.id
+                    return (
+                      <tr key={br.id}>
+                        <td className="mono">
+                          <strong>{br.code}</strong>
+                        </td>
+                        <td>
+                          <strong>{br.name}</strong>
+                          <div className="company-expense-muted-sep">{br.expensesCount} póliza(s) de gasto</div>
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(br.revenue)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(br.fixedCosts)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(br.variableCosts)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(br.payrollCosts)}
+                        </td>
+                        <td
+                          style={{ textAlign: 'right' }}
+                          className={`mono ${br.operatingResult >= 0 ? 'pnl-val-positive' : 'pnl-val-negative'}`}
+                        >
+                          <strong>{money(br.operatingResult)}</strong>
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {br.breakEvenSales > 0 ? money(br.breakEvenSales) : '—'}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {br.breakEvenSales > 0 ? `${br.coveragePct.toFixed(0)}%` : 'Sede soporte'}
+                        </td>
+                        {onToggleLocationFilter && (
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="button-icon-action"
+                              onClick={() => onToggleLocationFilter(br.id)}
+                            >
+                              {isSelected ? 'Quitar filtro' : 'Filtrar P&L'}
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <table className="data-table ops-data-table">
+                <thead>
+                  <tr>
+                    <th>CENTRO COSTO</th>
+                    <th>DEPARTAMENTO / ÁREA</th>
+                    <th style={{ textAlign: 'right' }}>PÓLIZAS</th>
+                    <th style={{ textAlign: 'right' }}>GASTOS FIJOS</th>
+                    <th style={{ textAlign: 'right' }}>GASTOS VAR.</th>
+                    <th style={{ textAlign: 'right' }}>NÓMINA</th>
+                    <th style={{ textAlign: 'right' }}>COSTO TOTAL</th>
+                    <th style={{ textAlign: 'right' }}>VENTAS P.E. ÁREA</th>
+                    <th style={{ textAlign: 'right' }}>PARTICIPACIÓN</th>
+                    {onToggleDepartmentFilter && <th style={{ textAlign: 'right' }}>ALCANCE P&amp;L</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {departmentBreakdown.map((dep) => {
+                    const isSelected = activeDepartmentFilter === dep.id
+                    return (
+                      <tr key={dep.id}>
+                        <td className="mono">
+                          <strong>{dep.costCenter}</strong>
+                        </td>
+                        <td>
+                          <strong>{dep.name}</strong>
+                          <div className="company-expense-muted-sep">
+                            {dep.code} · Líder: {dep.leader}
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {dep.expensesCount}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(dep.fixedExpenses)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(dep.variableExpenses)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {money(dep.payrollCosts)}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          <strong>{money(dep.totalCost)}</strong>
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {dep.breakEvenSupportSales > 0 ? money(dep.breakEvenSupportSales) : '—'}
+                        </td>
+                        <td style={{ textAlign: 'right' }} className="mono">
+                          {dep.sharePct.toFixed(1)}%
+                        </td>
+                        {onToggleDepartmentFilter && (
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="button-icon-action"
+                              onClick={() => onToggleDepartmentFilter(dep.id)}
+                            >
+                              {isSelected ? 'Quitar filtro' : 'Filtrar P&L'}
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

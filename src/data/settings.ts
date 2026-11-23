@@ -33,7 +33,8 @@ export const SYSTEM_MODULE_SECTIONS = {
   Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Devoluciones', 'Resumen'],
   Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas', 'Devoluciones'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
-  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos de la empresa', 'Cuentas contables', 'Resumen'],
+  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Cuentas contables', 'Resumen'],
+  Gastos: ['Resumen y control', 'Registro y pólizas', 'Presupuestos y alertas', 'Gastos recurrentes'],
   Reportes: ['Resumen ejecutivo', 'Estado de Resultados', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
   Administración: [
     'Subsidiarias',
@@ -292,9 +293,14 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
       Cobros: 'full',
       Pagos: 'full',
       'Pagos Bancarios': 'edit',
-      'Gastos de la empresa': 'edit',
       'Cuentas contables': 'edit',
       Resumen: 'view',
+    },
+    Gastos: {
+      'Resumen y control': 'view',
+      'Registro y pólizas': 'edit',
+      'Presupuestos y alertas': 'edit',
+      'Gastos recurrentes': 'edit',
     },
     Reportes: {
       'Resumen ejecutivo': 'view',
@@ -347,9 +353,14 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     Cobros: ['manageReceivables'],
     Pagos: ['schedulePayments'],
     'Pagos Bancarios': ['schedulePayments'],
-    'Gastos de la empresa': ['expenseControl'],
     'Cuentas contables': ['balanceReports'],
     Resumen: ['balanceReports'],
+  },
+  Gastos: {
+    'Resumen y control': ['expenseControl'],
+    'Registro y pólizas': ['expenseControl'],
+    'Presupuestos y alertas': ['expenseControl'],
+    'Gastos recurrentes': ['expenseControl'],
   },
   Reportes: {
     'Resumen ejecutivo': ['fullReports'],
@@ -1754,20 +1765,33 @@ export function normalizeRoleDefinition(role: RoleDefinition): RoleDefinition {
     : deriveSectionPermissionsFromCapabilities(role.capabilities || [], role.builtInKey)
   if (role.sectionPermissions?.Finanzas) {
     const legacyGastos = role.sectionPermissions.Finanzas.Gastos
-    const currentCompanyExp = role.sectionPermissions.Finanzas['Gastos de la empresa']
-    if (legacyGastos && legacyGastos !== 'none') {
-      const rank: Record<SectionAccessLevel, number> = {
-        none: 0,
-        view: 1,
-        create: 2,
-        edit: 3,
-        full: 4,
+    const legacyCompanyExp = role.sectionPermissions.Finanzas['Gastos de la empresa']
+    const rank: Record<SectionAccessLevel, number> = {
+      none: 0,
+      view: 1,
+      create: 2,
+      edit: 3,
+      full: 4,
+    }
+    const inheritedExpenseLevel =
+      rank[legacyGastos || 'none'] >= rank[legacyCompanyExp || 'none']
+        ? legacyGastos || 'none'
+        : legacyCompanyExp || 'none'
+    if (
+      inheritedExpenseLevel !== 'none' &&
+      (!role.sectionPermissions?.Gastos ||
+        Object.values(role.sectionPermissions.Gastos).every((v) => v === 'none'))
+    ) {
+      sectionPermissions.Gastos = {
+        'Resumen y control': inheritedExpenseLevel,
+        'Registro y pólizas': inheritedExpenseLevel,
+        'Presupuestos y alertas': inheritedExpenseLevel,
+        'Gastos recurrentes': inheritedExpenseLevel,
       }
-      const best =
-        rank[legacyGastos] > rank[currentCompanyExp || 'none']
-          ? legacyGastos
-          : currentCompanyExp || 'none'
-      sectionPermissions.Finanzas['Gastos de la empresa'] = best
+    }
+    if (sectionPermissions.Finanzas) {
+      delete sectionPermissions.Finanzas['Gastos de la empresa']
+      delete sectionPermissions.Finanzas.Gastos
     }
   }
   if (

@@ -178,7 +178,10 @@ interface ExecutiveDashboardProps {
   ) => void
   onNavigateOperations: (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
   onNavigateFinance: (
-    section: 'Cobros' | 'Pagos' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen'
+    section: 'Cobros' | 'Pagos' | 'Cuentas contables' | 'Resumen'
+  ) => void
+  onNavigateExpenses?: (
+    section?: 'Resumen y control' | 'Registro y pólizas' | 'Presupuestos y alertas' | 'Gastos recurrentes'
   ) => void
   onNavigateCrm: (section?: string) => void
   onOpenCreateOpportunity: () => void
@@ -216,6 +219,7 @@ export function ExecutiveDashboard({
   onNavigatePurchases,
   onNavigateOperations,
   onNavigateFinance,
+  onNavigateExpenses,
   onNavigateCrm,
   onOpenCreateOpportunity,
 }: ExecutiveDashboardProps) {
@@ -698,7 +702,8 @@ export function ExecutiveDashboard({
     canAccessSection('Finanzas', 'Pagos', capabilities, isFullAdmin, isAccountActive)
   const canViewExpenses =
     hasActiveAccess &&
-    canAccessSection('Finanzas', 'Gastos de la empresa', capabilities, isFullAdmin, isAccountActive)
+    (canAccessSection('Gastos', 'Resumen y control', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Gastos', 'Registro y pólizas', capabilities, isFullAdmin, isAccountActive))
   const canViewChartAccounts =
     hasActiveAccess &&
     canAccessSection('Finanzas', 'Cuentas contables', capabilities, isFullAdmin, isAccountActive)
@@ -1367,7 +1372,9 @@ export function ExecutiveDashboard({
                 <button
                   type="button"
                   className="quick-action-item"
-                  onClick={() => onNavigateFinance('Gastos de la empresa')}
+                  onClick={() =>
+                    onNavigateExpenses ? onNavigateExpenses('Registro y pólizas') : onNavigateFinance('Pagos')
+                  }
                 >
                   <Scale size={13} /> {t('dashboard.quickExpense')}
                 </button>
@@ -1974,8 +1981,13 @@ export function ExecutiveDashboard({
                     className="kpi-card kpi-card-clickable"
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigateFinance('Gastos de la empresa')}
-                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Gastos de la empresa')}
+                    onClick={() =>
+                      onNavigateExpenses ? onNavigateExpenses('Resumen y control') : onNavigateFinance('Resumen')
+                    }
+                    onKeyDown={(e) =>
+                      e.key === 'Enter' &&
+                      (onNavigateExpenses ? onNavigateExpenses('Resumen y control') : onNavigateFinance('Resumen'))
+                    }
                     title="Ver control de gastos"
                   >
                     <div className="kpi-top">

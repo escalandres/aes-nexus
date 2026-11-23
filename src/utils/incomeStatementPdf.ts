@@ -616,32 +616,46 @@ export async function exportIncomeStatementPdf({
   autoTable(doc, {
     startY: nextY,
     margin: { left: marginX, right: marginX, bottom: 52 },
-    head: [['Categoría Empresarial', 'Pólizas', 'Importe Total', 'Composición Fijo / Variable']],
+    head: [['Naturaleza Contable', 'Pólizas', 'Importe Total', 'Integración en Estado de Resultados']],
     body: [
       [
         'Gastos administrativos',
         String(data.companyExpenseBreakdown.adminCount),
         formatMxn(data.companyExpenseBreakdown.adminTotal),
-        'Integrado a Gastos operativos y de administración',
+        'Gastos operativos y de administración',
       ],
       [
         'Gastos operativos',
         String(data.companyExpenseBreakdown.operatingCount),
         formatMxn(data.companyExpenseBreakdown.operatingTotal),
-        'Integrado a Gastos operativos y de administración',
+        'Gastos operativos y de administración',
+      ],
+      [
+        'Costos de venta directos',
+        String(data.companyExpenseBreakdown.cogsCount),
+        formatMxn(data.companyExpenseBreakdown.cogsTotal),
+        'Integrado a Costos de venta (COGS)',
       ],
       [
         'Gastos financieros',
         String(data.companyExpenseBreakdown.financialCount),
         formatMxn(data.companyExpenseBreakdown.financialTotal),
-        'Integrado a Gastos financieros (después de EBIT)',
+        'Gastos financieros (después de EBIT)',
+      ],
+      [
+        'Impuestos y derechos',
+        String(data.companyExpenseBreakdown.taxesCount),
+        formatMxn(data.companyExpenseBreakdown.taxesTotal),
+        'Integrado al rubro de Impuestos',
       ],
       [
         'Total clasificación Fijo / Variable',
         String(
           data.companyExpenseBreakdown.adminCount +
             data.companyExpenseBreakdown.operatingCount +
-            data.companyExpenseBreakdown.financialCount
+            data.companyExpenseBreakdown.cogsCount +
+            data.companyExpenseBreakdown.financialCount +
+            data.companyExpenseBreakdown.taxesCount
         ),
         formatMxn(
           data.companyExpenseBreakdown.fixedTotal + data.companyExpenseBreakdown.variableTotal

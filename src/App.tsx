@@ -120,7 +120,10 @@ import {
 } from './data/operations'
 import { FinanceReceivables } from './components/FinanceReceivables'
 import { FinancePayables } from './components/FinancePayables'
-import { FinanceCompanyExpenses } from './components/FinanceCompanyExpenses'
+import {
+  FinanceCompanyExpenses,
+  type ExpensesSectionTab,
+} from './components/FinanceCompanyExpenses'
 import { FinanceOverview } from './components/FinanceOverview'
 import { FinanceAccounting } from './components/FinanceAccounting'
 import { FinanceEbp } from './components/FinanceEbp'
@@ -150,12 +153,17 @@ import {
   initialReceivables,
   initialPayables,
   initialExpenses,
+  initialExpenseBudgets,
+  initialRecurringExpenses,
   initialTransactions,
   initialChartAccounts,
   type BankAccount,
   type InvoiceReceivable,
   type BillPayable,
   type ExpenseRecord,
+  type ExpenseBudgetRule,
+  type ExpenseStatus,
+  type RecurringExpenseTemplate,
   type PaymentTransaction,
   type ChartAccount,
 } from './data/finance'
@@ -168,6 +176,7 @@ const sections: { labelKey: TranslationKey; items: { name: string; labelKey: Tra
     { name: 'Compras', labelKey: 'nav.purchases', icon: ShoppingCart, count: 'H3' },
     { name: 'Operaciones', labelKey: 'nav.operations', icon: WarehouseIcon, count: 'H3' },
     { name: 'Finanzas', labelKey: 'nav.finance', icon: WalletCards, count: 'H3' },
+    { name: 'Gastos', labelKey: 'nav.expenses', icon: Receipt, count: 'OPS' },
     { name: 'Reportes', labelKey: 'nav.reports', icon: BarChart3, count: 'BI' },
     { name: 'Administración', labelKey: 'nav.admin', icon: ShieldCheck, count: 'H1' },
   ] },
@@ -179,7 +188,8 @@ const moduleDetails = {
   Compras: { icon: ShoppingCart, phase: 'H3 · MVP operativo', description: 'Centraliza requisiciones internas, órdenes de compra a proveedores, recepciones en almacén y facturas sincronizadas con Finanzas.', areas: ['Requisiciones y aprobación', 'Órdenes de compra', 'Recepciones en andén', 'Facturas de proveedor (CxP)'] },
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
-  Reportes: { icon: BarChart3, phase: 'BI · Analítica ERP', description: 'Inteligencia financiera y operativa consolidada en tiempo real con exportación CSV e impresión.', areas: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas, Inventario y Nómina'] },
+  Gastos: { icon: Receipt, phase: 'OPS · Control de egresos', description: 'Control integral de egresos, flujo de autorización y pago, presupuestos por naturaleza y plantillas recurrentes.', areas: ['Resumen y control', 'Registro y pólizas', 'Presupuestos y alertas', 'Gastos recurrentes'] },
+  Reportes: { icon: BarChart3, phase: 'BI · Analítica ERP', description: 'Inteligencia financiera y operativa consolidada en tiempo real con exportación CSV e impresión.', areas: ['Resumen ejecutivo', 'Estado de Resultados', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas, Inventario y Nómina'] },
   Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: subsidiarias, departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Subsidiarias y razones sociales', 'Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Historial de auditoría'] },
 } as const
 
@@ -550,6 +560,7 @@ const pageRoutes: Record<string, string> = {
   Compras: '/purchases',
   Operaciones: '/operations',
   Finanzas: '/finance',
+  Gastos: '/expenses',
   Reportes: '/reports',
   Administración: '/admin',
   Configuración: '/settings',
@@ -567,7 +578,18 @@ const pageFromPath = (pathname: string) => {
     return 'Compras'
   }
   if (pathname.startsWith('/operations') || pathname.startsWith('/operaciones')) return 'Operaciones'
+  if (
+    pathname === '/finance/company-expenses' ||
+    pathname === '/finance/gastos-empresa' ||
+    pathname === '/finanzas/gastos-empresa' ||
+    pathname === '/finance/expenses' ||
+    pathname === '/finance/gastos' ||
+    pathname === '/finanzas/gastos'
+  ) {
+    return 'Gastos'
+  }
   if (pathname.startsWith('/finance') || pathname.startsWith('/finanzas')) return 'Finanzas'
+  if (pathname.startsWith('/expenses') || pathname.startsWith('/gastos')) return 'Gastos'
   if (pathname.startsWith('/reports') || pathname.startsWith('/reportes')) return 'Reportes'
   if (pathname.startsWith('/admin') || pathname.startsWith('/administracion')) return 'Administración'
   const normalized = pathname.replace(/\/$/, '') || '/'
@@ -639,16 +661,18 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Pagos Bancarios'
     : pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
     ? 'Pagos'
-    : pathname === '/finance/company-expenses' ||
-      pathname === '/finance/gastos-empresa' ||
-      pathname === '/finanzas/gastos-empresa' ||
-      pathname === '/finance/expenses' ||
-      pathname === '/finance/gastos' ||
-      pathname === '/finanzas/gastos'
-    ? 'Gastos de la empresa'
     : pathname === '/finance/summary' || pathname === '/finance/resumen' || pathname === '/finanzas/resumen'
     ? 'Resumen'
     : 'Cobros'
+
+const expensesSectionFromPath = (pathname: string): ExpensesSectionTab =>
+  pathname === '/expenses/ledger' || pathname === '/gastos/polizas'
+    ? 'Registro y pólizas'
+    : pathname === '/expenses/budgets' || pathname === '/gastos/presupuestos'
+      ? 'Presupuestos y alertas'
+      : pathname === '/expenses/recurring' || pathname === '/gastos/recurrentes'
+        ? 'Gastos recurrentes'
+        : 'Resumen y control'
 
 const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
   pathname === '/reports/income-statement' || pathname === '/reportes/estado-resultados'
@@ -707,7 +731,8 @@ function AppContent() {
   const [salesSection, setSalesSection] = useState<SalesSectionTab>(() => salesSectionFromPath(window.location.pathname))
   const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
-  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [expensesSection, setExpensesSection] = useState<ExpensesSectionTab>(() => expensesSectionFromPath(window.location.pathname))
   const [reportsSection, setReportsSection] = useState<ReportsSectionTab>(() => reportsSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
   const [selectedSubsidiaryId, setSelectedSubsidiaryId] = useState<string | null>(() =>
@@ -912,6 +937,8 @@ function AppContent() {
   const [receivables, setReceivables] = useState<InvoiceReceivable[]>(initialReceivables)
   const [payables, setPayables] = useState<BillPayable[]>(initialPayables)
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetRule[]>(initialExpenseBudgets)
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseTemplate[]>(initialRecurringExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
 
@@ -1992,10 +2019,285 @@ function AppContent() {
     setExpenses((prev) => [exp, ...prev])
     appendAuditLog({
       category: 'finance',
-      action: `Registro de gasto (${exp.companyCategory || exp.category})`,
-      detail: `${exp.folio} · ${exp.description} · ${money(exp.total)}`,
+      action: `Registro de gasto (${exp.expenseNature || exp.companyCategory || exp.category})`,
+      detail: `${exp.folio} · ${exp.status || 'Pagado'} · ${exp.description} · ${money(exp.total)}`,
       user: activeSessionProfile.name,
     })
+  }
+
+  const handleUpdateExpense = (updated: ExpenseRecord) => {
+    setExpenses((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
+    appendAuditLog({
+      category: 'finance',
+      action: `Edición / reclasificación de gasto (${updated.expenseNature || updated.category})`,
+      detail: `${updated.folio} · ${updated.costBehavior || 'Fijo'} · ${updated.locationName || 'Matriz'} · ${updated.departmentName || 'General'} · ${money(updated.total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Póliza ${updated.folio} actualizada y auditada (${updated.expenseNature || updated.category} · ${updated.costBehavior || 'Fijo'}).`,
+      'Póliza actualizada'
+    )
+  }
+
+  const handleUpdateExpenseStatus = (
+    expenseId: string,
+    nextStatus: ExpenseStatus,
+    explicitBankId?: string
+  ) => {
+    const target = expenses.find((e) => e.id === expenseId)
+    if (!target) return
+    const prevStatus = target.status || 'Pagado'
+    if (prevStatus === nextStatus) return
+
+    let assignedBankName = target.bankAccountName
+    if (nextStatus === 'Pagado' && prevStatus !== 'Pagado') {
+      const targetBank =
+        (explicitBankId ? bankAccounts.find((b) => b.id === explicitBankId) : undefined) ||
+        bankAccounts.find((b) => b.bankName === target.bankAccountName) ||
+        bankAccounts[0]
+      if (!targetBank) {
+        toast.error('No hay cuenta bancaria configurada para liquidar la póliza.', 'Cuenta requerida')
+        return
+      }
+      if (targetBank.balance < target.total) {
+        toast.warning(
+          `Saldo insuficiente en ${targetBank.bankName} (Disponible: ${money(targetBank.balance)}) para pagar ${target.folio}.`,
+          'Saldo insuficiente'
+        )
+        return
+      }
+      assignedBankName = targetBank.bankName
+      handleUpdateBankAccountBalance(targetBank.id, -target.total)
+      const now = new Date()
+      const paidDate = `${String(now.getDate()).padStart(2, '0')} ${['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][now.getMonth()]} ${now.getFullYear()}`
+      handleAddTransaction({
+        id: `txn_${Date.now()}`,
+        folio: `PAG-2026-${String(Math.floor(100 + Math.random() * 900))}`,
+        date: paidDate,
+        type: 'Gasto operativo',
+        entityName: target.beneficiary,
+        reference: `${target.expenseNature || target.category} · ${target.folio} · ${target.description}`,
+        amount: target.total,
+        method: target.paymentMethod,
+        account: targetBank.bankName,
+      })
+    }
+
+    setExpenses((prev) =>
+      prev.map((e) =>
+        e.id === expenseId
+          ? {
+              ...e,
+              status: nextStatus,
+              bankAccountName: assignedBankName || e.bankAccountName,
+            }
+          : e
+      )
+    )
+    appendAuditLog({
+      category: 'finance',
+      action: `Cambio de estado de gasto (${prevStatus} → ${nextStatus})`,
+      detail: `${target.folio} · ${target.description} · ${money(target.total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      nextStatus === 'Pagado'
+        ? `Póliza ${target.folio} pagada por ${money(target.total)} desde ${assignedBankName}.`
+        : nextStatus === 'Cancelado'
+          ? `Póliza ${target.folio} cancelada y excluida de totales y P&L.`
+          : `Póliza ${target.folio} aprobada y lista para pago.`,
+      `Estado: ${nextStatus}`
+    )
+  }
+
+  const handleSaveExpenseBudget = (budget: ExpenseBudgetRule) => {
+    setExpenseBudgets((prev) => {
+      const exists = prev.some((b) => b.id === budget.id)
+      if (exists) return prev.map((b) => (b.id === budget.id ? budget : b))
+      return [...prev, budget]
+    })
+    appendAuditLog({
+      category: 'finance',
+      action: 'Configuración de presupuesto mensual',
+      detail: `${budget.nature} · Límite ${money(budget.monthlyLimit)} · Alertas ${budget.warningThresholdPct}% / ${budget.criticalThresholdPct ?? 95}%`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleToggleExpenseBudget = (budgetId: string) => {
+    setExpenseBudgets((prev) =>
+      prev.map((b) => (b.id === budgetId ? { ...b, active: !b.active } : b))
+    )
+  }
+
+  const handleAddRecurringExpense = (tpl: RecurringExpenseTemplate) => {
+    setRecurringExpenses((prev) => [tpl, ...prev])
+    appendAuditLog({
+      category: 'finance',
+      action: 'Alta de plantilla de gasto recurrente',
+      detail: `${tpl.title} · ${tpl.frequency} · ${money(tpl.amount)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(`Plantilla recurrente “${tpl.title}” creada.`, 'Plantilla guardada')
+  }
+
+  const handleToggleRecurringExpense = (tplId: string) => {
+    setRecurringExpenses((prev) =>
+      prev.map((t) => (t.id === tplId ? { ...t, active: !t.active } : t))
+    )
+  }
+
+  const handleUpdateRecurringExpense = (updated: RecurringExpenseTemplate) => {
+    setRecurringExpenses((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+    appendAuditLog({
+      category: 'finance',
+      action: 'Edición de plantilla de gasto recurrente',
+      detail: `${updated.title} · ${updated.frequency} · ${money(updated.amount)} · Próx. ${updated.nextRunDate}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(`Plantilla “${updated.title}” actualizada.`, 'Plantilla actualizada')
+  }
+
+  const handleDeleteRecurringExpense = (tplId: string) => {
+    const target = recurringExpenses.find((t) => t.id === tplId)
+    setRecurringExpenses((prev) => prev.filter((t) => t.id !== tplId))
+    if (target) {
+      appendAuditLog({
+        category: 'finance',
+        action: 'Eliminación de plantilla de gasto recurrente',
+        detail: `${target.title} · ${target.beneficiary}`,
+        user: activeSessionProfile.name,
+      })
+      toast.info(`Plantilla “${target.title}” eliminada.`, 'Plantilla eliminada')
+    }
+  }
+
+  const buildRecurringExecution = (
+    tpl: RecurringExpenseTemplate,
+    nextSeq: number,
+    uidSuffix = ''
+  ) => {
+    const tax = tpl.hasTax ? Number((tpl.amount * 0.16).toFixed(2)) : 0
+    const total = Number((tpl.amount + tax).toFixed(2))
+    const folio = `GST-2026-${String(nextSeq).padStart(3, '0')}`
+    const runIso = tpl.nextRunDate || new Date().toISOString().split('T')[0]
+    const [yStr, mStr, dStr] = runIso.split('-')
+    const mIdx = Math.max(0, Math.min(11, (Number(mStr) || 1) - 1))
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const formattedDate = `${String(Number(dStr) || 1).padStart(2, '0')} ${months[mIdx]} ${yStr || '2026'}`
+
+    const generated: ExpenseRecord = {
+      id: `exp_${Date.now()}${uidSuffix}`,
+      folio,
+      date: formattedDate,
+      category: tpl.category,
+      expenseNature: tpl.nature,
+      status: 'Pendiente',
+      costBehavior: tpl.costBehavior,
+      departmentId:
+        tpl.departmentId || departments.find((d) => d.name === tpl.departmentName)?.id,
+      departmentName: tpl.departmentName,
+      costCenter:
+        tpl.costCenter || departments.find((d) => d.name === tpl.departmentName)?.costCenter,
+      locationId: tpl.locationId,
+      locationName: tpl.locationName,
+      accountCode: tpl.accountCode,
+      accountName: tpl.accountName,
+      bankAccountName: tpl.bankAccountName,
+      description: tpl.description,
+      beneficiary: tpl.beneficiary,
+      amount: tpl.amount,
+      tax,
+      total,
+      paymentMethod: tpl.paymentMethod,
+      referenceDoc: `REC-${tpl.frequency.slice(0, 3).toUpperCase()}`,
+      user: activeSessionProfile.name,
+      isRecurring: true,
+      recurrenceId: tpl.id,
+    }
+
+    const baseDate = new Date(`${runIso}T12:00:00`)
+    if (!Number.isNaN(baseDate.getTime())) {
+      if (tpl.frequency === 'Quincenal') baseDate.setDate(baseDate.getDate() + 15)
+      else if (tpl.frequency === 'Anual') baseDate.setFullYear(baseDate.getFullYear() + 1)
+      else baseDate.setMonth(baseDate.getMonth() + 1)
+    }
+    const nextIso = Number.isNaN(baseDate.getTime())
+      ? runIso
+      : baseDate.toISOString().split('T')[0]
+
+    return { generated, runIso, nextIso, folio, total }
+  }
+
+  const handleGenerateRecurringExpense = (tplId: string) => {
+    const tpl = recurringExpenses.find((t) => t.id === tplId)
+    if (!tpl) return
+
+    const { generated, runIso, nextIso, folio, total } = buildRecurringExecution(
+      tpl,
+      expenses.length + 1
+    )
+
+    setExpenses((prev) => [generated, ...prev])
+    setRecurringExpenses((prev) =>
+      prev.map((t) =>
+        t.id === tpl.id
+          ? { ...t, lastGeneratedDate: runIso, nextRunDate: nextIso }
+          : t
+      )
+    )
+
+    appendAuditLog({
+      category: 'finance',
+      action: 'Generación de póliza desde gasto recurrente',
+      detail: `${folio} · ${tpl.title} · ${money(total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Póliza ${folio} por ${money(total)} generada como Pendiente. Próxima fecha: ${nextIso}.`,
+      'Póliza recurrente generada'
+    )
+  }
+
+  const handleGenerateRecurringBatch = (tplIds: string[]) => {
+    const targets = tplIds
+      .map((id) => recurringExpenses.find((t) => t.id === id))
+      .filter((t): t is RecurringExpenseTemplate => Boolean(t))
+    if (targets.length === 0) return
+
+    const baseSeq = expenses.length + 1
+    const executions = targets.map((tpl, idx) =>
+      buildRecurringExecution(tpl, baseSeq + idx, `_b${idx}`)
+    )
+
+    const generatedList = executions.map((ex) => ex.generated).reverse()
+    const updatesById = new Map(
+      targets.map((tpl, idx) => [
+        tpl.id,
+        { runIso: executions[idx].runIso, nextIso: executions[idx].nextIso },
+      ])
+    )
+
+    setExpenses((prev) => [...generatedList, ...prev])
+    setRecurringExpenses((prev) =>
+      prev.map((t) => {
+        const upd = updatesById.get(t.id)
+        return upd ? { ...t, lastGeneratedDate: upd.runIso, nextRunDate: upd.nextIso } : t
+      })
+    )
+
+    const totalBatch = executions.reduce((s, ex) => s + ex.total, 0)
+    const folios = executions.map((ex) => ex.folio).join(', ')
+    appendAuditLog({
+      category: 'finance',
+      action: 'Generación asistida en lote de gastos recurrentes',
+      detail: `${targets.length} póliza(s) (${folios}) · Total ${money(totalBatch)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Se generaron ${targets.length} póliza(s) recurrentes (${folios}) por ${money(totalBatch)}.`,
+      'Generación asistida completada'
+    )
   }
 
   const handleAddSubsidiary = (sub: SubsidiaryRecord) => {
@@ -3956,6 +4258,16 @@ function AppContent() {
       )
       setFinanceSection((first as typeof financeSection) || 'Cobros')
     }
+    if (page === 'Gastos') {
+      const first = getFirstAccessibleSection(
+        'Gastos',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+      setExpensesSection((first as ExpensesSectionTab) || 'Resumen y control')
+    }
     if (page === 'Reportes') {
       const first = getFirstAccessibleSection(
         'Reportes',
@@ -4099,7 +4411,7 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen') => {
+  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen') => {
     if (
       !canAccessSection(
         'Finanzas',
@@ -4122,11 +4434,36 @@ function AppContent() {
         ? '/finance/ebp'
         : section === 'Pagos'
         ? '/finance/payables'
-        : section === 'Gastos de la empresa'
-        ? '/finance/gastos-empresa'
         : section === 'Resumen'
         ? '/finance/summary'
         : '/finance'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToExpensesSection = (section: ExpensesSectionTab = 'Resumen y control') => {
+    if (
+      !canAccessSection(
+        'Gastos',
+        section,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    ) {
+      notifyAccessDenied(`Gastos · ${section}`)
+      return
+    }
+    setActivePage('Gastos')
+    setExpensesSection(section)
+    const route =
+      section === 'Registro y pólizas'
+        ? '/expenses/ledger'
+        : section === 'Presupuestos y alertas'
+          ? '/expenses/budgets'
+          : section === 'Gastos recurrentes'
+            ? '/expenses/recurring'
+            : '/expenses'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -4511,6 +4848,8 @@ function AppContent() {
       setSalesSection(salesSectionFromPath(window.location.pathname))
       setPurchasesSection(purchasesSectionFromPath(window.location.pathname))
       setOperationsSection(operationsSectionFromPath(window.location.pathname))
+      setFinanceSection(financeSectionFromPath(window.location.pathname))
+      setExpensesSection(expensesSectionFromPath(window.location.pathname))
       setReportsSection(reportsSectionFromPath(window.location.pathname))
       setAdminSection(adminSectionFromPath(window.location.pathname))
       setSelectedSubsidiaryId(subsidiaryIdFromPath(window.location.pathname))
@@ -4825,7 +5164,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos de la empresa' ? t('tabs.fin.companyExpenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Gastos' ? t('nav.expenses') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Gastos' ? <> <span className="crumb-slash">/</span> <span>{expensesSection === 'Registro y pólizas' ? t('tabs.expenses.ledger') : expensesSection === 'Presupuestos y alertas' ? t('tabs.expenses.budgets') : expensesSection === 'Gastos recurrentes' ? t('tabs.expenses.recurring') : t('tabs.expenses.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -5054,17 +5393,18 @@ function AppContent() {
                               notice.targetSection as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
                             )
                           } else if (notice.targetModule === 'Finanzas') {
-                            navigateToFinanceSection(
-                              (notice.targetSection === 'Gastos'
-                                ? 'Gastos de la empresa'
-                                : notice.targetSection) as
-                                | 'Cobros'
-                                | 'Pagos'
-                                | 'Pagos Bancarios'
-                                | 'Gastos de la empresa'
-                                | 'Cuentas contables'
-                                | 'Resumen'
-                            )
+                            if (notice.targetSection === 'Gastos') {
+                              navigateToExpensesSection('Registro y pólizas')
+                            } else {
+                              navigateToFinanceSection(
+                                notice.targetSection as
+                                  | 'Cobros'
+                                  | 'Pagos'
+                                  | 'Pagos Bancarios'
+                                  | 'Cuentas contables'
+                                  | 'Resumen'
+                              )
+                            }
                           } else {
                             navigateToSalesSection(
                               notice.targetSection as 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'
@@ -5289,6 +5629,8 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Gastos'
+                ? expensesSection
                 : activePage === 'Reportes'
                 ? reportsSection
                 : activePage === 'Administración'
@@ -5367,6 +5709,8 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Gastos'
+                ? expensesSection
                 : activePage === 'Reportes'
                 ? reportsSection
                 : activePage === 'Administración'
@@ -6801,14 +7145,6 @@ function AppContent() {
                     {t('tabs.fin.ebp')} <span>{ebpBatches.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Gastos de la empresa', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
-                  <button
-                    className={financeSection === 'Gastos de la empresa' ? 'active' : ''}
-                    onClick={() => navigateToFinanceSection('Gastos de la empresa')}
-                  >
-                    {t('tabs.fin.companyExpenses')} <span>{expenses.length}</span>
-                  </button>
-                )}
                 {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Cuentas contables' ? 'active' : ''}
@@ -6961,55 +7297,6 @@ function AppContent() {
                   onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
                   onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
                 />
-              ) : financeSection === 'Gastos de la empresa' ? (
-                <FinanceCompanyExpenses
-                  expenses={expenses}
-                  bankAccounts={bankAccounts}
-                  departments={departments}
-                  activeUserName={activeSessionProfile.name}
-                  canCreate={canCreateInSection(
-                    'Finanzas',
-                    'Gastos de la empresa',
-                    activeSectionAccess,
-                    isFullAdmin,
-                    activeSessionProfile.isActive
-                  )}
-                  onAddExpense={handleAddExpense}
-                  onDeleteExpense={
-                    canDeleteInSection(
-                      'Finanzas',
-                      'Gastos de la empresa',
-                      activeSectionAccess,
-                      isFullAdmin,
-                      activeSessionProfile.isActive
-                    )
-                      ? (expenseId) => {
-                          const target = expenses.find((ex) => ex.id === expenseId)
-                          setExpenses((prev) => prev.filter((ex) => ex.id !== expenseId))
-                          if (target) {
-                            appendAuditLog({
-                              category: 'finance',
-                              action: 'Eliminación de gasto de empresa',
-                              detail: `${target.folio} · ${target.description}`,
-                              user: activeSessionProfile.name,
-                            })
-                            setNotice(`Gasto ${target.folio} eliminado.`)
-                            toast.info(`Gasto ${target.folio} eliminado.`, 'Gasto eliminado')
-                          }
-                        }
-                      : undefined
-                  }
-                  onAddTransaction={handleAddTransaction}
-                  onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
-                  onExportAudit={(reportName, rowCount) => {
-                    appendAuditLog({
-                      category: 'finance',
-                      action: 'Exportación de histórico de gastos de la empresa',
-                      detail: `${reportName} · ${rowCount} registros`,
-                      user: activeSessionProfile.name,
-                    })
-                  }}
-                />
               ) : financeSection === 'Cuentas contables' ? (
                 <FinanceAccounting
                   accounts={chartAccounts}
@@ -7047,8 +7334,99 @@ function AppContent() {
                   expenses={expenses}
                   transactions={transactions}
                   onNavigateSection={(sec) => navigateToFinanceSection(sec)}
+                  onNavigateExpenses={() => navigateToExpensesSection('Registro y pólizas')}
                 />
               )}
+            </section>
+          ) : activePage === 'Gastos' ? (
+            <section className="sales-page" aria-labelledby="expenses-module-title">
+              <FinanceCompanyExpenses
+                mode="module"
+                activeSection={expensesSection}
+                allowedSections={([
+                  'Resumen y control',
+                  'Registro y pólizas',
+                  'Presupuestos y alertas',
+                  'Gastos recurrentes',
+                ] as ExpensesSectionTab[]).filter((sec) =>
+                  canAccessSection(
+                    'Gastos',
+                    sec,
+                    activeCapabilities,
+                    isFullAdmin,
+                    activeSessionProfile.isActive,
+                    activeSectionAccess
+                  )
+                )}
+                onSelectSection={navigateToExpensesSection}
+                expenses={expenses}
+                bankAccounts={bankAccounts}
+                departments={departments}
+                locations={locations}
+                chartAccounts={chartAccounts}
+                budgets={expenseBudgets}
+                recurringTemplates={recurringExpenses}
+                activeUserName={activeSessionProfile.name}
+                canCreate={canCreateInSection(
+                  'Gastos',
+                  expensesSection,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )}
+                canEdit={canEditInSection(
+                  'Gastos',
+                  expensesSection,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )}
+                onAddExpense={handleAddExpense}
+                onUpdateExpense={handleUpdateExpense}
+                onUpdateExpenseStatus={handleUpdateExpenseStatus}
+                onDeleteExpense={
+                  canDeleteInSection(
+                    'Gastos',
+                    expensesSection,
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+                    ? (expenseId) => {
+                        const target = expenses.find((ex) => ex.id === expenseId)
+                        setExpenses((prev) => prev.filter((ex) => ex.id !== expenseId))
+                        if (target) {
+                          appendAuditLog({
+                            category: 'finance',
+                            action: 'Eliminación de gasto',
+                            detail: `${target.folio} · ${target.description}`,
+                            user: activeSessionProfile.name,
+                          })
+                          setNotice(`Gasto ${target.folio} eliminado.`)
+                          toast.info(`Gasto ${target.folio} eliminado.`, 'Gasto eliminado')
+                        }
+                      }
+                    : undefined
+                }
+                onAddTransaction={handleAddTransaction}
+                onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
+                onSaveBudget={handleSaveExpenseBudget}
+                onToggleBudget={handleToggleExpenseBudget}
+                onAddRecurringTemplate={handleAddRecurringExpense}
+                onUpdateRecurringTemplate={handleUpdateRecurringExpense}
+                onDeleteRecurringTemplate={handleDeleteRecurringExpense}
+                onToggleRecurringTemplate={handleToggleRecurringExpense}
+                onGenerateRecurringExpense={handleGenerateRecurringExpense}
+                onGenerateRecurringBatch={handleGenerateRecurringBatch}
+                onExportAudit={(reportName, rowCount) => {
+                  appendAuditLog({
+                    category: 'finance',
+                    action: 'Exportación de histórico de gastos',
+                    detail: `${reportName} · ${rowCount} registros`,
+                    user: activeSessionProfile.name,
+                  })
+                }}
+              />
             </section>
           ) : activePage === 'Reportes' ? (
             <ReportsSection
@@ -7234,6 +7612,7 @@ function AppContent() {
               onNavigatePurchases={navigateToPurchasesSection}
               onNavigateOperations={navigateToOperationsSection}
               onNavigateFinance={navigateToFinanceSection}
+              onNavigateExpenses={navigateToExpensesSection}
               onNavigateCrm={(sec) => {
                 navigateTo('CRM')
                 if (sec) setCrmSection(sec)

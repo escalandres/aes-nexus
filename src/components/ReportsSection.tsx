@@ -62,6 +62,8 @@ import type { DepartmentRecord, PhysicalLocationRecord } from './AdministrationS
 import {
   computeIncomeStatementData,
   IncomeStatementReport,
+  type CostCenterBranchRow,
+  type CostCenterDepartmentRow,
   type PnlSourceMode,
 } from './IncomeStatementReport'
 import { exportIncomeStatementPdf } from '../utils/incomeStatementPdf'
@@ -779,12 +781,22 @@ export function ReportsSection({
     })
 
     const scopedExpenses = expenses.filter((exp) => {
+      if (exp.status === 'Cancelado') return false
       if (!isDateWithinRange(exp.date, filters.dateFrom, filters.dateTo)) return false
       const emp = lookups.empByName.get(exp.user.toLowerCase())
-      const inferredDept = emp?.departmentName || inferDepartmentFromCategory(exp.category)
+      const deptMatch = activeDepartments.find(
+        (d) =>
+          (exp.departmentId && d.id === exp.departmentId) ||
+          (exp.departmentName && d.name.toLowerCase() === exp.departmentName.toLowerCase())
+      )
+      const inferredDept =
+        deptMatch?.name ||
+        exp.departmentName ||
+        emp?.departmentName ||
+        inferDepartmentFromCategory(exp.category)
       return matchesScope({
-        locationId: emp?.locationId || 'loc_1',
-        departmentId: emp?.departmentId,
+        locationId: exp.locationId || emp?.locationId || 'loc_1',
+        departmentId: exp.departmentId || deptMatch?.id || emp?.departmentId,
         departmentName: inferredDept,
       })
     })
@@ -994,7 +1006,7 @@ export function ReportsSection({
         account: e.paymentMethod,
         amount: e.total,
         direction: 'Egreso',
-        status: 'Pagado',
+        status: e.status || 'Pagado',
         currency: 'MXN' as const,
       })),
     ]
@@ -1270,13 +1282,16 @@ export function ReportsSection({
           (filters.locationId === 'all' || e.locationId === filters.locationId)
       )
       const deptExpenseTotal = expenses
+        .filter((exp) => exp.status !== 'Cancelado')
         .filter((exp) => isDateWithinRange(exp.date, filters.dateFrom, filters.dateTo))
         .filter((exp) => {
           const emp = lookups.empByName.get(exp.user.toLowerCase())
-          const resolvedDept = emp?.departmentName || inferDepartmentFromCategory(exp.category)
-          const resolvedLoc = emp?.locationId || 'loc_1'
+          const matchedDeptById = exp.departmentId === dept.id
+          const resolvedDept =
+            exp.departmentName || emp?.departmentName || inferDepartmentFromCategory(exp.category)
+          const resolvedLoc = exp.locationId || emp?.locationId || 'loc_1'
           return (
-            resolvedDept.toLowerCase() === dept.name.toLowerCase() &&
+            (matchedDeptById || resolvedDept.toLowerCase() === dept.name.toLowerCase()) &&
             (filters.locationId === 'all' || resolvedLoc === filters.locationId)
           )
         })
@@ -1550,15 +1565,25 @@ export function ReportsSection({
       applyRecord(iso, rec.paidAmount, 'Ingresos')
     })
     expenses.forEach((exp) => {
+      if (exp.status === 'Cancelado') return
       const iso = parseErpDateToIso(exp.date)
       if (!iso || Number(iso.slice(0, 4)) !== priorYear) return
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
       const emp = lookups.empByName.get(exp.user.toLowerCase())
-      const inferredDept = emp?.departmentName || inferDepartmentFromCategory(exp.category)
+      const deptMatch = activeDepartments.find(
+        (d) =>
+          (exp.departmentId && d.id === exp.departmentId) ||
+          (exp.departmentName && d.name.toLowerCase() === exp.departmentName.toLowerCase())
+      )
+      const inferredDept =
+        deptMatch?.name ||
+        exp.departmentName ||
+        emp?.departmentName ||
+        inferDepartmentFromCategory(exp.category)
       if (
         !matchesScope({
-          locationId: emp?.locationId || 'loc_1',
-          departmentId: emp?.departmentId,
+          locationId: exp.locationId || emp?.locationId || 'loc_1',
+          departmentId: exp.departmentId || deptMatch?.id || emp?.departmentId,
           departmentName: inferredDept,
         })
       ) {
@@ -1751,6 +1776,142 @@ export function ReportsSection({
       filters.searchQuery,
     ]
   )
+
+  const pnlCostCenterBreakdown = useMemo(() => {
+    const cmRatio =
+      incomeStatementData.contributionMarginRatioPct > 0
+        ? incomeStatementData.contributionMarginRatioPct / 100
+        : 0.45
+
+    const orderLocMap = new Map<string, string>()
+    orders.forEach((ord) => {
+      orderLocMap.set(ord.folio, matchLocationText(ord.shippingAddress) || 'loc_1')
+    })
+
+    const dateFilteredReceivables = receivables.filter(
+      (r) =>
+        isDateWithinRange(r.issueDate, filters.dateFrom, filters.dateTo) &&
+        (filters.currencyFilter === 'Todas' || r.currency === filters.currencyFilter)
+    )
+    const dateFilteredExpenses = expenses.filter(
+      (e) =>
+        e.status !== 'Cancelado' &&
+        isDateWithinRange(e.date, filters.dateFrom, filters.dateTo) &&
+        (filters.currencyFilter === 'Todas' || filters.currencyFilter === 'MXN')
+    )
+    const dateFilteredPayroll = payrollRuns.filter(
+      (run) =>
+        isDateWithinRange(run.paymentDate, filters.dateFrom, filters.dateTo) &&
+        (filters.currencyFilter === 'Todas' || filters.currencyFilter === 'MXN')
+    )
+
+    const branchBreakdown: CostCenterBranchRow[] = activeLocations.map((loc) => {
+      const revenue = dateFilteredReceivables
+        .filter((rec) => ((rec.orderFolio && orderLocMap.get(rec.orderFolio)) || 'loc_1') === loc.id)
+        .reduce((s, r) => s + r.subtotal, 0)
+      const locExpenses = dateFilteredExpenses.filter((exp) => (exp.locationId || 'loc_1') === loc.id)
+      const fixedCosts = locExpenses
+        .filter((e) => e.costBehavior !== 'Variable')
+        .reduce((s, e) => s + e.total, 0)
+      const variableCosts = locExpenses
+        .filter((e) => e.costBehavior === 'Variable')
+        .reduce((s, e) => s + e.total, 0)
+      const payrollCosts = dateFilteredPayroll.reduce((sum, run) => {
+        const net = run.receipts
+          .filter((rec) => {
+            const emp = lookups.empById.get(rec.employeeId)
+            return (emp?.locationId || 'loc_1') === loc.id
+          })
+          .reduce((s, rec) => s + rec.netPay, 0)
+        return sum + net
+      }, 0)
+
+      const operatingResult = revenue - fixedCosts - variableCosts - payrollCosts
+      const breakEvenSales = cmRatio > 0 ? (fixedCosts + payrollCosts) / cmRatio : 0
+      const coveragePct = breakEvenSales > 0 ? (revenue / breakEvenSales) * 100 : 0
+
+      return {
+        id: loc.id,
+        code: loc.code,
+        name: loc.name,
+        revenue,
+        fixedCosts,
+        variableCosts,
+        payrollCosts,
+        operatingResult,
+        breakEvenSales,
+        coveragePct,
+        expensesCount: locExpenses.length,
+      }
+    })
+
+    const rawDepartments = activeDepartments.map((dept) => {
+      const deptExpenses = dateFilteredExpenses.filter((exp) => {
+        const emp = lookups.empByName.get(exp.user.toLowerCase())
+        if (exp.departmentId) return exp.departmentId === dept.id
+        const resolvedName =
+          exp.departmentName || emp?.departmentName || inferDepartmentFromCategory(exp.category)
+        return resolvedName.toLowerCase() === dept.name.toLowerCase()
+      })
+      const fixedExpenses = deptExpenses
+        .filter((e) => e.costBehavior !== 'Variable')
+        .reduce((s, e) => s + e.total, 0)
+      const variableExpenses = deptExpenses
+        .filter((e) => e.costBehavior === 'Variable')
+        .reduce((s, e) => s + e.total, 0)
+      const payrollCosts = dateFilteredPayroll.reduce((sum, run) => {
+        const net = run.receipts
+          .filter((rec) => {
+            const emp = lookups.empById.get(rec.employeeId)
+            return (
+              emp?.departmentId === dept.id ||
+              emp?.departmentName?.toLowerCase() === dept.name.toLowerCase()
+            )
+          })
+          .reduce((s, rec) => s + rec.netPay, 0)
+        return sum + net
+      }, 0)
+
+      const totalCost = fixedExpenses + variableExpenses + payrollCosts
+      const breakEvenSupportSales = cmRatio > 0 ? (fixedExpenses + payrollCosts) / cmRatio : 0
+      return {
+        id: dept.id,
+        code: dept.code,
+        costCenter: dept.costCenter || 'CC-GEN',
+        name: dept.name,
+        leader: dept.leader,
+        fixedExpenses,
+        variableExpenses,
+        payrollCosts,
+        totalCost,
+        sharePct: 0,
+        breakEvenSupportSales,
+        expensesCount: deptExpenses.length,
+      }
+    })
+
+    const grandDeptCost = rawDepartments.reduce((s, d) => s + d.totalCost, 0)
+    const departmentBreakdown: CostCenterDepartmentRow[] = rawDepartments
+      .map((d) => ({
+        ...d,
+        sharePct: grandDeptCost > 0 ? (d.totalCost / grandDeptCost) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalCost - a.totalCost)
+
+    return { branchBreakdown, departmentBreakdown }
+  }, [
+    incomeStatementData.contributionMarginRatioPct,
+    activeLocations,
+    activeDepartments,
+    orders,
+    receivables,
+    expenses,
+    payrollRuns,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.currencyFilter,
+    lookups,
+  ])
 
   const activeScopeSummary = useMemo(() => {
     const parts: string[] = []
@@ -3317,6 +3478,22 @@ export function ReportsSection({
           onNavigateModule={onNavigateModule}
           quotes={scoped.scopedQuotes}
           purchaseOrders={scoped.scopedPurchaseOrders}
+          branchBreakdown={pnlCostCenterBreakdown.branchBreakdown}
+          departmentBreakdown={pnlCostCenterBreakdown.departmentBreakdown}
+          activeLocationFilter={filters.locationId}
+          activeDepartmentFilter={filters.departmentId}
+          onToggleLocationFilter={(locId) =>
+            setFilters((prev) => ({
+              ...prev,
+              locationId: prev.locationId === locId ? 'all' : locId,
+            }))
+          }
+          onToggleDepartmentFilter={(deptId) =>
+            setFilters((prev) => ({
+              ...prev,
+              departmentId: prev.departmentId === deptId ? 'all' : deptId,
+            }))
+          }
         />
       )}
 
