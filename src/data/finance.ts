@@ -52,12 +52,22 @@ export type ExpenseCategory =
   | 'Software y herramientas'
   | 'Impuestos y derechos'
   | 'Viáticos y representación'
+  | 'Comisiones e intereses'
+
+export type CompanyExpenseCategory =
+  | 'Gastos administrativos'
+  | 'Gastos operativos'
+  | 'Gastos financieros'
 
 export interface ExpenseRecord {
   id: string
   folio: string
   date: string
   category: ExpenseCategory
+  companyCategory?: CompanyExpenseCategory
+  costBehavior?: 'Fijo' | 'Variable'
+  departmentName?: string
+  bankAccountName?: string
   description: string
   beneficiary: string
   amount: number
@@ -66,6 +76,24 @@ export interface ExpenseRecord {
   paymentMethod: string
   referenceDoc?: string
   user: string
+}
+
+export function resolveCompanyExpenseCategory(exp: Pick<ExpenseRecord, 'category' | 'companyCategory'>): CompanyExpenseCategory {
+  if (exp.companyCategory) return exp.companyCategory
+  switch (exp.category) {
+    case 'Comisiones e intereses':
+      return 'Gastos financieros'
+    case 'Servicios':
+    case 'Logística y fletes':
+    case 'Viáticos y representación':
+      return 'Gastos operativos'
+    case 'Arrendamiento':
+    case 'Nómina y honorarios':
+    case 'Software y herramientas':
+    case 'Impuestos y derechos':
+    default:
+      return 'Gastos administrativos'
+  }
 }
 
 export type TransactionType = 'Cobro de cliente' | 'Pago a proveedor' | 'Gasto operativo'
@@ -345,6 +373,10 @@ export const initialExpenses: ExpenseRecord[] = [
     folio: 'GST-2026-001',
     date: '05 nov 2026',
     category: 'Arrendamiento',
+    companyCategory: 'Gastos administrativos',
+    costBehavior: 'Fijo',
+    departmentName: 'Administración y Dirección',
+    bankAccountName: 'BBVA México',
     description: 'Renta mensual de bodega y oficinas Calz. Vallejo',
     beneficiary: 'Inmobiliaria Industrial Vallejo S.A.',
     amount: 32000,
@@ -359,6 +391,10 @@ export const initialExpenses: ExpenseRecord[] = [
     folio: 'GST-2026-002',
     date: '04 nov 2026',
     category: 'Servicios',
+    companyCategory: 'Gastos operativos',
+    costBehavior: 'Fijo',
+    departmentName: 'Operaciones y Almacén',
+    bankAccountName: 'BBVA México',
     description: 'Suministro de energía eléctrica CFE Nave A y B',
     beneficiary: 'Comisión Federal de Electricidad',
     amount: 7450,
@@ -373,6 +409,10 @@ export const initialExpenses: ExpenseRecord[] = [
     folio: 'GST-2026-003',
     date: '02 nov 2026',
     category: 'Software y herramientas',
+    companyCategory: 'Gastos administrativos',
+    costBehavior: 'Fijo',
+    departmentName: 'Tecnología y Sistemas',
+    bankAccountName: 'BBVA México',
     description: 'Suscripción nube, hosting servidores y respaldos dedicados',
     beneficiary: 'Nube Digital / Cloud Services',
     amount: 6800,
@@ -387,6 +427,10 @@ export const initialExpenses: ExpenseRecord[] = [
     folio: 'GST-2026-004',
     date: '31 oct 2026',
     category: 'Logística y fletes',
+    companyCategory: 'Gastos operativos',
+    costBehavior: 'Variable',
+    departmentName: 'Operaciones y Almacén',
+    bankAccountName: 'Banorte',
     description: 'Flete consolidado traslado de stock CDMX - Monterrey',
     beneficiary: 'Logística del Valle',
     amount: 14200,
@@ -401,6 +445,10 @@ export const initialExpenses: ExpenseRecord[] = [
     folio: 'GST-2026-005',
     date: '30 oct 2026',
     category: 'Nómina y honorarios',
+    companyCategory: 'Gastos administrativos',
+    costBehavior: 'Fijo',
+    departmentName: 'Finanzas y Tesorería',
+    bankAccountName: 'BBVA México',
     description: 'Honorarios asesoría contable y dictamen fiscal mensual',
     beneficiary: 'Despacho Contable García & Asoc.',
     amount: 12000,
@@ -409,6 +457,42 @@ export const initialExpenses: ExpenseRecord[] = [
     paymentMethod: 'Transferencia SPEI',
     referenceDoc: 'HON-OCT-2026',
     user: 'Andrea Morales',
+  },
+  {
+    id: 'exp_6',
+    folio: 'GST-2026-006',
+    date: '29 oct 2026',
+    category: 'Comisiones e intereses',
+    companyCategory: 'Gastos financieros',
+    costBehavior: 'Variable',
+    departmentName: 'Finanzas y Tesorería',
+    bankAccountName: 'BBVA México',
+    description: 'Comisiones bancarias por dispersión SPEI, anualidad TPV y manejo de cuenta',
+    beneficiary: 'BBVA México S.A.',
+    amount: 2850,
+    tax: 456,
+    total: 3306,
+    paymentMethod: 'Domiciliación bancaria',
+    referenceDoc: 'EDO-BBVA-1026',
+    user: 'Gabriela Morales',
+  },
+  {
+    id: 'exp_7',
+    folio: 'GST-2026-007',
+    date: '25 oct 2026',
+    category: 'Comisiones e intereses',
+    companyCategory: 'Gastos financieros',
+    costBehavior: 'Fijo',
+    departmentName: 'Finanzas y Tesorería',
+    bankAccountName: 'Banorte',
+    description: 'Intereses ordinarios devengados de línea de crédito revolvente capital de trabajo',
+    beneficiary: 'Grupo Financiero Banorte',
+    amount: 6400,
+    tax: 0,
+    total: 6400,
+    paymentMethod: 'Domiciliación bancaria',
+    referenceDoc: 'INT-BNT-202610',
+    user: 'Gabriela Morales',
   },
 ]
 
@@ -468,6 +552,7 @@ export type AccountType =
   | 'Ingresos'
   | 'Costos'
   | 'Gastos de operación'
+  | 'Gastos financieros'
   | 'Otros ingresos'
 
 export interface ChartAccount {
@@ -481,7 +566,7 @@ export interface ChartAccount {
   status: 'Activa' | 'Inactiva'
 }
 
-export type AccountNumberPrefix = '1' | '2' | '3' | '4' | '5' | '6' | '8'
+export type AccountNumberPrefix = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8'
 
 export interface AccountNumberingRule {
   prefix: AccountNumberPrefix
@@ -549,6 +634,15 @@ export const ACCOUNT_NUMBERING_RULES: AccountNumberingRule[] = [
     exampleCode: '6005-001',
   },
   {
+    prefix: '7',
+    rangeLabel: '7xxx',
+    categoryLabel: 'Gastos financieros',
+    englishLabel: 'Financial Expenses',
+    defaultNature: 'Deudora',
+    accountTypes: ['Gastos financieros'],
+    exampleCode: '7001-001',
+  },
+  {
     prefix: '8',
     rangeLabel: '8xxx',
     categoryLabel: 'Otros ingresos',
@@ -568,6 +662,7 @@ export const ACCOUNT_TYPE_NUMBERING_LABELS: Record<AccountType, string> = {
   Ingresos: '4xxx · Ingresos (Income)',
   Costos: '5xxx · Costos de ventas (COGS)',
   'Gastos de operación': '6xxx · Gastos (Expenses)',
+  'Gastos financieros': '7xxx · Gastos financieros (Financial)',
   'Otros ingresos': '8xxx · Otros ingresos (Other Income)',
 }
 
@@ -592,6 +687,7 @@ const SUBTYPE_NUMBER_BOUNDS: Record<AccountType, { min: number; max: number; sta
   Ingresos: { min: 4000, max: 4999, start: 4001 },
   Costos: { min: 5000, max: 5999, start: 5001 },
   'Gastos de operación': { min: 6000, max: 6999, start: 6001 },
+  'Gastos financieros': { min: 7000, max: 7999, start: 7001 },
   'Otros ingresos': { min: 8000, max: 8999, start: 8001 },
 }
 
@@ -652,13 +748,13 @@ export function validateAccountCodeForType(
   }
 
   const detectedRule = getAccountNumberingRuleByCode(trimmed)
-  const validFormat = /^[1234568]\d{3}(?:-\d{1,4})?$/.test(trimmed)
+  const validFormat = /^[12345678]\d{3}(?:-\d{1,4})?$/.test(trimmed)
 
   if (!detectedRule) {
     return {
       valid: false,
       expectedRule,
-      reason: `El prefijo debe pertenecer a los rangos válidos (1xxx, 2xxx, 3xxx, 4xxx, 5xxx, 6xxx u 8xxx). Para ${type} usa ${expectedRule.rangeLabel}.`,
+      reason: `El prefijo debe pertenecer a los rangos válidos (1xxx, 2xxx, 3xxx, 4xxx, 5xxx, 6xxx, 7xxx u 8xxx). Para ${type} usa ${expectedRule.rangeLabel}.`,
     }
   }
 
@@ -867,6 +963,26 @@ export const initialChartAccounts: ChartAccount[] = [
     nature: 'Deudora',
     balance: 7888,
     description: 'Infraestructura SaaS, correo corporativo y servidores cloud.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_19',
+    code: '7001-001',
+    name: 'Comisiones bancarias e intereses financieros',
+    type: 'Gastos financieros',
+    nature: 'Deudora',
+    balance: 9706,
+    description: 'Comisiones SPEI, anualidad TPV e intereses de línea de crédito.',
+    status: 'Activa',
+  },
+  {
+    id: 'acc_20',
+    code: '8001-001',
+    name: 'Rendimientos financieros y otros ingresos',
+    type: 'Otros ingresos',
+    nature: 'Acreedora',
+    balance: 18500,
+    description: 'Intereses ganados en inversiones, bonificaciones y recuperaciones.',
     status: 'Activa',
   },
 ]

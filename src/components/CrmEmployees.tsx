@@ -8,6 +8,8 @@ import {
   Edit3,
   Eye,
   IdCard,
+  Info,
+  Lock,
   Mail,
   MapPin,
   Phone,
@@ -20,11 +22,12 @@ import {
   Wallet,
   X,
 } from 'lucide-react'
-import type {
-  ContractType,
-  EmployeeRecord,
-  EmployeeStatus,
-  PaymentFrequency,
+import {
+  isEmployeeSystemUser,
+  type ContractType,
+  type EmployeeRecord,
+  type EmployeeStatus,
+  type PaymentFrequency,
 } from '../data/employees'
 import {
   DEFAULT_NEW_USER_ROLE_CHANGED_EVENT,
@@ -132,6 +135,7 @@ export function CrmEmployees({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [detailEmployee, setDetailEmployee] = useState<EmployeeRecord | null>(null)
   const [rolePickerEmployee, setRolePickerEmployee] = useState<EmployeeRecord | null>(null)
+  const [pickerRequiresAccess, setPickerRequiresAccess] = useState(false)
   const [rolePickerDraft, setRolePickerDraft] = useState<RoleKey[]>([])
 
   // Form fields
@@ -140,6 +144,7 @@ export function CrmEmployees({
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [roleTitle, setRoleTitle] = useState('')
+  const [requiresSystemAccess, setRequiresSystemAccess] = useState(false)
   const [selectedRoles, setSelectedRoles] = useState<RoleKey[]>([])
   const [departmentId, setDepartmentId] = useState('')
   const [locationId, setLocationId] = useState('')
@@ -186,13 +191,31 @@ export function CrmEmployees({
     return set.size
   }, [employees])
 
+  const validRoleIds = useMemo(
+    () => new Set(roleDefinitions.map((r) => r.id)),
+    [roleDefinitions]
+  )
+
+  const systemUsersCount = useMemo(
+    () => employees.filter((e) => isEmployeeSystemUser(e, validRoleIds)).length,
+    [employees, validRoleIds]
+  )
+
   const filteredEmployees = useMemo(() => {
     const q = searchQuery.toLowerCase().trim()
     return employees.filter((emp) => {
-      const empRoles = emp.roles || []
+      const empRoles = (emp.roles || []).filter((id) => validRoleIds.has(id))
+      const isUser = isEmployeeSystemUser(emp, validRoleIds)
       const matchesDept = departmentFilter === 'Todos' || emp.departmentId === departmentFilter
       const matchesLoc = locationFilter === 'Todos' || emp.locationId === locationFilter
-      const matchesRole = roleFilter === 'Todos' || empRoles.includes(roleFilter)
+      const matchesRole =
+        roleFilter === 'Todos'
+          ? true
+          : roleFilter === '__users_only__'
+          ? isUser
+          : roleFilter === '__no_access__'
+          ? !isUser
+          : isUser && empRoles.includes(roleFilter)
       const matchesStatus = statusFilter === 'Todos' || emp.status === statusFilter
       const matchesQuery =
         !q ||
@@ -206,7 +229,7 @@ export function CrmEmployees({
         (emp.rfc && emp.rfc.toLowerCase().includes(q))
       return matchesDept && matchesLoc && matchesRole && matchesStatus && matchesQuery
     })
-  }, [employees, searchQuery, departmentFilter, locationFilter, roleFilter, statusFilter, roleDefinitions])
+  }, [employees, searchQuery, departmentFilter, locationFilter, roleFilter, statusFilter, roleDefinitions, validRoleIds])
 
   const openCreateModal = () => {
     setEditingId(null)
@@ -217,7 +240,8 @@ export function CrmEmployees({
     setEmail('')
     setPhone('')
     setRoleTitle('')
-    setSelectedRoles([loadDefaultNewUserRole(roleDefinitions)])
+    setRequiresSystemAccess(false)
+    setSelectedRoles([])
     setDepartmentId(departments[0]?.id || '')
     setLocationId(locations[0]?.id || '')
     setContractType('Tiempo completo')
@@ -237,7 +261,8 @@ export function CrmEmployees({
   }
 
   const openEditModal = (emp: EmployeeRecord) => {
-    const validIds = new Set(roleDefinitions.map((r) => r.id))
+    const empValidRoles = (emp.roles || []).filter((id) => validRoleIds.has(id))
+    const empIsUser = isEmployeeSystemUser(emp, validRoleIds)
     setEditingId(emp.id)
     setConfirmingDelete(false)
     setEmployeeCode(emp.employeeCode)
@@ -245,7 +270,8 @@ export function CrmEmployees({
     setEmail(emp.email)
     setPhone(emp.phone)
     setRoleTitle(emp.roleTitle)
-    setSelectedRoles((emp.roles || []).filter((id) => validIds.has(id)))
+    setRequiresSystemAccess(empIsUser)
+    setSelectedRoles(empIsUser ? empValidRoles : [])
     setDepartmentId(emp.departmentId)
     setLocationId(emp.locationId)
     setContractType(emp.contractType)
@@ -271,9 +297,11 @@ export function CrmEmployees({
   }
 
   const openRolePicker = (emp: EmployeeRecord) => {
-    const validIds = new Set(roleDefinitions.map((r) => r.id))
+    const empValidRoles = (emp.roles || []).filter((id) => validRoleIds.has(id))
+    const empIsUser = isEmployeeSystemUser(emp, validRoleIds)
     setRolePickerEmployee(emp)
-    setRolePickerDraft((emp.roles || []).filter((id) => validIds.has(id)))
+    setPickerRequiresAccess(empIsUser)
+    setRolePickerDraft(empIsUser ? empValidRoles : [])
   }
 
   const togglePickerRole = (roleId: RoleKey) => {
@@ -285,18 +313,27 @@ export function CrmEmployees({
   const handleSaveQuickRoles = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!rolePickerEmployee) return
+    if (pickerRequiresAccess && rolePickerDraft.length === 0) {
+      toast.warning(
+        'Asigna al menos un rol para habilitar al empleado como usuario del sistema, o desmarca la casilla de acceso.',
+        'Rol requerido para usuario'
+      )
+      return
+    }
+    const finalRoles = pickerRequiresAccess ? [...rolePickerDraft] : []
     const updated: EmployeeRecord = {
       ...rolePickerEmployee,
-      roles: [...rolePickerDraft],
+      hasSystemAccess: pickerRequiresAccess && finalRoles.length > 0,
+      roles: finalRoles,
     }
     onUpdateEmployee(updated)
     if (detailEmployee?.id === updated.id) setDetailEmployee(updated)
-    const names = rolePickerDraft.map(getRoleDisplayName).join(', ')
+    const names = finalRoles.map(getRoleDisplayName).join(', ')
     toast.success(
-      rolePickerDraft.length > 0
-        ? `Roles de ${updated.fullName} actualizados (${names}).`
-        : `Se limpiaron los roles asignados de ${updated.fullName}.`,
-      'Roles actualizados'
+      finalRoles.length > 0
+        ? `${updated.fullName} habilitado como usuario con rol(es): ${names}.`
+        : `${updated.fullName} quedó registrado solo como empleado (sin acceso al sistema).`,
+      finalRoles.length > 0 ? 'Acceso y roles actualizados' : 'Acceso deshabilitado'
     )
     setRolePickerEmployee(null)
   }
@@ -308,6 +345,15 @@ export function CrmEmployees({
       toast.warning('Completa nombre, correo y puesto del empleado.', 'Campos obligatorios')
       return
     }
+    if (requiresSystemAccess && selectedRoles.length === 0) {
+      toast.warning(
+        'Si el empleado requiere acceso al sistema, selecciona al menos un rol en el apartado inferior (o desmarca la casilla si solo será empleado).',
+        'Rol requerido para usuario'
+      )
+      return
+    }
+    const assignedRoles = requiresSystemAccess ? [...selectedRoles] : []
+    const hasAccess = requiresSystemAccess && assignedRoles.length > 0
 
     const salaryNum = Math.max(0, Number(baseSalaryMonthly) || 0)
     const deptObj = departments.find((d) => d.id === departmentId)
@@ -330,7 +376,8 @@ export function CrmEmployees({
         email: email.trim(),
         phone: phone.trim(),
         roleTitle: roleTitle.trim(),
-        roles: [...selectedRoles],
+        hasSystemAccess: hasAccess,
+        roles: assignedRoles,
         departmentId,
         departmentName: deptObj?.name || existing.departmentName || 'Sin departamento',
         locationId,
@@ -363,7 +410,8 @@ export function CrmEmployees({
         email: email.trim(),
         phone: phone.trim(),
         roleTitle: roleTitle.trim(),
-        roles: [...selectedRoles],
+        hasSystemAccess: hasAccess,
+        roles: assignedRoles,
         departmentId,
         departmentName: deptObj?.name || 'General',
         locationId,
@@ -384,7 +432,9 @@ export function CrmEmployees({
       }
       onAddEmployee(created)
       toast.success(
-        `${created.fullName} (${created.employeeCode}) se integró al directorio de empleados.`,
+        `${created.fullName} (${created.employeeCode}) se integró al directorio${
+          hasAccess ? ' como usuario del sistema.' : ' como empleado sin acceso.'
+        }`,
         'Empleado registrado'
       )
     }
@@ -409,6 +459,7 @@ export function CrmEmployees({
       'CÓDIGO',
       'NOMBRE COMPLETO',
       'PUESTO',
+      'ACCESO SISTEMA',
       'ROLES ASIGNADOS',
       'DEPARTAMENTO',
       'UBICACIÓN',
@@ -422,12 +473,14 @@ export function CrmEmployees({
       'FRECUENCIA PAGO',
       'ESTADO',
     ]
-    const rows = filteredEmployees.map((emp) =>
-      [
+    const rows = filteredEmployees.map((emp) => {
+      const empIsUser = isEmployeeSystemUser(emp, validRoleIds)
+      return [
         esc(emp.employeeCode),
         esc(emp.fullName),
         esc(emp.roleTitle),
-        esc((emp.roles || []).map(getRoleDisplayName).join(' | ')),
+        esc(empIsUser ? 'Usuario' : 'Solo empleado'),
+        esc(empIsUser ? (emp.roles || []).map(getRoleDisplayName).join(' | ') : 'Sin acceso'),
         esc(emp.departmentName),
         esc(emp.locationName),
         esc(emp.email),
@@ -440,7 +493,7 @@ export function CrmEmployees({
         esc(emp.paymentFrequency),
         esc(emp.status),
       ].join(',')
-    )
+    })
     const csv = '\uFEFF' + [headers.map(esc).join(','), ...rows].join('\r\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -556,14 +609,16 @@ export function CrmEmployees({
           ))}
         </select>
         <select
-          aria-label="Filtrar por rol"
+          aria-label="Filtrar por acceso o rol"
           value={roleFilter}
           onChange={(e) => setRoleFilter(e.target.value)}
         >
-          <option value="Todos">Todos los roles</option>
+          <option value="Todos">Todos (acceso y roles)</option>
+          <option value="__users_only__">Solo usuarios del sistema (con rol)</option>
+          <option value="__no_access__">Solo empleados (sin acceso)</option>
           {roleDefinitions.map((role) => (
             <option key={role.id} value={role.id}>
-              {getRoleDisplayName(role.id)}
+              Rol: {getRoleDisplayName(role.id)}
             </option>
           ))}
         </select>
@@ -583,7 +638,11 @@ export function CrmEmployees({
         <span>
           <strong>{filteredEmployees.length}</strong> de {employees.length} empleados visibles
         </span>
-        <span>Vinculados a {locations.filter((l) => l.active).length} sedes activas</span>
+        <span>
+          <strong>{systemUsersCount}</strong> usuario(s) con acceso ·{' '}
+          <strong>{employees.length - systemUsersCount}</strong> solo empleado(s) ·{' '}
+          {locations.filter((l) => l.active).length} sedes activas
+        </span>
       </div>
 
       {/* Table */}
@@ -593,7 +652,7 @@ export function CrmEmployees({
             <tr>
               <th>COLABORADOR</th>
               <th>PUESTO Y ÁREA</th>
-              <th>ROLES</th>
+              <th>ACCESO Y ROLES</th>
               <th>SEDE / UBICACIÓN</th>
               <th>COMPENSACIÓN BASE</th>
               <th>ESTADO</th>
@@ -602,8 +661,8 @@ export function CrmEmployees({
           </thead>
           <tbody>
             {filteredEmployees.map((emp) => {
-              const validIds = new Set(roleDefinitions.map((r) => r.id))
-              const activeEmpRoles = (emp.roles || []).filter((id) => validIds.has(id))
+              const activeEmpRoles = (emp.roles || []).filter((id) => validRoleIds.has(id))
+              const isSystemUser = isEmployeeSystemUser(emp, validRoleIds)
               return (
               <tr key={emp.id}>
                 <td>
@@ -635,21 +694,27 @@ export function CrmEmployees({
                 <td>
                   <div className="emp-roles-table-cell">
                     <div className="emp-roles-inline-list">
-                      {activeEmpRoles.length === 0 ? (
-                        <span className="emp-no-roles-text">Sin roles</span>
-                      ) : (
-                        <span>
-                          {activeEmpRoles.map((rId) => getRoleDisplayName(rId)).join(' · ')}
+                      {!isSystemUser ? (
+                        <span className="emp-no-roles-text">
+                          <Lock size={11} aria-hidden="true" /> Solo empleado (sin acceso)
                         </span>
+                      ) : (
+                        <>
+                          <small className="emp-user-access-tag">Usuario del sistema</small>
+                          <span>
+                            {activeEmpRoles.map((rId) => getRoleDisplayName(rId)).join(' · ')}
+                          </span>
+                        </>
                       )}
                     </div>
                     <button
                       type="button"
                       className="emp-role-selector-trigger"
                       onClick={() => openRolePicker(emp)}
-                      aria-label={`Seleccionar roles para ${emp.fullName}`}
+                      aria-label={`Configurar acceso y roles para ${emp.fullName}`}
                     >
-                      <ShieldCheck size={12} /> Seleccionar ({activeEmpRoles.length})
+                      <ShieldCheck size={12} />{' '}
+                      {isSystemUser ? `Roles (${activeEmpRoles.length})` : 'Habilitar acceso'}
                     </button>
                   </div>
                 </td>
@@ -854,56 +919,112 @@ export function CrmEmployees({
                 </label>
               </div>
 
-              <div className="emp-roles-selector-block">
-                <div className="emp-roles-selector-header">
-                  <span>Roles asignados (definidos en Settings &gt; Roles y permisos)</span>
-                  <div className="emp-roles-selector-meta">
-                    <small className="tabular-nums">
-                      {selectedRoles.length} rol(es) seleccionado(s)
-                    </small>
-                    {onNavigateSettingsRoles && (
-                      <button
-                        type="button"
-                        className="emp-roles-settings-link"
-                        onClick={() => {
-                          setIsFormOpen(false)
-                          onNavigateSettingsRoles()
-                        }}
-                      >
-                        Configurar en Settings &rarr;
-                      </button>
-                    )}
+              <div className={`emp-system-access-panel ${requiresSystemAccess ? 'is-enabled' : ''}`}>
+                <div className="emp-system-access-gate">
+                  <label className="emp-system-access-check">
+                    <input
+                      type="checkbox"
+                      checked={requiresSystemAccess}
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        setRequiresSystemAccess(checked)
+                        if (!checked) {
+                          setSelectedRoles([])
+                        }
+                      }}
+                    />
+                    <div className="emp-system-access-copy">
+                      <div className="emp-system-access-title-row">
+                        <strong>Requiere acceso al sistema (será usuario)</strong>
+                        <span
+                          className="emp-access-tooltip-wrap"
+                          tabIndex={0}
+                          aria-label="Información sobre acceso como usuario del sistema"
+                        >
+                          <Info size={13} aria-hidden="true" />
+                          <span className="emp-access-tooltip" role="tooltip">
+                            Los colaboradores pueden registrarse únicamente para directorio y nómina. Marca esta opción y asigna al menos un rol para convertirlo en usuario con acceso al sistema.
+                          </span>
+                        </span>
+                      </div>
+                      <span>
+                        {requiresSystemAccess
+                          ? 'Selecciona uno o más roles abajo para habilitar su cuenta de usuario.'
+                          : 'Este empleado no tendrá acceso ni sesión de usuario en el sistema.'}
+                      </span>
+                    </div>
+                  </label>
+                  <span className={`emp-access-state-tag ${requiresSystemAccess && selectedRoles.length > 0 ? 'is-user' : ''}`}>
+                    {requiresSystemAccess && selectedRoles.length > 0
+                      ? 'Usuario con acceso'
+                      : requiresSystemAccess
+                      ? 'Pendiente de asignar rol'
+                      : 'Solo empleado'}
+                  </span>
+                </div>
+
+                {requiresSystemAccess && (
+                  <div className="emp-roles-selector-block emp-roles-revealed">
+                    <div className="emp-roles-selector-header">
+                      <span>Apartado de roles (solo empleados con rol asignado son usuarios)</span>
+                      <div className="emp-roles-selector-meta">
+                        <small className="tabular-nums">
+                          {selectedRoles.length} rol(es) seleccionado(s)
+                        </small>
+                        {selectedRoles.length === 0 && (
+                          <button
+                            type="button"
+                            className="emp-roles-settings-link"
+                            onClick={() => setSelectedRoles([defaultNewUserRole])}
+                          >
+                            Asignar rol predeterminado ({getRoleDisplayName(defaultNewUserRole)})
+                          </button>
+                        )}
+                        {onNavigateSettingsRoles && (
+                          <button
+                            type="button"
+                            className="emp-roles-settings-link"
+                            onClick={() => {
+                              setIsFormOpen(false)
+                              onNavigateSettingsRoles()
+                            }}
+                          >
+                            Configurar en Settings &rarr;
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="emp-roles-selector-grid">
+                      {roleDefinitions.map((role) => {
+                        const checked = selectedRoles.includes(role.id)
+                        const isDefault = role.id === defaultNewUserRole
+                        return (
+                          <label
+                            key={role.id}
+                            className={`emp-role-check-item ${checked ? 'checked' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleFormRole(role.id)}
+                            />
+                            <div className="emp-role-check-copy">
+                              <div className="emp-role-check-title-row">
+                                <strong>{getRoleDisplayName(role.id)}</strong>
+                                {isDefault && (
+                                  <span className="invite-role-default-badge">Predeterminado</span>
+                                )}
+                              </div>
+                              <small className="tabular-nums">
+                                {role.capabilities.length} permisos
+                              </small>
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
                   </div>
-                </div>
-                <div className="emp-roles-selector-grid">
-                  {roleDefinitions.map((role) => {
-                    const checked = selectedRoles.includes(role.id)
-                    const isDefault = role.id === defaultNewUserRole
-                    return (
-                      <label
-                        key={role.id}
-                        className={`emp-role-check-item ${checked ? 'checked' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleFormRole(role.id)}
-                        />
-                        <div className="emp-role-check-copy">
-                          <div className="emp-role-check-title-row">
-                            <strong>{getRoleDisplayName(role.id)}</strong>
-                            {isDefault && (
-                              <span className="invite-role-default-badge">Predeterminado</span>
-                            )}
-                          </div>
-                          <small className="tabular-nums">
-                            {role.capabilities.length} permisos
-                          </small>
-                        </div>
-                      </label>
-                    )
-                  })}
-                </div>
+                )}
               </div>
 
               <div className="form-section-divider">Datos fiscales y base de nómina</div>
@@ -1197,39 +1318,47 @@ export function CrmEmployees({
                 </div>
               </div>
 
-              {/* Section: Roles en el Sistema */}
+              {/* Section: Acceso al Sistema y Roles */}
               <div className="emp-sheet-section">
                 <div className="emp-sheet-section-title emp-sheet-section-title-row">
                   <span>
-                    <ShieldCheck size={13} /> Roles de acceso asignados ({(detailEmployee.roles || []).length})
+                    <ShieldCheck size={13} />{' '}
+                    {isEmployeeSystemUser(detailEmployee, validRoleIds)
+                      ? `Usuario del sistema · Roles asignados (${(detailEmployee.roles || []).filter((id) => validRoleIds.has(id)).length})`
+                      : 'Solo empleado (sin acceso al sistema)'}
                   </span>
                   <button
                     type="button"
                     className="emp-role-selector-trigger"
                     onClick={() => openRolePicker(detailEmployee)}
                   >
-                    <Edit3 size={11} /> Ajustar roles
+                    <Edit3 size={11} />{' '}
+                    {isEmployeeSystemUser(detailEmployee, validRoleIds)
+                      ? 'Gestionar acceso y roles'
+                      : 'Habilitar acceso'}
                   </button>
                 </div>
-                {(detailEmployee.roles || []).length === 0 ? (
+                {!isEmployeeSystemUser(detailEmployee, validRoleIds) ? (
                   <p className="emp-no-roles-text" style={{ margin: 0 }}>
-                    Este colaborador aún no tiene roles de sistema asignados.
+                    Este colaborador está registrado únicamente en directorio y nómina; no cuenta con acceso ni rol de usuario asignado.
                   </p>
                 ) : (
                   <div className="emp-sheet-roles-list">
-                    {(detailEmployee.roles || []).map((roleId) => {
-                      const def = roleDefinitions.find((r) => r.id === roleId)
-                      return (
-                        <div key={roleId} className="emp-sheet-role-row">
-                          <strong>
-                            <Check size={12} /> {getRoleDisplayName(roleId)}
-                          </strong>
-                          <span className="tabular-nums">
-                            {def ? `${def.capabilities.length} permisos` : ''}
-                          </span>
-                        </div>
-                      )
-                    })}
+                    {(detailEmployee.roles || [])
+                      .filter((id) => validRoleIds.has(id))
+                      .map((roleId) => {
+                        const def = roleDefinitions.find((r) => r.id === roleId)
+                        return (
+                          <div key={roleId} className="emp-sheet-role-row">
+                            <strong>
+                              <Check size={12} /> {getRoleDisplayName(roleId)}
+                            </strong>
+                            <span className="tabular-nums">
+                              {def ? `${def.capabilities.length} permisos` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
                   </div>
                 )}
               </div>
@@ -1386,7 +1515,7 @@ export function CrmEmployees({
           </section>
         </div>
       )}
-      {/* Modal: Quick Multi-Role Selector */}
+      {/* Modal: System Access & Multi-Role Selector */}
       {rolePickerEmployee && (
         <div
           className="modal-backdrop"
@@ -1397,89 +1526,133 @@ export function CrmEmployees({
         >
           <section
             className="create-modal"
-            style={{ maxWidth: '500px' }}
+            style={{ maxWidth: '540px' }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="emp-role-picker-title"
           >
             <div className="create-modal-heading">
               <div>
-                <div className="panel-kicker">ASIGNACIÓN DE ROLES · MÚLTIPLE</div>
+                <div className="panel-kicker">ACCESO AL SISTEMA · ROLES DE USUARIO</div>
                 <h2 id="emp-role-picker-title">
-                  Roles de {rolePickerEmployee.fullName}
+                  Acceso de {rolePickerEmployee.fullName}
                 </h2>
                 <p>
-                  {rolePickerEmployee.roleTitle} · Asigna uno o varios roles. La creación y permisos de roles se configuran en{' '}
-                  <strong>Settings &gt; Roles y permisos</strong>.
+                  {rolePickerEmployee.roleTitle} · Solo los empleados con acceso habilitado y al menos un rol asignado operan como usuarios del sistema.
                 </p>
               </div>
               <button
                 type="button"
                 className="modal-close-btn"
                 onClick={() => setRolePickerEmployee(null)}
-                aria-label="Cerrar selector de roles"
+                aria-label="Cerrar configuración de acceso y roles"
               >
                 <X size={16} />
               </button>
             </div>
 
             <form onSubmit={handleSaveQuickRoles}>
-              <div className="emp-roles-selector-header" style={{ marginBottom: '8px' }}>
-                <span>Catálogo de roles activos (Settings)</span>
-                <div className="emp-roles-selector-meta">
-                  <small className="tabular-nums">
-                    {rolePickerDraft.length} seleccionado(s)
-                  </small>
-                  {onNavigateSettingsRoles && (
-                    <button
-                      type="button"
-                      className="emp-roles-settings-link"
-                      onClick={() => {
-                        setRolePickerEmployee(null)
-                        onNavigateSettingsRoles()
+              <div className={`emp-system-access-panel ${pickerRequiresAccess ? 'is-enabled' : ''}`}>
+                <div className="emp-system-access-gate">
+                  <label className="emp-system-access-check">
+                    <input
+                      type="checkbox"
+                      checked={pickerRequiresAccess}
+                      onChange={(e) => {
+                        const checked = e.target.checked
+                        setPickerRequiresAccess(checked)
+                        if (!checked) {
+                          setRolePickerDraft([])
+                        }
                       }}
-                    >
-                      Configurar en Settings &rarr;
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="emp-roles-selector-grid">
-                {roleDefinitions.map((role) => {
-                  const checked = rolePickerDraft.includes(role.id)
-                  return (
-                    <label
-                      key={role.id}
-                      className={`emp-role-check-item ${checked ? 'checked' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => togglePickerRole(role.id)}
-                      />
-                      <div className="emp-role-check-copy">
-                        <strong>{getRoleDisplayName(role.id)}</strong>
-                        <small className="tabular-nums">
-                          {role.capabilities.length} permisos
-                        </small>
+                    />
+                    <div className="emp-system-access-copy">
+                      <div className="emp-system-access-title-row">
+                        <strong>Este empleado requiere acceso al sistema</strong>
+                        <span
+                          className="emp-access-tooltip-wrap"
+                          tabIndex={0}
+                          aria-label="Información sobre acceso como usuario"
+                        >
+                          <Info size={13} aria-hidden="true" />
+                          <span className="emp-access-tooltip" role="tooltip">
+                            Marca esta casilla para habilitar el apartado de roles y convertir al empleado en usuario. Si queda desmarcada, se conservará solo como colaborador sin acceso.
+                          </span>
+                        </span>
                       </div>
-                    </label>
-                  )
-                })}
+                      <span>
+                        {pickerRequiresAccess
+                          ? 'Elige uno o más roles en el apartado siguiente.'
+                          : 'Permanecerá registrado únicamente como empleado (sin usuario ni roles).'}
+                      </span>
+                    </div>
+                  </label>
+                </div>
+
+                {pickerRequiresAccess && (
+                  <div className="emp-roles-selector-block emp-roles-revealed">
+                    <div className="emp-roles-selector-header" style={{ marginBottom: '4px' }}>
+                      <span>Catálogo de roles activos (Settings)</span>
+                      <div className="emp-roles-selector-meta">
+                        <small className="tabular-nums">
+                          {rolePickerDraft.length} seleccionado(s)
+                        </small>
+                        {onNavigateSettingsRoles && (
+                          <button
+                            type="button"
+                            className="emp-roles-settings-link"
+                            onClick={() => {
+                              setRolePickerEmployee(null)
+                              onNavigateSettingsRoles()
+                            }}
+                          >
+                            Configurar en Settings &rarr;
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="emp-roles-selector-grid">
+                      {roleDefinitions.map((role) => {
+                        const checked = rolePickerDraft.includes(role.id)
+                        return (
+                          <label
+                            key={role.id}
+                            className={`emp-role-check-item ${checked ? 'checked' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePickerRole(role.id)}
+                            />
+                            <div className="emp-role-check-copy">
+                              <strong>{getRoleDisplayName(role.id)}</strong>
+                              <small className="tabular-nums">
+                                {role.capabilities.length} permisos
+                              </small>
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div
                 className="create-modal-actions"
-                style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}
+                style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginTop: '14px' }}
               >
                 <button
                   type="button"
                   className="button button-ghost button-sm"
-                  onClick={() => setRolePickerDraft([])}
-                  disabled={rolePickerDraft.length === 0}
+                  onClick={() => {
+                    setPickerRequiresAccess(false)
+                    setRolePickerDraft([])
+                  }}
+                  disabled={!pickerRequiresAccess && rolePickerDraft.length === 0}
                 >
-                  Limpiar selección
+                  Revocar acceso (solo empleado)
                 </button>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
@@ -1490,7 +1663,8 @@ export function CrmEmployees({
                     Cancelar
                   </button>
                   <button type="submit" className="button button-primary">
-                    <Check size={14} /> Guardar roles
+                    <Check size={14} />{' '}
+                    {pickerRequiresAccess ? 'Guardar usuario y roles' : 'Guardar como solo empleado'}
                   </button>
                 </div>
               </div>

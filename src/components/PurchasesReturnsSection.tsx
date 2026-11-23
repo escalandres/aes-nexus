@@ -27,6 +27,9 @@ import {
   canUserApproveWorkflowStep,
   doesTransitionRequireApproval,
   getAllowedNextStatusesForReturn,
+  getDefaultInitialStatusForReturn,
+  isReturnDeleteBlocked,
+  isReturnEditBlocked,
   type ReturnDisposition,
   type ReturnEntityWorkflowConfig,
   type ReturnItemCondition,
@@ -73,6 +76,10 @@ interface PurchasesReturnsSectionProps {
   ) => void
   onApproveTransition?: (returnId: string) => void
   onRejectApproval?: (returnId: string, reason?: string) => void
+  onUpdateReturnDetails?: (
+    returnId: string,
+    payload: { notes?: string; rmaSupplierCode?: string }
+  ) => void
   onDeleteReturn?: (returnId: string) => void
   onNavigateFinancePayables?: () => void
   onNavigatePurchaseOrders?: () => void
@@ -125,6 +132,7 @@ export function PurchasesReturnsSection({
   onRequestApproval,
   onApproveTransition,
   onRejectApproval,
+  onUpdateReturnDetails,
   onDeleteReturn,
   onNavigateFinancePayables,
   onNavigatePurchaseOrders,
@@ -260,6 +268,22 @@ export function PurchasesReturnsSection({
       toast.warning('Selecciona al menos un SKU y cantidad para devolver al proveedor.', 'Partidas requeridas')
       return
     }
+    const defaultInitialStatus = getDefaultInitialStatusForReturn(workflowConfig)
+    const initRule = workflowConfig.steps.find((s) => s.status === defaultInitialStatus)
+    if (initRule?.requireNotesOnEntry && !notes.trim()) {
+      toast.warning(
+        `El estado inicial "${defaultInitialStatus}" exige capturar notas iniciales.`,
+        'Notas requeridas'
+      )
+      return
+    }
+    if (initRule?.requireDocumentRefOnEntry && !rmaSupplierCode.trim()) {
+      toast.warning(
+        `El estado inicial "${defaultInitialStatus}" exige código RMA del proveedor.`,
+        'RMA proveedor requerido'
+      )
+      return
+    }
 
     const po = purchaseOrders.find((p) => p.id === selectedPoId)
     const linkedBill = po
@@ -306,7 +330,7 @@ export function PurchasesReturnsSection({
       warehouseName: wh?.name || 'Almacén Central Vallejo',
       reason,
       resolution,
-      status: workflowConfig.initialStatus,
+      status: defaultInitialStatus,
       items,
       subtotal,
       taxTotal,
@@ -323,7 +347,7 @@ export function PurchasesReturnsSection({
         {
           id: `whist_p_${Date.now()}`,
           timestampIso: createdAtIso,
-          toStatus: workflowConfig.initialStatus,
+          toStatus: defaultInitialStatus,
           actor: currentUserName,
           action: 'created',
           note: notes.trim() || undefined,
@@ -600,7 +624,14 @@ export function PurchasesReturnsSection({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="ret-row-actions">
-                        {ret.approvalStatus === 'pending' && ret.pendingTargetStatus ? (
+                        {isReturnEditBlocked(workflowConfig, ret.status) ? (
+                          <span
+                            className="ret-approval-role-hint"
+                            title="Edición y transiciones bloqueadas: estado marcado como final en el flujo"
+                          >
+                            <Lock size={11} aria-hidden="true" /> Bloqueada
+                          </span>
+                        ) : ret.approvalStatus === 'pending' && ret.pendingTargetStatus ? (
                           (() => {
                             const pendingRule = workflowConfig.steps.find(
                               (s) => s.status === ret.pendingTargetStatus
@@ -789,7 +820,14 @@ export function PurchasesReturnsSection({
               </label>
 
               <label className="form-field">
-                <span>Código RMA del proveedor (opcional)</span>
+                <span>
+                  Código RMA del proveedor{' '}
+                  {workflowConfig.steps.find(
+                    (s) => s.status === getDefaultInitialStatusForReturn(workflowConfig)
+                  )?.requireDocumentRefOnEntry
+                    ? '*'
+                    : '(opcional)'}
+                </span>
                 <input
                   type="text"
                   value={rmaSupplierCode}
@@ -957,7 +995,14 @@ export function PurchasesReturnsSection({
             </div>
 
             <label className="form-field" style={{ marginTop: '12px' }}>
-              <span>Notas para el proveedor y almacén</span>
+              <span>
+                Notas para el proveedor y almacén
+                {workflowConfig.steps.find(
+                  (s) => s.status === getDefaultInitialStatusForReturn(workflowConfig)
+                )?.requireNotesOnEntry
+                  ? ' *'
+                  : ''}
+              </span>
               <input
                 type="text"
                 value={notes}
@@ -969,7 +1014,7 @@ export function PurchasesReturnsSection({
             <div className="ret-modal-footer">
               <div className="ret-modal-summary tabular-nums">
                 <span>
-                  {draftTotals.units} ud(s.) · Subtotal {money(draftTotals.subtotal)} · IVA {money(draftTotals.taxTotal)}
+                  {draftTotals.units} ud(s.) · Subtotal {money(draftTotals.subtotal)} · IVA {money(draftTotals.taxTotal)} · Estado inicial: {getDefaultInitialStatusForReturn(workflowConfig)}
                 </span>
                 <strong>Total a reclamar: {money(draftTotals.total)}</strong>
               </div>
@@ -1049,65 +1094,92 @@ export function PurchasesReturnsSection({
               </div>
             </div>
 
-            {viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus && (
-              <div className="retwf-pending-box" role="status">
+            {isReturnEditBlocked(workflowConfig, viewingReturn.status) ? (
+              <div className="retwf-locked-box" role="status">
                 <div>
                   <strong>
-                    Aprobación pendiente para pasar a &ldquo;{viewingReturn.pendingTargetStatus}&rdquo;
+                    <Lock size={13} aria-hidden="true" /> Edición bloqueada: &ldquo;{viewingReturn.status}&rdquo; es un estado final
                   </strong>
                   <span>
-                    Solicitado por {viewingReturn.approvalRequestedBy || viewingReturn.createdBy} · Requiere rol:{' '}
-                    {workflowConfig.steps.find((s) => s.status === viewingReturn.pendingTargetStatus)
-                      ?.approverRole || 'Administrador'}
+                    Este expediente alcanzó una etapa marcada como final en Administración; no admite modificaciones ni nuevas transiciones.
                   </span>
                 </div>
+                {onConfigureWorkflow && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={() => {
+                      setViewingReturnId(null)
+                      onConfigureWorkflow()
+                    }}
+                  >
+                    <GitBranch size={12} /> Editar regla de estado final
+                  </button>
+                )}
               </div>
+            ) : (
+              viewingReturn.approvalStatus === 'pending' &&
+              viewingReturn.pendingTargetStatus && (
+                <div className="retwf-pending-box" role="status">
+                  <div>
+                    <strong>
+                      Aprobación pendiente para pasar a &ldquo;{viewingReturn.pendingTargetStatus}&rdquo;
+                    </strong>
+                    <span>
+                      Solicitado por {viewingReturn.approvalRequestedBy || viewingReturn.createdBy} · Requiere rol:{' '}
+                      {workflowConfig.steps.find((s) => s.status === viewingReturn.pendingTargetStatus)
+                        ?.approverRole || 'Administrador'}
+                    </span>
+                  </div>
+                </div>
+              )
             )}
 
             {viewingReturn.notes && <p className="ret-detail-notes">{viewingReturn.notes}</p>}
 
-            {canEdit &&
-              viewingReturn.approvalStatus !== 'pending' &&
-              (() => {
-                const nextStatuses = getAllowedNextStatusesForReturn(
-                  workflowConfig,
-                  viewingReturn.status
-                )
-                const needsNote = nextStatuses.some(
-                  (st) => workflowConfig.steps.find((s) => s.status === st)?.requireNotesOnEntry
-                )
-                const needsRma = nextStatuses.some(
-                  (st) =>
-                    workflowConfig.steps.find((s) => s.status === st)?.requireDocumentRefOnEntry
-                )
-                if (!needsNote && !needsRma) return null
-                return (
-                  <div className="form-grid-2" style={{ marginTop: '10px' }}>
-                    {needsRma && (
-                      <label className="form-field">
-                        <span>Código RMA del proveedor *</span>
-                        <input
-                          type="text"
-                          value={transitionRmaInput}
-                          onChange={(e) => setTransitionRmaInput(e.target.value)}
-                          placeholder="ej. RMA-ATL-5012"
-                        />
-                      </label>
-                    )}
-                    {needsNote && (
-                      <label className="form-field">
-                        <span>Nota de validación / dictamen de estado</span>
-                        <input
-                          type="text"
-                          value={transitionNoteInput}
-                          onChange={(e) => setTransitionNoteInput(e.target.value)}
-                          placeholder="Justificación requerida por reglas del flujo..."
-                        />
-                      </label>
-                    )}
-                  </div>
-                )
-              })()}
+            {canEdit && !isReturnEditBlocked(workflowConfig, viewingReturn.status) && (
+              <div className="retwf-edit-inline-block" style={{ marginTop: '10px' }}>
+                <div className="form-grid-2" style={{ flex: 1 }}>
+                  <label className="form-field">
+                    <span>Código RMA del proveedor</span>
+                    <input
+                      type="text"
+                      value={transitionRmaInput}
+                      onChange={(e) => setTransitionRmaInput(e.target.value)}
+                      placeholder="ej. RMA-ATL-5012"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Nota de validación / seguimiento</span>
+                    <input
+                      type="text"
+                      value={transitionNoteInput}
+                      onChange={(e) => setTransitionNoteInput(e.target.value)}
+                      placeholder="Agregar observación o evidencia al expediente..."
+                    />
+                  </label>
+                </div>
+                {onUpdateReturnDetails && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    disabled={
+                      !transitionNoteInput.trim() &&
+                      transitionRmaInput.trim() === (viewingReturn.rmaSupplierCode || '')
+                    }
+                    onClick={() => {
+                      onUpdateReturnDetails(viewingReturn.id, {
+                        notes: transitionNoteInput.trim() || undefined,
+                        rmaSupplierCode: transitionRmaInput.trim() || undefined,
+                      })
+                      setTransitionNoteInput('')
+                    }}
+                  >
+                    Guardar cambios
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="ret-table-wrap" style={{ marginTop: '12px' }}>
               <table className="ret-table">
@@ -1169,14 +1241,10 @@ export function PurchasesReturnsSection({
             <div className="ret-modal-footer">
               <div className="ret-row-actions">
                 {(() => {
-                  const stepRule = workflowConfig.steps.find(
-                    (s) => s.status === viewingReturn.status
-                  )
-                  const deleteBlocked =
-                    workflowConfig.preventDeleteAfterSettlement &&
-                    (Boolean(stepRule?.isFinalState) ||
-                      Boolean(viewingReturn.inventoryApplied) ||
-                      Boolean(viewingReturn.financeApplied))
+                  const deleteBlocked = isReturnDeleteBlocked(workflowConfig, viewingReturn.status, {
+                    inventoryApplied: viewingReturn.inventoryApplied,
+                    financeApplied: viewingReturn.financeApplied,
+                  })
                   if (!onDeleteReturn) return null
                   if (deleteBlocked) {
                     return (
@@ -1231,7 +1299,7 @@ export function PurchasesReturnsSection({
               </div>
 
               <div className="create-modal-actions">
-                {viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus ? (
+                {isReturnEditBlocked(workflowConfig, viewingReturn.status) ? null : viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus ? (
                   (() => {
                     const pendingRule = workflowConfig.steps.find(
                       (s) => s.status === viewingReturn.pendingTargetStatus

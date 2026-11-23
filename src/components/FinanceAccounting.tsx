@@ -48,6 +48,7 @@ const ACCOUNT_TYPES: AccountType[] = [
   'Ingresos',
   'Costos',
   'Gastos de operación',
+  'Gastos financieros',
   'Otros ingresos',
 ]
 
@@ -57,7 +58,8 @@ const matchesMacroType = (accType: AccountType, macro: MacroAccountType): boolea
   if (macro === 'Pasivo') return accType === 'Pasivo a corto plazo' || accType === 'Pasivo a largo plazo'
   if (macro === 'Capital') return accType === 'Capital contable'
   if (macro === 'Ingreso') return accType === 'Ingresos' || accType === 'Otros ingresos'
-  if (macro === 'Gasto') return accType === 'Costos' || accType === 'Gastos de operación'
+  if (macro === 'Gasto')
+    return accType === 'Costos' || accType === 'Gastos de operación' || accType === 'Gastos financieros'
   return false
 }
 
@@ -66,7 +68,7 @@ const getSubTypesForMacro = (macro: MacroAccountType): AccountType[] => {
   if (macro === 'Pasivo') return ['Pasivo a corto plazo', 'Pasivo a largo plazo']
   if (macro === 'Capital') return ['Capital contable']
   if (macro === 'Ingreso') return ['Ingresos', 'Otros ingresos']
-  if (macro === 'Gasto') return ['Costos', 'Gastos de operación']
+  if (macro === 'Gasto') return ['Costos', 'Gastos de operación', 'Gastos financieros']
   return ACCOUNT_TYPES
 }
 

@@ -33,8 +33,8 @@ export const SYSTEM_MODULE_SECTIONS = {
   Ventas: ['Catálogo', 'Cotizaciones', 'Pedidos', 'Facturas', 'Devoluciones', 'Resumen'],
   Compras: ['Resumen', 'Requisiciones', 'Órdenes de compra', 'Recepciones', 'Facturas', 'Devoluciones'],
   Operaciones: ['Inventario', 'Traslados', 'Compras', 'Entregas', 'Resumen'],
-  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos', 'Cuentas contables', 'Resumen'],
-  Reportes: ['Resumen ejecutivo', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
+  Finanzas: ['Cobros', 'Pagos', 'Pagos Bancarios', 'Gastos de la empresa', 'Cuentas contables', 'Resumen'],
+  Reportes: ['Resumen ejecutivo', 'Estado de Resultados', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas y CxC', 'Compras e Inventario', 'Nómina y RRHH'],
   Administración: [
     'Subsidiarias',
     'Departamentos',
@@ -292,12 +292,13 @@ export const DEFAULT_ROLE_SECTION_PERMISSIONS: Record<BuiltInRoleKey, RoleSectio
       Cobros: 'full',
       Pagos: 'full',
       'Pagos Bancarios': 'edit',
-      Gastos: 'edit',
+      'Gastos de la empresa': 'edit',
       'Cuentas contables': 'edit',
       Resumen: 'view',
     },
     Reportes: {
       'Resumen ejecutivo': 'view',
+      'Estado de Resultados': 'view',
       'Finanzas y Tesorería': 'view',
       'CxP y Pagos EBP': 'view',
       'Nómina y RRHH': 'view',
@@ -346,12 +347,13 @@ const SECTION_TO_CAPABILITY_BRIDGE: Record<string, Record<string, RoleCapability
     Cobros: ['manageReceivables'],
     Pagos: ['schedulePayments'],
     'Pagos Bancarios': ['schedulePayments'],
-    Gastos: ['expenseControl'],
+    'Gastos de la empresa': ['expenseControl'],
     'Cuentas contables': ['balanceReports'],
     Resumen: ['balanceReports'],
   },
   Reportes: {
     'Resumen ejecutivo': ['fullReports'],
+    'Estado de Resultados': ['balanceReports', 'fullReports'],
     'Finanzas y Tesorería': ['balanceReports'],
     'CxP y Pagos EBP': ['schedulePayments'],
     'Ventas y CxC': ['pipelineReports'],
@@ -1750,6 +1752,33 @@ export function normalizeRoleDefinition(role: RoleDefinition): RoleDefinition {
   const sectionPermissions = role.sectionPermissions
     ? cloneSectionPermissions(role.sectionPermissions)
     : deriveSectionPermissionsFromCapabilities(role.capabilities || [], role.builtInKey)
+  if (role.sectionPermissions?.Finanzas) {
+    const legacyGastos = role.sectionPermissions.Finanzas.Gastos
+    const currentCompanyExp = role.sectionPermissions.Finanzas['Gastos de la empresa']
+    if (legacyGastos && legacyGastos !== 'none') {
+      const rank: Record<SectionAccessLevel, number> = {
+        none: 0,
+        view: 1,
+        create: 2,
+        edit: 3,
+        full: 4,
+      }
+      const best =
+        rank[legacyGastos] > rank[currentCompanyExp || 'none']
+          ? legacyGastos
+          : currentCompanyExp || 'none'
+      sectionPermissions.Finanzas['Gastos de la empresa'] = best
+    }
+  }
+  if (
+    role.sectionPermissions?.Reportes &&
+    role.sectionPermissions.Reportes['Estado de Resultados'] === undefined
+  ) {
+    sectionPermissions.Reportes['Estado de Resultados'] =
+      role.sectionPermissions.Reportes['Finanzas y Tesorería'] ||
+      role.sectionPermissions.Reportes['Resumen ejecutivo'] ||
+      'none'
+  }
   const capabilities =
     Array.isArray(role.capabilities) && role.capabilities.length > 0 && !role.sectionPermissions
       ? role.capabilities

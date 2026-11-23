@@ -20,6 +20,7 @@ export interface EmployeeRecord {
   email: string
   phone: string
   roleTitle: string
+  hasSystemAccess?: boolean
   roles: RoleKey[]
   departmentId: string
   departmentName: string
@@ -41,6 +42,18 @@ export interface EmployeeRecord {
   notes?: string
 }
 
+export function isEmployeeSystemUser(
+  emp: Pick<EmployeeRecord, 'roles' | 'hasSystemAccess'>,
+  validRoleIds?: Set<string>
+): boolean {
+  if (emp.hasSystemAccess === false) return false
+  const roles = emp.roles || []
+  if (validRoleIds) {
+    return roles.some((id) => validRoleIds.has(id))
+  }
+  return roles.length > 0
+}
+
 export const initialEmployees: EmployeeRecord[] = [
   {
     id: 'emp_1',
@@ -51,6 +64,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'andrea.morales@aesnexus.mx',
     phone: '55 4120 8801',
     roleTitle: 'Directora General',
+    hasSystemAccess: true,
     roles: ['Administrador', 'Finanzas'],
     departmentId: 'dep_1',
     departmentName: 'Dirección General',
@@ -83,6 +97,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'roberto.santos@aesnexus.mx',
     phone: '55 3910 4412',
     roleTitle: 'Gerente de Operaciones y Logística',
+    hasSystemAccess: true,
     roles: ['Operaciones'],
     departmentId: 'dep_2',
     departmentName: 'Operaciones y Logística',
@@ -115,6 +130,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'gabriela.morales@aesnexus.mx',
     phone: '55 5092 1830',
     roleTitle: 'Contralora y Tesorería',
+    hasSystemAccess: true,
     roles: ['Finanzas'],
     departmentId: 'dep_3',
     departmentName: 'Finanzas y Tesorería',
@@ -146,6 +162,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'carlos.mendez@aesnexus.mx',
     phone: '55 6120 7743',
     roleTitle: 'Coordinador Comercial B2B',
+    hasSystemAccess: true,
     roles: ['Ventas'],
     departmentId: 'dep_4',
     departmentName: 'Ventas y Comercial',
@@ -176,6 +193,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'laura.ramirez@aesnexus.mx',
     phone: '55 8320 9104',
     roleTitle: 'Arquitecta de Sistemas ERP',
+    hasSystemAccess: true,
     roles: ['Administrador', 'Operaciones'],
     departmentId: 'dep_5',
     departmentName: 'Tecnología y Sistemas',
@@ -205,6 +223,7 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'mateo.navarro@aesnexus.mx',
     phone: '81 3011 5640',
     roleTitle: 'Jefe de Sucursal Monterrey',
+    hasSystemAccess: true,
     roles: ['Operaciones', 'Ventas'],
     departmentId: 'dep_2',
     departmentName: 'Operaciones y Logística',
@@ -235,7 +254,8 @@ export const initialEmployees: EmployeeRecord[] = [
     email: 'sofia.herrera@aesnexus.mx',
     phone: '33 2190 4871',
     roleTitle: 'Especialista de Punto de Operación',
-    roles: ['Ventas'],
+    hasSystemAccess: false,
+    roles: [],
     departmentId: 'dep_4',
     departmentName: 'Ventas y Comercial',
     locationId: 'loc_4',

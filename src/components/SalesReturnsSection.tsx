@@ -29,6 +29,9 @@ import {
   canUserApproveWorkflowStep,
   doesTransitionRequireApproval,
   getAllowedNextStatusesForReturn,
+  getDefaultInitialStatusForReturn,
+  isReturnDeleteBlocked,
+  isReturnEditBlocked,
   type CustomerReturn,
   type CustomerReturnResolution,
   type CustomerReturnStatus,
@@ -74,6 +77,7 @@ interface SalesReturnsSectionProps {
   ) => void
   onApproveTransition?: (returnId: string) => void
   onRejectApproval?: (returnId: string, reason?: string) => void
+  onUpdateReturnNotes?: (returnId: string, notes: string) => void
   onDeleteReturn?: (returnId: string) => void
   onNavigateFinanceReceivables?: () => void
   onNavigateOperationsInventory?: () => void
@@ -126,6 +130,7 @@ export function SalesReturnsSection({
   onRequestApproval,
   onApproveTransition,
   onRejectApproval,
+  onUpdateReturnNotes,
   onDeleteReturn,
   onNavigateFinanceReceivables,
   onNavigateOperationsInventory,
@@ -257,6 +262,15 @@ export function SalesReturnsSection({
       toast.warning('Selecciona al menos un artículo y cantidad a devolver.', 'Artículos requeridos')
       return
     }
+    const defaultInitialStatus = getDefaultInitialStatusForReturn(workflowConfig)
+    const initRule = workflowConfig.steps.find((s) => s.status === defaultInitialStatus)
+    if (initRule?.requireNotesOnEntry && !notes.trim()) {
+      toast.warning(
+        `El estado inicial "${defaultInitialStatus}" exige capturar observaciones iniciales.`,
+        'Notas requeridas'
+      )
+      return
+    }
 
     const orderObj = orders.find((o) => o.id === selectedOrderId)
     const linkedInvoice = orderObj
@@ -310,7 +324,7 @@ export function SalesReturnsSection({
       warehouseName: wh?.name || 'Almacén Central Vallejo',
       reason,
       resolution,
-      status: workflowConfig.initialStatus,
+      status: defaultInitialStatus,
       items,
       subtotal,
       taxTotal,
@@ -326,7 +340,7 @@ export function SalesReturnsSection({
         {
           id: `whist_c_${Date.now()}`,
           timestampIso: createdAtIso,
-          toStatus: workflowConfig.initialStatus,
+          toStatus: defaultInitialStatus,
           actor: currentUserName,
           action: 'created',
           note: notes.trim() || undefined,
@@ -604,7 +618,14 @@ export function SalesReturnsSection({
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="ret-row-actions">
-                        {ret.approvalStatus === 'pending' && ret.pendingTargetStatus ? (
+                        {isReturnEditBlocked(workflowConfig, ret.status) ? (
+                          <span
+                            className="ret-approval-role-hint"
+                            title="Edición y transiciones bloqueadas: estado marcado como final en el flujo"
+                          >
+                            <Lock size={11} aria-hidden="true" /> Bloqueada
+                          </span>
+                        ) : ret.approvalStatus === 'pending' && ret.pendingTargetStatus ? (
                           (() => {
                             const pendingRule = workflowConfig.steps.find(
                               (s) => s.status === ret.pendingTargetStatus
@@ -952,7 +973,14 @@ export function SalesReturnsSection({
             </div>
 
             <label className="form-field" style={{ marginTop: '12px' }}>
-              <span>Observaciones e inspección inicial</span>
+              <span>
+                Observaciones e inspección inicial
+                {workflowConfig.steps.find(
+                  (s) => s.status === getDefaultInitialStatusForReturn(workflowConfig)
+                )?.requireNotesOnEntry
+                  ? ' *'
+                  : ''}
+              </span>
               <input
                 type="text"
                 value={notes}
@@ -964,7 +992,7 @@ export function SalesReturnsSection({
             <div className="ret-modal-footer">
               <div className="ret-modal-summary tabular-nums">
                 <span>
-                  {draftTotals.units} ud(s.) · Subtotal {money(draftTotals.subtotal)} · IVA {money(draftTotals.taxTotal)}
+                  {draftTotals.units} ud(s.) · Subtotal {money(draftTotals.subtotal)} · IVA {money(draftTotals.taxTotal)} · Estado inicial: {getDefaultInitialStatusForReturn(workflowConfig)}
                 </span>
                 <strong>Total a acreditar: {money(draftTotals.total)}</strong>
               </div>
@@ -1044,38 +1072,76 @@ export function SalesReturnsSection({
               </div>
             </div>
 
-            {viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus && (
-              <div className="retwf-pending-box" role="status">
+            {isReturnEditBlocked(workflowConfig, viewingReturn.status) ? (
+              <div className="retwf-locked-box" role="status">
                 <div>
                   <strong>
-                    Aprobación pendiente para pasar a &ldquo;{viewingReturn.pendingTargetStatus}&rdquo;
+                    <Lock size={13} aria-hidden="true" /> Edición bloqueada: &ldquo;{viewingReturn.status}&rdquo; es un estado final
                   </strong>
                   <span>
-                    Solicitado por {viewingReturn.approvalRequestedBy || viewingReturn.createdBy} · Requiere rol:{' '}
-                    {workflowConfig.steps.find((s) => s.status === viewingReturn.pendingTargetStatus)
-                      ?.approverRole || 'Administrador'}
+                    Este expediente alcanzó una etapa marcada como final en Administración; no admite modificaciones ni nuevas transiciones.
                   </span>
                 </div>
+                {onConfigureWorkflow && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={() => {
+                      setViewingReturnId(null)
+                      onConfigureWorkflow()
+                    }}
+                  >
+                    <GitBranch size={12} /> Editar regla de estado final
+                  </button>
+                )}
               </div>
+            ) : (
+              viewingReturn.approvalStatus === 'pending' &&
+              viewingReturn.pendingTargetStatus && (
+                <div className="retwf-pending-box" role="status">
+                  <div>
+                    <strong>
+                      Aprobación pendiente para pasar a &ldquo;{viewingReturn.pendingTargetStatus}&rdquo;
+                    </strong>
+                    <span>
+                      Solicitado por {viewingReturn.approvalRequestedBy || viewingReturn.createdBy} · Requiere rol:{' '}
+                      {workflowConfig.steps.find((s) => s.status === viewingReturn.pendingTargetStatus)
+                        ?.approverRole || 'Administrador'}
+                    </span>
+                  </div>
+                </div>
+              )
             )}
 
             {viewingReturn.notes && <p className="ret-detail-notes">{viewingReturn.notes}</p>}
 
-            {canEdit &&
-              viewingReturn.approvalStatus !== 'pending' &&
-              getAllowedNextStatusesForReturn(workflowConfig, viewingReturn.status).some(
-                (st) => workflowConfig.steps.find((s) => s.status === st)?.requireNotesOnEntry
-              ) && (
-                <label className="form-field" style={{ marginTop: '10px' }}>
-                  <span>Nota de validación / dictamen de estado</span>
+            {canEdit && !isReturnEditBlocked(workflowConfig, viewingReturn.status) && (
+              <div className="retwf-edit-inline-row" style={{ marginTop: '10px' }}>
+                <label className="form-field" style={{ flex: 1 }}>
+                  <span>Observaciones / dictamen de seguimiento</span>
                   <input
                     type="text"
                     value={transitionNoteInput}
                     onChange={(e) => setTransitionNoteInput(e.target.value)}
-                    placeholder="Agrega evidencia o motivo requerido por las reglas del flujo..."
+                    placeholder="Agregar actualización de inspección o evidencia para el expediente..."
                   />
                 </label>
-              )}
+                {onUpdateReturnNotes && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    disabled={!transitionNoteInput.trim()}
+                    onClick={() => {
+                      if (!transitionNoteInput.trim()) return
+                      onUpdateReturnNotes(viewingReturn.id, transitionNoteInput.trim())
+                      setTransitionNoteInput('')
+                    }}
+                  >
+                    Guardar nota
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="ret-table-wrap" style={{ marginTop: '12px' }}>
               <table className="ret-table">
@@ -1137,14 +1203,10 @@ export function SalesReturnsSection({
             <div className="ret-modal-footer">
               <div className="ret-row-actions">
                 {(() => {
-                  const stepRule = workflowConfig.steps.find(
-                    (s) => s.status === viewingReturn.status
-                  )
-                  const deleteBlocked =
-                    workflowConfig.preventDeleteAfterSettlement &&
-                    (Boolean(stepRule?.isFinalState) ||
-                      Boolean(viewingReturn.inventoryApplied) ||
-                      Boolean(viewingReturn.financeApplied))
+                  const deleteBlocked = isReturnDeleteBlocked(workflowConfig, viewingReturn.status, {
+                    inventoryApplied: viewingReturn.inventoryApplied,
+                    financeApplied: viewingReturn.financeApplied,
+                  })
                   if (!onDeleteReturn) return null
                   if (deleteBlocked) {
                     return (
@@ -1199,7 +1261,7 @@ export function SalesReturnsSection({
               </div>
 
               <div className="create-modal-actions">
-                {viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus ? (
+                {isReturnEditBlocked(workflowConfig, viewingReturn.status) ? null : viewingReturn.approvalStatus === 'pending' && viewingReturn.pendingTargetStatus ? (
                   (() => {
                     const pendingRule = workflowConfig.steps.find(
                       (s) => s.status === viewingReturn.pendingTargetStatus

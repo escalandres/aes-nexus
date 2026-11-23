@@ -701,11 +701,12 @@ function normalizeEntityWorkflow<TStatus extends string>(
 
   const normalizedSteps = orderedRawSteps.map((found) => {
     const defStep = fallbackByStatus.get(found.status)!
+    const isFinal =
+      typeof found.isFinalState === 'boolean' ? found.isFinalState : defStep.isFinalState
     return {
       status: defStep.status,
       enabled: typeof found.enabled === 'boolean' ? found.enabled : defStep.enabled,
-      isFinalState:
-        typeof found.isFinalState === 'boolean' ? found.isFinalState : defStep.isFinalState,
+      isFinalState: isFinal,
       requiresApproval:
         typeof found.requiresApproval === 'boolean'
           ? found.requiresApproval
@@ -727,7 +728,9 @@ function normalizeEntityWorkflow<TStatus extends string>(
         typeof found.requireDocumentRefOnEntry === 'boolean'
           ? found.requireDocumentRefOnEntry
           : Boolean(defStep.requireDocumentRefOnEntry),
-      allowedNextStatuses: Array.isArray(found.allowedNextStatuses)
+      allowedNextStatuses: isFinal
+        ? []
+        : Array.isArray(found.allowedNextStatuses)
         ? found.allowedNextStatuses.filter((st): st is TStatus => validStatuses.has(st) && st !== defStep.status)
         : [...defStep.allowedNextStatuses],
     }
@@ -1122,15 +1125,60 @@ export function canUserApproveWorkflowStep(
   return false
 }
 
+export function isReturnStateFinal<TStatus extends string>(
+  workflow: ReturnEntityWorkflowConfig<TStatus>,
+  status: TStatus
+): boolean {
+  const rule = workflow.steps.find((s) => s.status === status)
+  return Boolean(rule?.isFinalState)
+}
+
+export function isReturnEditBlocked<TStatus extends string>(
+  workflow: ReturnEntityWorkflowConfig<TStatus>,
+  status: TStatus
+): boolean {
+  return isReturnStateFinal(workflow, status)
+}
+
+export function isReturnDeleteBlocked<TStatus extends string>(
+  workflow: ReturnEntityWorkflowConfig<TStatus>,
+  status: TStatus,
+  flags?: { inventoryApplied?: boolean; financeApplied?: boolean }
+): boolean {
+  if (!workflow.preventDeleteAfterSettlement) return false
+  return Boolean(
+    isReturnStateFinal(workflow, status) ||
+      flags?.inventoryApplied ||
+      flags?.financeApplied
+  )
+}
+
+export function getDefaultInitialStatusForReturn<TStatus extends string>(
+  workflow: ReturnEntityWorkflowConfig<TStatus>
+): TStatus {
+  const configured = workflow.steps.find(
+    (s) => s.status === workflow.initialStatus && s.enabled && !s.isFinalState
+  )
+  if (configured) return configured.status
+  const firstActive = workflow.steps.find((s) => s.enabled && !s.isFinalState)
+  return firstActive?.status ?? workflow.initialStatus
+}
+
 export function getAllowedNextStatusesForReturn<TStatus extends string>(
   workflow: ReturnEntityWorkflowConfig<TStatus>,
   currentStatus: TStatus
 ): TStatus[] {
   const currentRule = workflow.steps.find((s) => s.status === currentStatus)
-  if (!currentRule) return []
-  return currentRule.allowedNextStatuses.filter((nextSt) => {
-    const targetRule = workflow.steps.find((s) => s.status === nextSt)
-    return Boolean(targetRule && targetRule.enabled)
-  })
+  if (!currentRule || currentRule.isFinalState) return []
+  const orderIndex = new Map<TStatus, number>(
+    workflow.steps.map((s, idx) => [s.status, idx])
+  )
+  return currentRule.allowedNextStatuses
+    .filter((nextSt) => {
+      const targetRule = workflow.steps.find((s) => s.status === nextSt)
+      return Boolean(targetRule && targetRule.enabled)
+    })
+    .sort((a, b) => (orderIndex.get(a) ?? 999) - (orderIndex.get(b) ?? 999))
 }
+
 

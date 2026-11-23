@@ -22,7 +22,11 @@ import { RoleSessionSelectorModal } from './components/RoleSessionSelectorModal'
 import { CrmEmployees } from './components/CrmEmployees'
 import { CrmPayroll } from './components/CrmPayroll'
 import { DirectorySheetModal, DirectoryEditModal } from './components/DirectorySheetModal'
-import { initialEmployees, type EmployeeRecord } from './data/employees'
+import {
+  initialEmployees,
+  isEmployeeSystemUser,
+  type EmployeeRecord,
+} from './data/employees'
 import {
   CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
   ROLES_CHANGED_EVENT,
@@ -80,6 +84,9 @@ import {
   canUserApproveWorkflowStep,
   doesTransitionRequireApproval,
   getAllowedNextStatusesForReturn,
+  getDefaultInitialStatusForReturn,
+  isReturnDeleteBlocked,
+  isReturnEditBlocked,
   loadStoredCustomerReturns,
   loadStoredReturnWorkflows,
   loadStoredSupplierReturns,
@@ -113,7 +120,7 @@ import {
 } from './data/operations'
 import { FinanceReceivables } from './components/FinanceReceivables'
 import { FinancePayables } from './components/FinancePayables'
-import { FinanceExpenses } from './components/FinanceExpenses'
+import { FinanceCompanyExpenses } from './components/FinanceCompanyExpenses'
 import { FinanceOverview } from './components/FinanceOverview'
 import { FinanceAccounting } from './components/FinanceAccounting'
 import { FinanceEbp } from './components/FinanceEbp'
@@ -632,14 +639,21 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Pagos Bancarios'
     : pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
     ? 'Pagos'
-    : pathname === '/finance/expenses' || pathname === '/finance/gastos' || pathname === '/finanzas/gastos'
-    ? 'Gastos'
+    : pathname === '/finance/company-expenses' ||
+      pathname === '/finance/gastos-empresa' ||
+      pathname === '/finanzas/gastos-empresa' ||
+      pathname === '/finance/expenses' ||
+      pathname === '/finance/gastos' ||
+      pathname === '/finanzas/gastos'
+    ? 'Gastos de la empresa'
     : pathname === '/finance/summary' || pathname === '/finance/resumen' || pathname === '/finanzas/resumen'
     ? 'Resumen'
     : 'Cobros'
 
 const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
-  pathname === '/reports/financial' || pathname === '/reportes/finanzas'
+  pathname === '/reports/income-statement' || pathname === '/reportes/estado-resultados'
+    ? 'Estado de Resultados'
+    : pathname === '/reports/financial' || pathname === '/reportes/finanzas'
     ? 'Finanzas y Tesorería'
     : pathname === '/reports/payables-ebp' || pathname === '/reportes/cxp-ebp'
     ? 'CxP y Pagos EBP'
@@ -693,7 +707,7 @@ function AppContent() {
   const [salesSection, setSalesSection] = useState<SalesSectionTab>(() => salesSectionFromPath(window.location.pathname))
   const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
-  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
   const [reportsSection, setReportsSection] = useState<ReportsSectionTab>(() => reportsSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
   const [selectedSubsidiaryId, setSelectedSubsidiaryId] = useState<string | null>(() =>
@@ -1159,9 +1173,12 @@ function AppContent() {
           return parsed.map((emp) => {
             const fallbackRoles = initialEmployees.find((i) => i.id === emp.id)?.roles || []
             const rawRoles = Array.isArray(emp.roles) ? emp.roles : fallbackRoles
+            const filteredRoles = rawRoles.filter((id) => validRoleIds.has(id))
+            const hasAccess = emp.hasSystemAccess !== false && filteredRoles.length > 0
             return {
               ...emp,
-              roles: rawRoles.filter((id) => validRoleIds.has(id)),
+              hasSystemAccess: hasAccess,
+              roles: hasAccess ? filteredRoles : [],
             }
           })
         }
@@ -1187,9 +1204,10 @@ function AppContent() {
         let changed = false
         const next = prev.map((emp) => {
           const filtered = (emp.roles || []).filter((rId) => validIds.has(rId))
-          if (filtered.length !== (emp.roles || []).length) {
+          const nextAccess = emp.hasSystemAccess !== false && filtered.length > 0
+          if (filtered.length !== (emp.roles || []).length || emp.hasSystemAccess !== nextAccess) {
             changed = true
-            return { ...emp, roles: filtered }
+            return { ...emp, hasSystemAccess: nextAccess, roles: nextAccess ? filtered : [] }
           }
           return emp
         })
@@ -1340,8 +1358,9 @@ function AppContent() {
       const empId = activeSessionId.slice(4)
       const emp = employees.find((e) => e.id === empId)
       if (emp) {
-        const empRoles = emp.roles || []
-        const isActive = emp.status !== 'Inactivo'
+        const isSysUser = isEmployeeSystemUser(emp, validRoleIds)
+        const empRoles = isSysUser ? (emp.roles || []).filter((id) => validRoleIds.has(id)) : []
+        const isActive = isSysUser && emp.status !== 'Inactivo'
         const fallbackUser = workspaceUsers.find((u) => u.status === 'active') || workspaceUsers[0]
         return {
           key: `emp:${emp.id}`,
@@ -1352,12 +1371,12 @@ function AppContent() {
           initials: emp.initials,
           roles: empRoles,
           isActive,
-          statusLabel: emp.status,
-          subtitle: !isActive
+          statusLabel: !isSysUser ? 'Sin acceso' : emp.status,
+          subtitle: !isSysUser
+            ? 'Solo empleado (sin acceso)'
+            : emp.status === 'Inactivo'
             ? 'Inactivo'
-            : empRoles.length > 0
-            ? empRoles.map(getRoleDisplayName).join(', ')
-            : 'Sin rol asignado',
+            : empRoles.map(getRoleDisplayName).join(', '),
         }
       }
     }
@@ -1973,7 +1992,7 @@ function AppContent() {
     setExpenses((prev) => [exp, ...prev])
     appendAuditLog({
       category: 'finance',
-      action: 'Registro de gasto operativo',
+      action: `Registro de gasto (${exp.companyCategory || exp.category})`,
       detail: `${exp.folio} · ${exp.description} · ${money(exp.total)}`,
       user: activeSessionProfile.name,
     })
@@ -2602,8 +2621,58 @@ function AppContent() {
   }
 
   const handleCreateCustomerReturn = (ret: CustomerReturn) => {
+    const resolvedInitialStatus = getDefaultInitialStatusForReturn(returnWorkflows.customer)
+    let created: CustomerReturn = {
+      ...ret,
+      status: resolvedInitialStatus,
+      workflowHistory:
+        ret.workflowHistory && ret.workflowHistory.length > 0
+          ? ret.workflowHistory.map((h, i) =>
+              i === 0 ? { ...h, toStatus: resolvedInitialStatus } : h
+            )
+          : [
+              {
+                id: `whist_c_${Date.now()}`,
+                timestampIso: new Date().toISOString(),
+                toStatus: resolvedInitialStatus,
+                actor: activeSessionProfile.name,
+                action: 'created',
+                note: ret.notes,
+              },
+            ],
+    }
+    if (created.status === 'Recibida en almacén' && !created.inventoryApplied) {
+      const restockLines = created.items.filter((it) => it.disposition === 'Reingreso a almacén')
+      if (restockLines.length > 0) {
+        setInventory((prev) =>
+          prev.map((inv) => {
+            if (inv.warehouseId !== created.warehouseId) return inv
+            const matched = restockLines.find(
+              (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+            )
+            return matched ? { ...inv, stock: inv.stock + matched.quantity } : inv
+          })
+        )
+        restockLines.forEach((line, idx) => {
+          handleAddMovement({
+            id: `mov_cli_ret_init_${Date.now()}_${idx}`,
+            folio: `MOV-DEV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+            date: formatShortReturnDate(),
+            type: 'Entrada',
+            sku: line.sku,
+            productName: line.name,
+            quantity: line.quantity,
+            targetWarehouse: created.warehouseName,
+            referenceDoc: created.folio,
+            reason: `Reingreso inicial por devolución de cliente (${created.clientCompany})`,
+            user: activeSessionProfile.name,
+          })
+        })
+      }
+      created = { ...created, inventoryApplied: true }
+    }
     setCustomerReturns((prev) => {
-      const next = [ret, ...prev]
+      const next = [created, ...prev]
       saveStoredCustomerReturns(next)
       return next
     })
@@ -2611,13 +2680,13 @@ function AppContent() {
       category: 'sales',
       crudOperation: 'CREATE',
       entityType: 'Devolución de cliente',
-      entityId: ret.id,
+      entityId: created.id,
       action: 'Registro de devolución de cliente (RMA)',
-      detail: `${ret.folio} · ${ret.clientCompany} · ${ret.orderFolio} · ${money(ret.total)}`,
+      detail: `${created.folio} · ${created.clientCompany} · ${created.orderFolio} · Estado inicial: ${created.status} · ${money(created.total)}`,
       user: activeSessionProfile.name,
       userId: activeActorUserId,
     })
-    toast.success(`Devolución ${ret.folio} registrada para ${ret.clientCompany}.`, 'RMA registrado')
+    toast.success(`Devolución ${created.folio} registrada para ${created.clientCompany}.`, 'RMA registrado')
   }
 
   const applyCustomerReturnTransition = (
@@ -2765,6 +2834,13 @@ function AppContent() {
   ) => {
     const target = customerReturns.find((r) => r.id === returnId)
     if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
     if (!allowed.includes(targetStatus)) {
       toast.warning(
@@ -2831,6 +2907,13 @@ function AppContent() {
   const handleApproveCustomerReturnTransition = (returnId: string) => {
     const target = customerReturns.find((r) => r.id === returnId)
     if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const targetRule = returnWorkflows.customer.steps.find(
       (s) => s.status === target.pendingTargetStatus
     )
@@ -2897,6 +2980,38 @@ function AppContent() {
     toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
   }
 
+  const handleUpdateCustomerReturnDetails = (returnId: string, notes: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Edición bloqueada'
+      )
+      return
+    }
+    const nowIso = new Date().toISOString()
+    const mergedNotes = target.notes ? `${target.notes} · ${notes}` : notes
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId ? { ...r, notes: mergedNotes, updatedAtIso: nowIso } : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: 'Actualización de notas en RMA cliente',
+      detail: `${target.folio} · ${notes}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Nota agregada a ${target.folio}.`, 'RMA actualizado')
+  }
+
   const handleAdvanceCustomerReturn = (
     returnId: string,
     nextStatus: CustomerReturnStatus,
@@ -2904,6 +3019,13 @@ function AppContent() {
   ) => {
     const target = customerReturns.find((r) => r.id === returnId)
     if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
     if (!allowed.includes(nextStatus)) {
       toast.warning(
@@ -2921,15 +3043,18 @@ function AppContent() {
 
   const handleDeleteCustomerReturn = (returnId: string) => {
     const target = customerReturns.find((r) => r.id === returnId)
-    if (target && returnWorkflows.customer.preventDeleteAfterSettlement) {
-      const rule = returnWorkflows.customer.steps.find((s) => s.status === target.status)
-      if (rule?.isFinalState || target.inventoryApplied || target.financeApplied) {
-        toast.warning(
-          'No se puede eliminar un expediente liquidado o con impacto aplicado en Kardex/CxC.',
-          'Bloqueado por flujo'
-        )
-        return
-      }
+    if (
+      target &&
+      isReturnDeleteBlocked(returnWorkflows.customer, target.status, {
+        inventoryApplied: target.inventoryApplied,
+        financeApplied: target.financeApplied,
+      })
+    ) {
+      toast.warning(
+        'No se puede eliminar un expediente en estado final o con impacto aplicado en Kardex/CxC.',
+        'Bloqueado por flujo'
+      )
+      return
     }
     setCustomerReturns((prev) => {
       const next = prev.filter((r) => r.id !== returnId)
@@ -2952,8 +3077,55 @@ function AppContent() {
   }
 
   const handleCreateSupplierReturn = (ret: SupplierReturn) => {
+    const resolvedInitialStatus = getDefaultInitialStatusForReturn(returnWorkflows.supplier)
+    let created: SupplierReturn = {
+      ...ret,
+      status: resolvedInitialStatus,
+      workflowHistory:
+        ret.workflowHistory && ret.workflowHistory.length > 0
+          ? ret.workflowHistory.map((h, i) =>
+              i === 0 ? { ...h, toStatus: resolvedInitialStatus } : h
+            )
+          : [
+              {
+                id: `whist_p_${Date.now()}`,
+                timestampIso: new Date().toISOString(),
+                toStatus: resolvedInitialStatus,
+                actor: activeSessionProfile.name,
+                action: 'created',
+                note: ret.notes,
+              },
+            ],
+    }
+    if (created.status === 'Enviada a proveedor' && !created.inventoryApplied) {
+      setInventory((prev) =>
+        prev.map((inv) => {
+          if (inv.warehouseId !== created.warehouseId) return inv
+          const matched = created.items.find(
+            (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+          )
+          return matched ? { ...inv, stock: Math.max(0, inv.stock - matched.quantity) } : inv
+        })
+      )
+      created.items.forEach((line, idx) => {
+        handleAddMovement({
+          id: `mov_prv_ret_init_${Date.now()}_${idx}`,
+          folio: `MOV-RTV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+          date: formatShortReturnDate(),
+          type: 'Salida',
+          sku: line.sku,
+          productName: line.name,
+          quantity: line.quantity,
+          sourceWarehouse: created.warehouseName,
+          referenceDoc: created.folio,
+          reason: `Salida inicial por devolución a proveedor (${created.supplierCompany})`,
+          user: activeSessionProfile.name,
+        })
+      })
+      created = { ...created, inventoryApplied: true }
+    }
     setSupplierReturns((prev) => {
-      const next = [ret, ...prev]
+      const next = [created, ...prev]
       saveStoredSupplierReturns(next)
       return next
     })
@@ -2961,13 +3133,13 @@ function AppContent() {
       category: 'inventory',
       crudOperation: 'CREATE',
       entityType: 'Devolución a proveedor',
-      entityId: ret.id,
+      entityId: created.id,
       action: 'Registro de devolución a proveedor (RTV)',
-      detail: `${ret.folio} · ${ret.supplierCompany} · ${ret.purchaseOrderFolio} · ${money(ret.total)}`,
+      detail: `${created.folio} · ${created.supplierCompany} · ${created.purchaseOrderFolio} · Estado inicial: ${created.status} · ${money(created.total)}`,
       user: activeSessionProfile.name,
       userId: activeActorUserId,
     })
-    toast.success(`Devolución ${ret.folio} creada para ${ret.supplierCompany}.`, 'RTV registrado')
+    toast.success(`Devolución ${created.folio} creada para ${created.supplierCompany}.`, 'RTV registrado')
   }
 
   const applySupplierReturnTransition = (
@@ -3113,6 +3285,13 @@ function AppContent() {
   ) => {
     const target = supplierReturns.find((r) => r.id === returnId)
     if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
     if (!allowed.includes(targetStatus)) {
       toast.warning(
@@ -3180,6 +3359,13 @@ function AppContent() {
   const handleApproveSupplierReturnTransition = (returnId: string) => {
     const target = supplierReturns.find((r) => r.id === returnId)
     if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const targetRule = returnWorkflows.supplier.steps.find(
       (s) => s.status === target.pendingTargetStatus
     )
@@ -3246,6 +3432,48 @@ function AppContent() {
     toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
   }
 
+  const handleUpdateSupplierReturnDetails = (
+    returnId: string,
+    payload: { notes?: string; rmaSupplierCode?: string }
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Edición bloqueada'
+      )
+      return
+    }
+    const nowIso = new Date().toISOString()
+    const mergedNotes = payload.notes
+      ? target.notes
+        ? `${target.notes} · ${payload.notes}`
+        : payload.notes
+      : target.notes
+    const nextRma = payload.rmaSupplierCode ?? target.rmaSupplierCode
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? { ...r, notes: mergedNotes, rmaSupplierCode: nextRma, updatedAtIso: nowIso }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: 'Actualización de datos en RTV proveedor',
+      detail: `${target.folio}${nextRma ? ` · RMA ${nextRma}` : ''}${payload.notes ? ` · ${payload.notes}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Expediente ${target.folio} actualizado.`, 'RTV actualizado')
+  }
+
   const handleAdvanceSupplierReturn = (
     returnId: string,
     nextStatus: SupplierReturnStatus,
@@ -3254,6 +3482,13 @@ function AppContent() {
   ) => {
     const target = supplierReturns.find((r) => r.id === returnId)
     if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
     const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
     if (!allowed.includes(nextStatus)) {
       toast.warning(
@@ -3271,15 +3506,18 @@ function AppContent() {
 
   const handleDeleteSupplierReturn = (returnId: string) => {
     const target = supplierReturns.find((r) => r.id === returnId)
-    if (target && returnWorkflows.supplier.preventDeleteAfterSettlement) {
-      const rule = returnWorkflows.supplier.steps.find((s) => s.status === target.status)
-      if (rule?.isFinalState || target.inventoryApplied || target.financeApplied) {
-        toast.warning(
-          'No se puede eliminar un expediente liquidado o con impacto aplicado en Kardex/CxP.',
-          'Bloqueado por flujo'
-        )
-        return
-      }
+    if (
+      target &&
+      isReturnDeleteBlocked(returnWorkflows.supplier, target.status, {
+        inventoryApplied: target.inventoryApplied,
+        financeApplied: target.financeApplied,
+      })
+    ) {
+      toast.warning(
+        'No se puede eliminar un expediente en estado final o con impacto aplicado en Kardex/CxP.',
+        'Bloqueado por flujo'
+      )
+      return
     }
     setSupplierReturns((prev) => {
       const next = prev.filter((r) => r.id !== returnId)
@@ -3769,7 +4007,9 @@ function AppContent() {
     setActivePage('Reportes')
     setReportsSection(section)
     const route =
-      section === 'Finanzas y Tesorería'
+      section === 'Estado de Resultados'
+        ? '/reports/income-statement'
+        : section === 'Finanzas y Tesorería'
         ? '/reports/financial'
         : section === 'CxP y Pagos EBP'
         ? '/reports/payables-ebp'
@@ -3859,7 +4099,7 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen') => {
+  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen') => {
     if (
       !canAccessSection(
         'Finanzas',
@@ -3882,8 +4122,8 @@ function AppContent() {
         ? '/finance/ebp'
         : section === 'Pagos'
         ? '/finance/payables'
-        : section === 'Gastos'
-        ? '/finance/expenses'
+        : section === 'Gastos de la empresa'
+        ? '/finance/gastos-empresa'
         : section === 'Resumen'
         ? '/finance/summary'
         : '/finance'
@@ -4512,41 +4752,52 @@ function AppContent() {
               </div>
 
               <div className="profile-switcher-group">
-                <span className="profile-switcher-group-title">Colaboradores (CRM · Multi-rol)</span>
-                {employees.map((emp) => {
-                  const key = `emp:${emp.id}`
-                  const isCurrent = activeSessionProfile.key === key
-                  const rolesText =
-                    (emp.roles || []).length > 0
-                      ? emp.roles.map(getRoleDisplayName).join(', ')
-                      : 'Sin rol asignado'
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={isCurrent}
-                      className={`profile-switcher-item ${isCurrent ? 'active' : ''}`}
-                      onClick={() =>
-                        handleSelectSessionProfile(
-                          key,
-                          emp.fullName,
-                          emp.status === 'Inactivo' ? 'Inactivo' : rolesText
-                        )
-                      }
-                    >
-                      <span className="profile-switcher-avatar">{emp.initials}</span>
-                      <div className="profile-switcher-copy">
-                        <strong>{emp.fullName}</strong>
-                        <small>
-                          {rolesText}
-                          {emp.status === 'Inactivo' ? ' · Inactivo' : ''}
-                        </small>
+                <span className="profile-switcher-group-title">Empleados con acceso (CRM · Usuarios)</span>
+                {(() => {
+                  const validIds = new Set(roleDefinitions.map((r) => r.id))
+                  const userEmployees = employees.filter((emp) => isEmployeeSystemUser(emp, validIds))
+                  if (userEmployees.length === 0) {
+                    return (
+                      <div className="profile-switcher-empty">
+                        Ningún empleado tiene rol de acceso asignado.
                       </div>
-                      {isCurrent && <Check size={14} className="profile-switcher-check" />}
-                    </button>
-                  )
-                })}
+                    )
+                  }
+                  return userEmployees.map((emp) => {
+                    const key = `emp:${emp.id}`
+                    const isCurrent = activeSessionProfile.key === key
+                    const rolesText = emp.roles
+                      .filter((id) => validIds.has(id))
+                      .map(getRoleDisplayName)
+                      .join(', ')
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isCurrent}
+                        className={`profile-switcher-item ${isCurrent ? 'active' : ''}`}
+                        onClick={() =>
+                          handleSelectSessionProfile(
+                            key,
+                            emp.fullName,
+                            emp.status === 'Inactivo' ? 'Inactivo' : rolesText
+                          )
+                        }
+                      >
+                        <span className="profile-switcher-avatar">{emp.initials}</span>
+                        <div className="profile-switcher-copy">
+                          <strong>{emp.fullName}</strong>
+                          <small>
+                            {rolesText}
+                            {emp.status === 'Inactivo' ? ' · Inactivo' : ''}
+                          </small>
+                        </div>
+                        {isCurrent && <Check size={14} className="profile-switcher-check" />}
+                      </button>
+                    )
+                  })
+                })()}
               </div>
             </div>
           )}
@@ -4574,7 +4825,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos de la empresa' ? t('tabs.fin.companyExpenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -4804,7 +5055,15 @@ function AppContent() {
                             )
                           } else if (notice.targetModule === 'Finanzas') {
                             navigateToFinanceSection(
-                              notice.targetSection as 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'
+                              (notice.targetSection === 'Gastos'
+                                ? 'Gastos de la empresa'
+                                : notice.targetSection) as
+                                | 'Cobros'
+                                | 'Pagos'
+                                | 'Pagos Bancarios'
+                                | 'Gastos de la empresa'
+                                | 'Cuentas contables'
+                                | 'Resumen'
                             )
                           } else {
                             navigateToSalesSection(
@@ -5208,7 +5467,11 @@ function AppContent() {
                     appendAuditLog({
                       category: 'users',
                       action: 'Alta de empleado',
-                      detail: `${emp.fullName} (${emp.employeeCode}) · Roles: ${(emp.roles || []).join(', ') || 'Sin rol'}`,
+                      detail: `${emp.fullName} (${emp.employeeCode}) · ${
+                        isEmployeeSystemUser(emp)
+                          ? `Usuario del sistema · Roles: ${(emp.roles || []).join(', ')}`
+                          : 'Solo empleado (sin acceso)'
+                      }`,
                       user: activeSessionProfile.name,
                     })
                   }}
@@ -5216,8 +5479,12 @@ function AppContent() {
                     setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
                     appendAuditLog({
                       category: 'users',
-                      action: 'Actualización de empleado y roles',
-                      detail: `${updated.fullName} (${updated.employeeCode}) · Roles asignados: ${(updated.roles || []).join(', ') || 'Sin rol'}`,
+                      action: 'Actualización de empleado y acceso',
+                      detail: `${updated.fullName} (${updated.employeeCode}) · ${
+                        isEmployeeSystemUser(updated)
+                          ? `Usuario del sistema · Roles: ${(updated.roles || []).join(', ')}`
+                          : 'Solo empleado (sin acceso)'
+                      }`,
                       user: activeSessionProfile.name,
                     })
                   }}
@@ -5783,6 +6050,7 @@ function AppContent() {
                   onRequestApproval={handleRequestCustomerReturnApproval}
                   onApproveTransition={handleApproveCustomerReturnTransition}
                   onRejectApproval={handleRejectCustomerReturnApproval}
+                  onUpdateReturnNotes={handleUpdateCustomerReturnDetails}
                   onDeleteReturn={
                     canDeleteInSection(
                       'Ventas',
@@ -6191,6 +6459,7 @@ function AppContent() {
                   onRequestApproval={handleRequestSupplierReturnApproval}
                   onApproveTransition={handleApproveSupplierReturnTransition}
                   onRejectApproval={handleRejectSupplierReturnApproval}
+                  onUpdateReturnDetails={handleUpdateSupplierReturnDetails}
                   onDeleteReturn={
                     canDeleteInSection(
                       'Compras',
@@ -6532,12 +6801,12 @@ function AppContent() {
                     {t('tabs.fin.ebp')} <span>{ebpBatches.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Gastos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
+                {canAccessSection('Finanzas', 'Gastos de la empresa', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
-                    className={financeSection === 'Gastos' ? 'active' : ''}
-                    onClick={() => navigateToFinanceSection('Gastos')}
+                    className={financeSection === 'Gastos de la empresa' ? 'active' : ''}
+                    onClick={() => navigateToFinanceSection('Gastos de la empresa')}
                   >
-                    {t('tabs.fin.expenses')} <span>{expenses.length}</span>
+                    {t('tabs.fin.companyExpenses')} <span>{expenses.length}</span>
                   </button>
                 )}
                 {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
@@ -6692,15 +6961,24 @@ function AppContent() {
                   onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
                   onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
                 />
-              ) : financeSection === 'Gastos' ? (
-                <FinanceExpenses
+              ) : financeSection === 'Gastos de la empresa' ? (
+                <FinanceCompanyExpenses
                   expenses={expenses}
                   bankAccounts={bankAccounts}
+                  departments={departments}
+                  activeUserName={activeSessionProfile.name}
+                  canCreate={canCreateInSection(
+                    'Finanzas',
+                    'Gastos de la empresa',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
                   onAddExpense={handleAddExpense}
                   onDeleteExpense={
                     canDeleteInSection(
                       'Finanzas',
-                      'Gastos',
+                      'Gastos de la empresa',
                       activeSectionAccess,
                       isFullAdmin,
                       activeSessionProfile.isActive
@@ -6711,7 +6989,7 @@ function AppContent() {
                           if (target) {
                             appendAuditLog({
                               category: 'finance',
-                              action: 'Eliminación de gasto operativo',
+                              action: 'Eliminación de gasto de empresa',
                               detail: `${target.folio} · ${target.description}`,
                               user: activeSessionProfile.name,
                             })
@@ -6723,6 +7001,14 @@ function AppContent() {
                   }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
+                  onExportAudit={(reportName, rowCount) => {
+                    appendAuditLog({
+                      category: 'finance',
+                      action: 'Exportación de histórico de gastos de la empresa',
+                      detail: `${reportName} · ${rowCount} registros`,
+                      user: activeSessionProfile.name,
+                    })
+                  }}
                 />
               ) : financeSection === 'Cuentas contables' ? (
                 <FinanceAccounting
@@ -6769,6 +7055,7 @@ function AppContent() {
               activeTab={reportsSection}
               allowedTabs={([
                 'Resumen ejecutivo',
+                'Estado de Resultados',
                 'Finanzas y Tesorería',
                 'CxP y Pagos EBP',
                 'Ventas y CxC',

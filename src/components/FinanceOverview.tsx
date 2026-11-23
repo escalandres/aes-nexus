@@ -27,7 +27,7 @@ interface FinanceOverviewProps {
   payables: BillPayable[]
   expenses: ExpenseRecord[]
   transactions: PaymentTransaction[]
-  onNavigateSection: (sec: 'Cobros' | 'Pagos' | 'Gastos' | 'Resumen') => void
+  onNavigateSection: (sec: 'Cobros' | 'Pagos' | 'Gastos de la empresa' | 'Resumen') => void
 }
 
 const money = (val: number) =>
@@ -224,7 +224,7 @@ export function FinanceOverview({
               </button>
               <button
                 className="shortcut-btn"
-                onClick={() => onNavigateSection('Gastos')}
+                onClick={() => onNavigateSection('Gastos de la empresa')}
               >
                 <CreditCard size={14} /> Registrar gasto
               </button>

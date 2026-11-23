@@ -5,6 +5,7 @@ import {
   Building2,
   CalendarRange,
   Download,
+  FileDown,
   FileSpreadsheet,
   Filter,
   GitCompareArrows,
@@ -58,10 +59,17 @@ import type { PayrollRunRecord } from '../data/payroll'
 import type { PurchaseRequisition } from '../data/purchases'
 import type { Quote, SalesOrder } from '../data/sales'
 import type { DepartmentRecord, PhysicalLocationRecord } from './AdministrationSection'
+import {
+  computeIncomeStatementData,
+  IncomeStatementReport,
+  type PnlSourceMode,
+} from './IncomeStatementReport'
+import { exportIncomeStatementPdf } from '../utils/incomeStatementPdf'
 import { useToast } from './Toast'
 
 export type ReportsSectionTab =
   | 'Resumen ejecutivo'
+  | 'Estado de Resultados'
   | 'Finanzas y Tesorería'
   | 'CxP y Pagos EBP'
   | 'Ventas y CxC'
@@ -543,6 +551,10 @@ export function ReportsSection({
       dateTo: bounds.to,
     }))
   }
+
+  const [pnlSourceMode, setPnlSourceMode] = useState<PnlSourceMode>('consolidated')
+  const [pnlTaxRate, setPnlTaxRate] = useState<number>(30)
+  const [isExportingPdf, setIsExportingPdf] = useState(false)
 
   const handleResetFilters = () => {
     setFilters({
@@ -1695,6 +1707,51 @@ export function ReportsSection({
     locations,
   ])
 
+  const hasScopedDateOrOrgFilter = Boolean(
+    filters.dateFrom ||
+      filters.dateTo ||
+      filters.locationId !== 'all' ||
+      filters.departmentId !== 'all'
+  )
+
+  const incomeStatementData = useMemo(
+    () =>
+      computeIncomeStatementData({
+        scopedExpenses: scoped.scopedExpenses,
+        allExpenses: expenses,
+        chartAccounts,
+        scopedReceivables: scoped.scopedReceivables,
+        allReceivables: receivables,
+        scopedOrders: scoped.scopedOrders,
+        allOrders: orders,
+        inventory: scoped.scopedInventory,
+        scopedPayrollRuns: scoped.scopedPayrollRuns,
+        allPayrollRuns: payrollRuns,
+        sourceMode: pnlSourceMode,
+        taxRate: pnlTaxRate,
+        currencyFilter: filters.currencyFilter,
+        hasScopedDateOrOrgFilter,
+        searchQuery: filters.searchQuery,
+      }),
+    [
+      scoped.scopedExpenses,
+      expenses,
+      chartAccounts,
+      scoped.scopedReceivables,
+      receivables,
+      scoped.scopedOrders,
+      orders,
+      scoped.scopedInventory,
+      scoped.scopedPayrollRuns,
+      payrollRuns,
+      pnlSourceMode,
+      pnlTaxRate,
+      filters.currencyFilter,
+      hasScopedDateOrOrgFilter,
+      filters.searchQuery,
+    ]
+  )
+
   const activeScopeSummary = useMemo(() => {
     const parts: string[] = []
     if (filters.dateFrom || filters.dateTo) {
@@ -1800,6 +1857,43 @@ export function ReportsSection({
           ['Nómina y RRHH', scoped.scopedEmployees.length, metrics.monthlyPayrollNet, metrics.activeEmployeesCount, `${scoped.scopedPayrollRuns.length} corrida(s)`, activeScopeSummary],
         ]
       }
+    } else if (activeTab === 'Estado de Resultados') {
+      filename = `estado_de_resultados_${dateStamp}.csv`
+      headers = filters.compareYoY
+        ? [
+            'Signo',
+            'Concepto Contable',
+            'Origen en ERP',
+            'Importe',
+            '% sobre Ingresos',
+            'Periodo Anterior',
+            'Variación YoY',
+            'Alcance',
+          ]
+        : ['Signo', 'Concepto Contable', 'Origen en ERP', 'Importe', '% sobre Ingresos', 'Alcance']
+      rows = incomeStatementData.lines.map((row) =>
+        filters.compareYoY
+          ? [
+              row.sign,
+              row.label,
+              row.sourceLabel,
+              row.amount,
+              `${row.pctOfRevenue.toFixed(1)}%`,
+              row.priorAmount,
+              row.yoyPct === null
+                ? '—'
+                : `${row.yoyPct >= 0 ? '+' : ''}${row.yoyPct.toFixed(1)}%`,
+              activeScopeSummary,
+            ]
+          : [
+              row.sign,
+              row.label,
+              row.sourceLabel,
+              row.amount,
+              `${row.pctOfRevenue.toFixed(1)}%`,
+              activeScopeSummary,
+            ]
+      )
     } else if (activeTab === 'Finanzas y Tesorería') {
       filename = `reporte_finanzas_tesoreria_${dateStamp}.csv`
       headers = ['Folio', 'Fecha', 'Tipo / Categoría', 'Entidad', 'Referencia', 'Cuenta / Método', 'Dirección', 'Importe', 'Estado']
@@ -1882,6 +1976,30 @@ export function ReportsSection({
   const handlePrintReport = () => {
     toast.info('Preparando vista de impresión del reporte...', 'Imprimir / PDF')
     window.print()
+  }
+
+  const handleExportIncomeStatementPdf = async () => {
+    if (isExportingPdf) return
+    setIsExportingPdf(true)
+    try {
+      const { filename, rowCount } = await exportIncomeStatementPdf({
+        data: incomeStatementData,
+        compareYoY: filters.compareYoY,
+        activeScopeSummary,
+      })
+      onExportAudit?.(`Estado de Resultados PDF (${activeScopeSummary})`, rowCount)
+      toast.success(
+        `Archivo ${filename} descargado con logotipo corporativo y fecha de emisión.`,
+        'Estado de Resultados exportado en PDF'
+      )
+    } catch {
+      toast.error(
+        'No se pudo generar el archivo PDF. Intenta de nuevo o usa la opción Imprimir.',
+        'Error al exportar PDF'
+      )
+    } finally {
+      setIsExportingPdf(false)
+    }
   }
 
   const maxCashBar = Math.max(
@@ -2253,11 +2371,25 @@ export function ReportsSection({
         </div>
         <div className="finance-header-actions">
           <button type="button" className="button button-secondary" onClick={handlePrintReport}>
-            <Printer size={14} /> Imprimir / PDF
+            <Printer size={14} /> {activeTab === 'Estado de Resultados' ? 'Imprimir' : 'Imprimir / PDF'}
           </button>
-          <button type="button" className="button button-primary" onClick={handleExportActiveCsv}>
+          <button
+            type="button"
+            className={`button ${activeTab === 'Estado de Resultados' ? 'button-secondary' : 'button-primary'}`}
+            onClick={handleExportActiveCsv}
+          >
             <Download size={14} /> Exportar CSV
           </button>
+          {activeTab === 'Estado de Resultados' && (
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={isExportingPdf}
+              onClick={handleExportIncomeStatementPdf}
+            >
+              <FileDown size={14} /> {isExportingPdf ? 'Generando PDF...' : 'Exportar PDF'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -2891,11 +3023,11 @@ export function ReportsSection({
           <div className="reports-split-grid">
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Comparativo de Flujos Financieros</h2>
+                <h2>Comparativo de Flujos Financieros</h2>
+                <div className="overview-card-head-sub">
+                  <BarChart3 size={16} />
                   <p>Balance filtrado entre cobranza, compromisos a proveedores, dispersiones EBP y gasto operativo.</p>
                 </div>
-                <BarChart3 size={17} />
               </div>
 
               <div className="reports-chart-rows">
@@ -2924,11 +3056,11 @@ export function ReportsSection({
 
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Pulso Comercial y Operativo</h2>
+                <h2>Pulso Comercial y Operativo</h2>
+                <div className="overview-card-head-sub">
+                  <Building2 size={16} />
                   <p>Indicadores del periodo, sucursal y departamento seleccionados.</p>
                 </div>
-                <Building2 size={17} />
               </div>
 
               <div className="reports-metric-list">
@@ -2966,11 +3098,11 @@ export function ReportsSection({
 
           <section className="overview-panel-card">
             <div className="overview-card-head">
-              <div>
-                <h2>Comparativo por Sucursal / Ubicación</h2>
+              <h2>Comparativo por Sucursal / Ubicación</h2>
+              <div className="overview-card-head-sub">
+                <MapPin size={16} />
                 <p>Haz clic en una sucursal para acotar los reportes directamente a esa sede operativa.</p>
               </div>
-              <MapPin size={17} />
             </div>
 
             <div className="table-wrap ops-table-wrap">
@@ -3023,11 +3155,11 @@ export function ReportsSection({
 
           <section className="overview-panel-card">
             <div className="overview-card-head">
-              <div>
-                <h2>Comparativo por Departamento y Centro de Costos</h2>
+              <h2>Comparativo por Departamento y Centro de Costos</h2>
+              <div className="overview-card-head-sub">
+                <Building2 size={16} />
                 <p>Desglose dinámico según la sucursal y el rango de fechas activos. Selecciona un área para filtrar.</p>
               </div>
-              <Building2 size={17} />
             </div>
 
             <div className="table-wrap ops-table-wrap">
@@ -3085,11 +3217,11 @@ export function ReportsSection({
 
           <section className="overview-panel-card">
             <div className="overview-card-head">
-              <div>
-                <h2>Estado Consolidado por Módulo del ERP</h2>
+              <h2>Estado Consolidado por Módulo del ERP</h2>
+              <div className="overview-card-head-sub">
+                <FileSpreadsheet size={16} />
                 <p>Acceso directo para auditar o gestionar cualquier módulo desde el reporte ejecutivo.</p>
               </div>
-              <FileSpreadsheet size={17} />
             </div>
 
             <div className="table-wrap ops-table-wrap">
@@ -3172,6 +3304,22 @@ export function ReportsSection({
         </div>
       )}
 
+      {/* 1B. ESTADO DE RESULTADOS */}
+      {activeTab === 'Estado de Resultados' && (
+        <IncomeStatementReport
+          data={incomeStatementData}
+          compareYoY={filters.compareYoY}
+          activeScopeSummary={activeScopeSummary}
+          sourceMode={pnlSourceMode}
+          onChangeSourceMode={setPnlSourceMode}
+          taxRate={pnlTaxRate}
+          onChangeTaxRate={setPnlTaxRate}
+          onNavigateModule={onNavigateModule}
+          quotes={scoped.scopedQuotes}
+          purchaseOrders={scoped.scopedPurchaseOrders}
+        />
+      )}
+
       {/* 2. FINANZAS Y TESORERÍA */}
       {activeTab === 'Finanzas y Tesorería' && (
         <div className="reports-tab-body">
@@ -3221,11 +3369,11 @@ export function ReportsSection({
           <div className="reports-split-grid">
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Posición Bancaria por Cuenta</h2>
+                <h2>Posición Bancaria por Cuenta</h2>
+                <div className="overview-card-head-sub">
+                  <Landmark size={16} />
                   <p>Saldos disponibles y participación de liquidez por banco ordenante.</p>
                 </div>
-                <Landmark size={17} />
               </div>
               <div className="table-wrap ops-table-wrap">
                 <table className="data-table ops-data-table">
@@ -3261,11 +3409,11 @@ export function ReportsSection({
 
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Gastos Operativos por Categoría</h2>
+                <h2>Gastos Operativos por Categoría</h2>
+                <div className="overview-card-head-sub">
+                  <Wallet size={16} />
                   <p>Distribución de egresos directos dentro del alcance filtrado.</p>
                 </div>
-                <Wallet size={17} />
               </div>
               <div className="reports-chart-rows">
                 {expenseCategoriesBreakdown.length === 0 ? (
@@ -3344,14 +3492,14 @@ export function ReportsSection({
           {/* Temporal Expenses vs Inflows Chart inside Finanzas y Tesorería */}
           <section className="overview-panel-card">
             <div className="overview-card-head">
-              <div>
-                <h2>
-                  Evolución Temporal de Ingresos y Egresos (
-                  {periodChartConfig.granularity === 'day' ? 'Diario' : 'Mensual'})
-                </h2>
+              <h2>
+                Evolución Temporal de Ingresos y Egresos (
+                {periodChartConfig.granularity === 'day' ? 'Diario' : 'Mensual'})
+              </h2>
+              <div className="overview-card-head-sub">
+                <TrendingUp size={16} />
                 <p>Comportamiento cronológico de entradas, gastos, compras y pagos conforme al rango seleccionado.</p>
               </div>
-              <TrendingUp size={17} />
             </div>
             {periodChartConfig.data.length === 0 ? (
               <p className="reports-empty-text">
@@ -3487,11 +3635,11 @@ export function ReportsSection({
           <div className="reports-split-grid">
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Exposición por Proveedor y Cuentas EBP</h2>
+                <h2>Exposición por Proveedor y Cuentas EBP</h2>
+                <div className="overview-card-head-sub">
+                  <Building2 size={16} />
                   <p>Saldo pendiente por pagar, monto liquidado y cuentas bancarias activas configuradas.</p>
                 </div>
-                <Building2 size={17} />
               </div>
               <div className="table-wrap ops-table-wrap">
                 <table className="data-table ops-data-table">
@@ -3529,11 +3677,11 @@ export function ReportsSection({
 
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Facturas de Proveedor (Vendor Bills) ({filteredPayables.length})</h2>
+                <h2>Facturas de Proveedor (Vendor Bills) ({filteredPayables.length})</h2>
+                <div className="overview-card-head-sub">
+                  <ReceiptText size={16} />
                   <p>Detalle de obligaciones recibidas desde Compras y su estado de liquidación.</p>
                 </div>
-                <ReceiptText size={17} />
               </div>
               <div className="table-wrap ops-table-wrap">
                 <table className="data-table ops-data-table">
@@ -3574,11 +3722,11 @@ export function ReportsSection({
 
           <section className="overview-panel-card">
             <div className="overview-card-head">
-              <div>
-                <h2>Trazabilidad de Dispersiones Bancarias EBP ({filteredEbpLines.length} líneas)</h2>
+              <h2>Trazabilidad de Dispersiones Bancarias EBP ({filteredEbpLines.length} líneas)</h2>
+              <div className="overview-card-head-sub">
+                <Landmark size={16} />
                 <p>Muestra el alias bancario seleccionado por línea, CLABE destino, motivo del pago y facturas cubiertas.</p>
               </div>
-              <Landmark size={17} />
             </div>
             <div className="table-wrap ops-table-wrap">
               <table className="data-table ops-data-table">
@@ -3857,11 +4005,11 @@ export function ReportsSection({
           <div className="reports-split-grid">
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Plantilla y Masa Salarial por Departamento</h2>
+                <h2>Plantilla y Masa Salarial por Departamento</h2>
+                <div className="overview-card-head-sub">
+                  <Users size={16} />
                   <p>Colaboradores activos y costo salarial mensual filtrado por sede y área.</p>
                 </div>
-                <Users size={17} />
               </div>
               <div className="table-wrap ops-table-wrap">
                 <table className="data-table ops-data-table">
@@ -3895,11 +4043,11 @@ export function ReportsSection({
 
             <section className="overview-panel-card">
               <div className="overview-card-head">
-                <div>
-                  <h2>Histórico de Corridas de Nómina ({filteredPayrollRuns.length})</h2>
+                <h2>Histórico de Corridas de Nómina ({filteredPayrollRuns.length})</h2>
+                <div className="overview-card-head-sub">
+                  <Landmark size={16} />
                   <p>Percepciones brutas, deducciones y neto pagado dentro del alcance seleccionado.</p>
                 </div>
-                <Landmark size={17} />
               </div>
               <div className="table-wrap ops-table-wrap">
                 <table className="data-table ops-data-table">

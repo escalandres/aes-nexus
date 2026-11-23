@@ -178,7 +178,7 @@ interface ExecutiveDashboardProps {
   ) => void
   onNavigateOperations: (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
   onNavigateFinance: (
-    section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'
+    section: 'Cobros' | 'Pagos' | 'Gastos de la empresa' | 'Cuentas contables' | 'Resumen'
   ) => void
   onNavigateCrm: (section?: string) => void
   onOpenCreateOpportunity: () => void
@@ -698,7 +698,7 @@ export function ExecutiveDashboard({
     canAccessSection('Finanzas', 'Pagos', capabilities, isFullAdmin, isAccountActive)
   const canViewExpenses =
     hasActiveAccess &&
-    canAccessSection('Finanzas', 'Gastos', capabilities, isFullAdmin, isAccountActive)
+    canAccessSection('Finanzas', 'Gastos de la empresa', capabilities, isFullAdmin, isAccountActive)
   const canViewChartAccounts =
     hasActiveAccess &&
     canAccessSection('Finanzas', 'Cuentas contables', capabilities, isFullAdmin, isAccountActive)
@@ -1367,7 +1367,7 @@ export function ExecutiveDashboard({
                 <button
                   type="button"
                   className="quick-action-item"
-                  onClick={() => onNavigateFinance('Gastos')}
+                  onClick={() => onNavigateFinance('Gastos de la empresa')}
                 >
                   <Scale size={13} /> {t('dashboard.quickExpense')}
                 </button>
@@ -1974,8 +1974,8 @@ export function ExecutiveDashboard({
                     className="kpi-card kpi-card-clickable"
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigateFinance('Gastos')}
-                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Gastos')}
+                    onClick={() => onNavigateFinance('Gastos de la empresa')}
+                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Gastos de la empresa')}
                     title="Ver control de gastos"
                   >
                     <div className="kpi-top">
