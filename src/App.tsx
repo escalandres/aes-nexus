@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef, type FormEvent } from 'react'
 import {
   ArrowRight, ArrowUpRight, Bell, BellRing, BriefcaseBusiness,
-  CalendarDays, ChevronDown, CircleHelp, Clock3, Edit3, Eye,
+  ChevronDown, CircleHelp, Clock3, Edit3, Eye,
   FolderKanban, Landmark, LayoutDashboard, Menu,
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, ShoppingCart, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
@@ -9,7 +9,14 @@ import {
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
   LogIn, LogOut, BarChart3, BadgeCheck, Trash2,
 } from 'lucide-react'
-import { activities, opportunities } from './data/dashboard'
+import {
+  activities,
+  CRM_TODAY_ISO,
+  opportunities,
+  type CrmActivity,
+  type CrmActivityStatus,
+} from './data/dashboard'
+import { CrmActivitiesSection } from './components/CrmActivitiesSection'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
 import { createClientApi, type ClientAddress } from './services/clientService'
 import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
@@ -31,6 +38,7 @@ import {
   CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
   ROLES_CHANGED_EVENT,
   STORAGE_KEYS,
+  SYSTEM_MODULE_SECTIONS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
   buildProductCategoryLookup,
@@ -148,6 +156,13 @@ import {
   type SubsidiaryRecord,
 } from './components/AdministrationSection'
 import { ReportsSection, type ReportsSectionTab } from './components/ReportsSection'
+import { HelpCenterSection } from './components/HelpCenterSection'
+import { HELP_ARTICLES, HELP_FAQS, type HelpModuleTarget } from './data/helpCenter'
+import {
+  GlobalSearchModal,
+  type GlobalSearchIconKind,
+  type GlobalSearchItem,
+} from './components/GlobalSearchModal'
 import {
   initialBankAccounts,
   initialReceivables,
@@ -167,6 +182,22 @@ import {
   type PaymentTransaction,
   type ChartAccount,
 } from './data/finance'
+import { WorkspaceSetupModal } from './components/WorkspaceSetupModal'
+import {
+  DEFAULT_WORKSPACE_SETUP_STATE,
+  loadWorkspaceSetupState,
+  saveWorkspaceSetupState,
+  type WorkspaceSetupPersistedState,
+  type WorkspaceSetupStepId,
+  type WorkspaceSetupStepView,
+} from './data/workspaceSetup'
+import { computeIncomeStatementData } from './components/IncomeStatementReport'
+import {
+  evaluateMarginAlerts,
+  loadMarginAlertSettings,
+  MARGIN_ALERTS_CHANGED_EVENT,
+  type MarginAlertSettings,
+} from './data/marginAlerts'
 
 const sections: { labelKey: TranslationKey; items: { name: string; labelKey: TranslationKey; icon: typeof LayoutDashboard; count?: string }[] }[] = [
   { labelKey: 'nav.workspace', items: [{ name: 'Inicio', labelKey: 'nav.home', icon: LayoutDashboard }] },
@@ -564,6 +595,7 @@ const pageRoutes: Record<string, string> = {
   Reportes: '/reports',
   Administración: '/admin',
   Configuración: '/settings',
+  'Centro de ayuda': '/help',
 }
 
 const pageFromPath = (pathname: string) => {
@@ -592,6 +624,13 @@ const pageFromPath = (pathname: string) => {
   if (pathname.startsWith('/expenses') || pathname.startsWith('/gastos')) return 'Gastos'
   if (pathname.startsWith('/reports') || pathname.startsWith('/reportes')) return 'Reportes'
   if (pathname.startsWith('/admin') || pathname.startsWith('/administracion')) return 'Administración'
+  if (
+    pathname.startsWith('/help') ||
+    pathname.startsWith('/ayuda') ||
+    pathname.startsWith('/centro-ayuda')
+  ) {
+    return 'Centro de ayuda'
+  }
   const normalized = pathname.replace(/\/$/, '') || '/'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
 }
@@ -941,6 +980,100 @@ function AppContent() {
   const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseTemplate[]>(initialRecurringExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
+
+  const [marginAlertSettings, setMarginAlertSettings] = useState<MarginAlertSettings>(() =>
+    loadMarginAlertSettings()
+  )
+
+  useEffect(() => {
+    const syncMarginAlertSettings = (e: Event) => {
+      const custom = e as CustomEvent<{ settings?: MarginAlertSettings }>
+      if (custom.detail?.settings) {
+        setMarginAlertSettings(custom.detail.settings)
+      } else {
+        setMarginAlertSettings(loadMarginAlertSettings())
+      }
+    }
+    const handleStorageSync = (e: StorageEvent) => {
+      if (!e.key || e.key === 'aes_nexus_pnl_margin_alerts_v1') {
+        setMarginAlertSettings(loadMarginAlertSettings())
+      }
+    }
+    window.addEventListener(MARGIN_ALERTS_CHANGED_EVENT, syncMarginAlertSettings)
+    window.addEventListener('storage', handleStorageSync)
+    return () => {
+      window.removeEventListener(MARGIN_ALERTS_CHANGED_EVENT, syncMarginAlertSettings)
+      window.removeEventListener('storage', handleStorageSync)
+    }
+  }, [])
+
+  const livePnlMarginEval = useMemo(() => {
+    const computedPnl = computeIncomeStatementData({
+      scopedExpenses: expenses.filter((e) => e.status !== 'Cancelado'),
+      allExpenses: expenses,
+      chartAccounts,
+      scopedReceivables: receivables,
+      allReceivables: receivables,
+      scopedOrders: orders,
+      allOrders: orders,
+      inventory,
+      scopedPayrollRuns: payrollRuns,
+      allPayrollRuns: payrollRuns,
+      sourceMode: 'consolidated',
+      taxRate: 30,
+      currencyFilter: 'Todas',
+      hasScopedDateOrOrgFilter: false,
+    })
+    return evaluateMarginAlerts({
+      operatingMarginPct: computedPnl.operatingMarginPct,
+      netMarginPct: computedPnl.netMarginPct,
+      operatingIncome: computedPnl.operatingIncome,
+      netIncome: computedPnl.netIncome,
+      totalRevenue: computedPnl.totalRevenue,
+      settings: marginAlertSettings,
+    })
+  }, [expenses, chartAccounts, receivables, orders, inventory, payrollRuns, marginAlertSettings])
+
+  const prevGlobalPnlBreachRef = useRef<string | null>(null)
+  useEffect(() => {
+    const signature = livePnlMarginEval.triggeredAlerts
+      .map((a) => `${a.id}:${a.severity}:${a.targetPct}`)
+      .join('|')
+    if (prevGlobalPnlBreachRef.current === null) {
+      prevGlobalPnlBreachRef.current = signature
+      return
+    }
+    const isViewingPnl =
+      activePage === 'Reportes' && reportsSection === 'Estado de Resultados'
+    if (
+      !isViewingPnl &&
+      signature !== '' &&
+      signature !== prevGlobalPnlBreachRef.current &&
+      marginAlertSettings.enabled &&
+      marginAlertSettings.notifyInAppToast &&
+      pushEnabled
+    ) {
+      const hasCritical = livePnlMarginEval.triggeredAlerts.some(
+        (a) => a.severity === 'critical'
+      )
+      const summary = livePnlMarginEval.triggeredAlerts.map((a) => a.message).join(' ')
+      if (hasCritical) {
+        toast.error(summary, 'Alerta crítica · Estado de Resultados')
+      } else {
+        toast.warning(summary, 'Alerta de margen · Estado de Resultados')
+      }
+    }
+    prevGlobalPnlBreachRef.current = signature
+  }, [
+    livePnlMarginEval.triggeredAlerts,
+    marginAlertSettings.enabled,
+    marginAlertSettings.notifyInAppToast,
+    pushEnabled,
+    activePage,
+    reportsSection,
+    toast,
+  ])
 
   useEffect(() => {
     writeStoredJson(STORAGE_KEYS.subsidiaries, subsidiaries)
@@ -989,13 +1122,39 @@ function AppContent() {
     title: string
     desc: string
     meta: string
-    targetModule: 'Compras' | 'Operaciones' | 'Finanzas' | 'Ventas'
+    targetModule: 'Compras' | 'Operaciones' | 'Finanzas' | 'Ventas' | 'Reportes'
     targetSection: string
     actionLabel: string
   }
 
   const liveSystemNotifications = useMemo<SystemNotice[]>(() => {
     const items: SystemNotice[] = []
+
+    if (
+      marginAlertSettings.enabled &&
+      marginAlertSettings.notifyNotificationCenter &&
+      livePnlMarginEval.triggeredAlerts.length > 0
+    ) {
+      const breachedNames = livePnlMarginEval.triggeredAlerts
+        .map((a) => a.metricLabel)
+        .join(' y ')
+      items.push({
+        id: 'pnl_margin_alert',
+        fingerprint: livePnlMarginEval.triggeredAlerts
+          .map(
+            (a) =>
+              `${a.id}:${a.severity}:${a.currentPct.toFixed(1)}:${a.targetPct.toFixed(1)}`
+          )
+          .join('|'),
+        tone: 'amber',
+        title: `Alerta de rentabilidad: ${breachedNames} bajo objetivo`,
+        desc: livePnlMarginEval.triggeredAlerts.map((a) => a.message).join(' '),
+        meta: 'Reportes · Estado de Resultados',
+        targetModule: 'Reportes',
+        targetSection: 'Estado de Resultados',
+        actionLabel: 'Ir a Estado de Resultados',
+      })
+    }
 
     const pendingShipments = shipments.filter(
       (s) => s.status === 'Preparando' || s.status === 'En ruta'
@@ -1122,7 +1281,17 @@ function AppContent() {
     }
 
     return items
-  }, [shipments, purchaseOrders, receivables, payables, orders, quotes])
+  }, [
+    shipments,
+    purchaseOrders,
+    receivables,
+    payables,
+    orders,
+    quotes,
+    marginAlertSettings.enabled,
+    marginAlertSettings.notifyNotificationCenter,
+    livePnlMarginEval.triggeredAlerts,
+  ])
 
   const activeSystemNotifications = useMemo(
     () =>
@@ -1560,7 +1729,6 @@ function AppContent() {
       navigateTo('Inicio')
     }
   }
-  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
   const [ebpPacks, setEbpPacks] = useState<BankFormatPack[]>(() => {
     try {
       const saved = window.localStorage.getItem('aes_nexus_ebp_packs_v1')
@@ -1612,9 +1780,12 @@ function AppContent() {
     index: number
     title: string
     company: string
+    date: string
     time: string
     icon: string
     tone: 'blue' | 'amber' | 'green'
+    status: CrmActivityStatus
+    notes: string
   } | null>(null)
   const [confirmDeleteAct, setConfirmDeleteAct] = useState(false)
 
@@ -4060,7 +4231,7 @@ function AppContent() {
   const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
   const [supplierRecords, setSupplierRecords] = useState(suppliers)
   const [opportunityRecords, setOpportunityRecords] = useState(opportunities)
-  const [activityRecords, setActivityRecords] = useState(activities)
+  const [activityRecords, setActivityRecords] = useState<CrmActivity[]>(activities)
   const [createKind, setCreateKind] = useState<CreateKind | null>(null)
   const [createForm, setCreateForm] = useState({
     supplierCode: '',
@@ -4070,6 +4241,9 @@ function AppContent() {
     phone: '',
     title: '',
     time: '10:00',
+    activityDate: CRM_TODAY_ISO,
+    activityIcon: 'check' as 'send' | 'phone' | 'check',
+    activityNotes: '',
     value: '',
     country: 'MX',
     addressStreet: '',
@@ -4196,6 +4370,7 @@ function AppContent() {
   const navigateTo = (page: string) => {
     if (
       page !== 'Inicio' &&
+      page !== 'Centro de ayuda' &&
       !canAccessModule(
         page,
         activeCapabilities,
@@ -4591,7 +4766,7 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const openCreate = (kind: CreateKind) => {
+  const openCreate = (kind: CreateKind, presetActivityDate?: string) => {
     const targetSection =
       kind === 'client'
         ? 'Clientes'
@@ -4624,6 +4799,9 @@ function AppContent() {
       phone: '',
       title: '',
       time: '10:00',
+      activityDate: presetActivityDate || CRM_TODAY_ISO,
+      activityIcon: 'check',
+      activityNotes: '',
       value: '',
       country: 'MX',
       addressStreet: '',
@@ -4832,8 +5010,26 @@ function AppContent() {
     }
     if (createKind === 'activity') {
       const title = createForm.title.trim()
-      setActivityRecords((records) => [...records, { title, company: createForm.company.trim() || 'Sin empresa', time: createForm.time, icon: 'check', tone: 'green' }])
-      const actMsg = `Actividad “${title}” programada para las ${createForm.time}.`
+      const actDate = createForm.activityDate || CRM_TODAY_ISO
+      const actIcon = createForm.activityIcon || 'check'
+      const actTone: 'blue' | 'amber' | 'green' =
+        actIcon === 'send' ? 'blue' : actIcon === 'phone' ? 'amber' : 'green'
+      setActivityRecords((records) => [
+        ...records,
+        {
+          id: `act_${Date.now()}`,
+          title,
+          company: createForm.company.trim() || 'Sin empresa',
+          date: actDate,
+          time: createForm.time,
+          icon: actIcon,
+          tone: actTone,
+          status: 'Pendiente',
+          owner: activeSessionProfile.name,
+          notes: createForm.activityNotes.trim() || undefined,
+        },
+      ])
+      const actMsg = `Actividad “${title}” programada para el ${actDate} a las ${createForm.time}.`
       setNotice(actMsg)
       toast.success(actMsg, 'Actividad agendada')
       setCrmSection('Actividades')
@@ -4859,6 +5055,1147 @@ function AppContent() {
   }, [])
   const [menuOpen, setMenuOpen] = useState(false)
   const [notice, setNotice] = useState('')
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
+  const [isSetupChecklistOpen, setIsSetupChecklistOpen] = useState(false)
+  const [setupState, setSetupState] = useState<WorkspaceSetupPersistedState>(() =>
+    loadWorkspaceSetupState()
+  )
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIsGlobalSearchOpen((prev) => !prev)
+        return
+      }
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const target = event.target as HTMLElement | null
+        const tagName = target?.tagName?.toLowerCase() || ''
+        const isEditable =
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          Boolean(target?.isContentEditable)
+        if (!isEditable && !isGlobalSearchOpen) {
+          event.preventDefault()
+          setIsGlobalSearchOpen(true)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [isGlobalSearchOpen])
+
+  const orgStructureSignal = subsidiaries.length > 0 && departments.length > 0
+  const commercialDirectorySignal =
+    clientRecords.length > 0 && supplierRecords.length > 0 && bankAccounts.length > 0
+  const salesPurchasesSignal =
+    quotes !== initialQuotes ||
+    orders !== initialOrders ||
+    requisitions !== initialRequisitions ||
+    purchaseOrders !== initialPurchaseOrders ||
+    receivables !== initialReceivables ||
+    clientRecords !== clients ||
+    supplierRecords !== suppliers ||
+    opportunityRecords !== opportunities ||
+    activityRecords !== activities ||
+    transfers !== initialTransfers ||
+    inventory !== initialInventory
+  const financeBudgetsSignal =
+    expenses !== initialExpenses ||
+    expenseBudgets !== initialExpenseBudgets ||
+    recurringExpenses !== initialRecurringExpenses ||
+    transactions !== initialTransactions ||
+    payables !== initialPayables ||
+    ebpBatches !== initialEbpBatches
+  const governanceHelpSignal =
+    activePage === 'Centro de ayuda' ||
+    activePage === 'Configuración' ||
+    darkMode ||
+    accentTheme !== 'green' ||
+    workspaceMeta.workspaceName !== 'Brújula Estudio' ||
+    orgLogoUrl !== '' ||
+    activeSessionId !== 'user:usr_1'
+
+  useEffect(() => {
+    const signalMap: Record<WorkspaceSetupStepId, boolean> = {
+      org_structure: orgStructureSignal,
+      commercial_directory: commercialDirectorySignal,
+      sales_purchases: salesPurchasesSignal,
+      finance_budgets: financeBudgetsSignal,
+      governance_help: governanceHelpSignal,
+    }
+    setSetupState((prev) => {
+      let changed = false
+      const nextLatched = { ...prev.latchedMilestones }
+      for (const stepId of Object.keys(signalMap) as WorkspaceSetupStepId[]) {
+        if (signalMap[stepId] && !prev.latchedMilestones[stepId]) {
+          nextLatched[stepId] = true
+          changed = true
+        }
+      }
+      if (!changed) return prev
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        latchedMilestones: nextLatched,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }, [
+    orgStructureSignal,
+    commercialDirectorySignal,
+    salesPurchasesSignal,
+    financeBudgetsSignal,
+    governanceHelpSignal,
+  ])
+
+  const workspaceSetupSteps = useMemo<WorkspaceSetupStepView[]>(() => {
+    const customBrand =
+      workspaceMeta.workspaceName !== 'Brújula Estudio' || Boolean(orgLogoUrl)
+    const resolveStep = (
+      id: WorkspaceSetupStepId,
+      liveSignal: boolean
+    ): { autoCompleted: boolean; completed: boolean; isManualOverride: boolean } => {
+      const autoCompleted = liveSignal || Boolean(setupState.latchedMilestones[id])
+      const hasManual = typeof setupState.manualOverrides[id] === 'boolean'
+      const completed = hasManual ? Boolean(setupState.manualOverrides[id]) : autoCompleted
+      return {
+        autoCompleted,
+        completed,
+        isManualOverride: hasManual && completed !== autoCompleted,
+      }
+    }
+
+    const s1 = resolveStep('org_structure', orgStructureSignal)
+    const s2 = resolveStep('commercial_directory', commercialDirectorySignal)
+    const s3 = resolveStep('sales_purchases', salesPurchasesSignal)
+    const s4 = resolveStep('finance_budgets', financeBudgetsSignal)
+    const s5 = resolveStep('governance_help', governanceHelpSignal)
+
+    return [
+      {
+        id: 'org_structure',
+        order: 1,
+        title: 'Identidad y estructura organizacional',
+        description:
+          'Define la marca de tu espacio, subsidiarias, departamentos y ubicaciones operativas.',
+        evidenceText: `${subsidiaries.length} subsidiarias · ${departments.length} departamentos · ${locations.length} ubicaciones${customBrand ? ' · Marca personalizada' : ''}`,
+        ...s1,
+        targetLabel: 'Ir a Estructura',
+      },
+      {
+        id: 'commercial_directory',
+        order: 2,
+        title: 'Directorio comercial y tesorería',
+        description:
+          'Mantén activos clientes, proveedores con CLABE y tus cuentas bancarias de operación.',
+        evidenceText: `${clientRecords.length} clientes · ${supplierRecords.length} proveedores · ${bankAccounts.length} cuentas`,
+        ...s2,
+        targetLabel: 'Ir a CRM',
+      },
+      {
+        id: 'sales_purchases',
+        order: 3,
+        title: 'Operación de Ventas o Compras',
+        description:
+          'Crea o actualiza una cotización, pedido, requisición, orden de compra o ficha CRM.',
+        evidenceText: s3.autoCompleted
+          ? `${quotes.length} cotizaciones · ${orders.length} pedidos · ${purchaseOrders.length} OC registradas`
+          : 'Aún sin movimientos nuevos en Ventas, Compras o CRM',
+        ...s3,
+        targetLabel: 'Ir a Ventas',
+      },
+      {
+        id: 'finance_budgets',
+        order: 4,
+        title: 'Control de gastos y presupuestos 80% / 95%',
+        description:
+          'Registra un gasto, ajusta un presupuesto mensual o programa una plantilla recurrente.',
+        evidenceText: s4.autoCompleted
+          ? `${expenses.length} pólizas · ${expenseBudgets.filter((b) => b.active).length} presupuestos activos`
+          : 'Registra una póliza o configura umbrales en Gastos',
+        ...s4,
+        targetLabel: 'Ir a Presupuestos',
+      },
+      {
+        id: 'governance_help',
+        order: 5,
+        title: 'Seguridad, preferencias o Centro de ayuda',
+        description:
+          'Personaliza tema/roles o consulta las guías y preguntas frecuentes en el Centro de ayuda.',
+        evidenceText: s5.autoCompleted
+          ? 'Preferencias, permisos o Centro de ayuda verificados'
+          : 'Explora Configuración o el Centro de ayuda para completarlo',
+        ...s5,
+        targetLabel: 'Ir a Ayuda',
+      },
+    ]
+  }, [
+    setupState,
+    orgStructureSignal,
+    commercialDirectorySignal,
+    salesPurchasesSignal,
+    financeBudgetsSignal,
+    governanceHelpSignal,
+    subsidiaries.length,
+    departments.length,
+    locations.length,
+    workspaceMeta.workspaceName,
+    orgLogoUrl,
+    clientRecords.length,
+    supplierRecords.length,
+    bankAccounts.length,
+    quotes.length,
+    orders.length,
+    purchaseOrders.length,
+    expenses.length,
+    expenseBudgets,
+  ])
+
+  const completedSetupCount = useMemo(
+    () => workspaceSetupSteps.filter((s) => s.completed).length,
+    [workspaceSetupSteps]
+  )
+  const totalSetupCount = workspaceSetupSteps.length
+  const remainingSetupCount = Math.max(0, totalSetupCount - completedSetupCount)
+  const setupProgressPercent = Math.round((completedSetupCount / totalSetupCount) * 100)
+  const isAllSetupComplete = completedSetupCount === totalSetupCount
+
+  const prevSetupCompletedRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (prevSetupCompletedRef.current === null) {
+      prevSetupCompletedRef.current = completedSetupCount
+      return
+    }
+    if (completedSetupCount > prevSetupCompletedRef.current) {
+      if (completedSetupCount === totalSetupCount) {
+        toast.success(
+          '¡Tu espacio está 100% configurado! Todos los pasos de puesta en marcha se completaron.',
+          'Espacio listo'
+        )
+      } else {
+        toast.success(
+          `Avance actualizado: ${completedSetupCount} de ${totalSetupCount} pasos completados (${setupProgressPercent}%).`,
+          'Tu espacio avanza'
+        )
+      }
+    }
+    prevSetupCompletedRef.current = completedSetupCount
+  }, [completedSetupCount, totalSetupCount, setupProgressPercent, toast])
+
+  const handleToggleSetupStep = (stepId: WorkspaceSetupStepId) => {
+    const target = workspaceSetupSteps.find((s) => s.id === stepId)
+    if (!target) return
+    const nextCompleted = !target.completed
+    setSetupState((prev) => {
+      const nextOverrides = { ...prev.manualOverrides }
+      if (nextCompleted === target.autoCompleted) {
+        delete nextOverrides[stepId]
+      } else {
+        nextOverrides[stepId] = nextCompleted
+      }
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        manualOverrides: nextOverrides,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }
+
+  const handleCompleteAllSetupSteps = () => {
+    setSetupState((prev) => {
+      const nextOverrides = { ...prev.manualOverrides }
+      for (const step of workspaceSetupSteps) {
+        if (!step.completed) {
+          nextOverrides[step.id] = true
+        }
+      }
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        manualOverrides: nextOverrides,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }
+
+  const handleResetSetupProgress = () => {
+    const reset: WorkspaceSetupPersistedState = {
+      ...DEFAULT_WORKSPACE_SETUP_STATE,
+      latchedMilestones: {
+        org_structure: orgStructureSignal,
+        commercial_directory: commercialDirectorySignal,
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    setSetupState(reset)
+    saveWorkspaceSetupState(reset)
+    toast.info('Seguimiento restablecido al estado base del espacio.', 'Checklist restablecido')
+  }
+
+  const handleNavigateSetupStep = (stepId: WorkspaceSetupStepId) => {
+    setIsSetupChecklistOpen(false)
+    setMenuOpen(false)
+    if (stepId === 'org_structure') {
+      navigateToAdminSection('Subsidiarias')
+      return
+    }
+    if (stepId === 'commercial_directory') {
+      navigateToCrmSection('Clientes')
+      return
+    }
+    if (stepId === 'sales_purchases') {
+      navigateToSalesSection('Cotizaciones')
+      return
+    }
+    if (stepId === 'finance_budgets') {
+      navigateToExpensesSection('Presupuestos y alertas')
+      return
+    }
+    navigateTo('Centro de ayuda')
+  }
+
+  const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
+    const list: GlobalSearchItem[] = []
+    const canViewSec = (mod: string, sec: string) =>
+      canAccessSection(
+        mod,
+        sec,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    const canCreateSec = (mod: string, sec: string) =>
+      canCreateInSection(
+        mod,
+        sec,
+        activeSectionAccess,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+
+    const moduleIconMap: Record<string, GlobalSearchIconKind> = {
+      Inicio: 'home',
+      CRM: 'crm',
+      Ventas: 'sales',
+      Compras: 'purchases',
+      Operaciones: 'operations',
+      Finanzas: 'finance',
+      Gastos: 'expenses',
+      Reportes: 'reports',
+      Administración: 'admin',
+      Configuración: 'settings',
+      'Centro de ayuda': 'help',
+    }
+
+    const goModuleSection = (mod: string, sec: string) => {
+      setMenuOpen(false)
+      if (mod === 'CRM') {
+        navigateToCrmSection(sec)
+      } else if (mod === 'Ventas') {
+        navigateToSalesSection(sec as SalesSectionTab)
+      } else if (mod === 'Compras') {
+        navigateToPurchasesSection(sec as PurchasesSectionTab)
+      } else if (mod === 'Operaciones') {
+        navigateToOperationsSection(
+          sec as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
+        )
+      } else if (mod === 'Finanzas') {
+        navigateToFinanceSection(
+          sec as 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen'
+        )
+      } else if (mod === 'Gastos') {
+        navigateToExpensesSection(sec as ExpensesSectionTab)
+      } else if (mod === 'Reportes') {
+        navigateToReportsSection(sec as ReportsSectionTab)
+      } else if (mod === 'Administración') {
+        navigateToAdminSection(sec as AdminSectionTab)
+      } else if (mod === 'Configuración') {
+        navigateToSettingSection(sec)
+      }
+    }
+
+    // 1. Vistas principales y subsecciones (Módulos)
+    list.push({
+      id: 'nav:inicio',
+      entityType: 'module',
+      groupLabel: 'Módulos y vistas',
+      title: 'Inicio · Tablero ejecutivo',
+      subtitle: 'Resumen general, ingresos mensuales, entregas y accesos rápidos',
+      meta: 'Inicio',
+      keywords: 'modulo inicio dashboard home resumen ejecutivo kpis alertas',
+      iconKind: 'home',
+      priorityBoost: 95,
+      onSelect: () => {
+        setMenuOpen(false)
+        navigateTo('Inicio')
+      },
+    })
+
+    list.push({
+      id: 'nav:help-center',
+      entityType: 'module',
+      groupLabel: 'Módulos y vistas',
+      title: 'Centro de ayuda',
+      subtitle: 'Guías paso a paso, flujos del sistema, FAQ, glosario y soporte',
+      meta: 'Ayuda',
+      keywords: 'modulo documentacion faq preguntas frecuentes soporte tickets manual',
+      iconKind: 'help',
+      priorityBoost: 60,
+      onSelect: () => {
+        setMenuOpen(false)
+        navigateTo('Centro de ayuda')
+      },
+    })
+
+    ;(Object.entries(SYSTEM_MODULE_SECTIONS) as Array<[string, readonly string[]]>).forEach(
+      ([modName, subSections]) => {
+        const accessibleSubs = subSections.filter((sec) => canViewSec(modName, sec))
+        if (accessibleSubs.length === 0) return
+
+        list.push({
+          id: `nav:mod:${modName}`,
+          entityType: 'module',
+          groupLabel: 'Módulos y vistas',
+          title: modName,
+          subtitle: `Módulo ${modName} · ${accessibleSubs.slice(0, 4).join(', ')}`,
+          meta: 'Módulo',
+          keywords: `modulo ${modName} ${accessibleSubs.join(' ')}`,
+          iconKind: moduleIconMap[modName] || 'home',
+          priorityBoost: 85,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateTo(modName)
+          },
+        })
+
+        accessibleSubs.forEach((sec) => {
+          const extraModuleKeywords =
+            sec === 'Estado de Resultados'
+              ? 'resultados pnl pyl margen bruto operativo neto punto equilibrio utilidad'
+              : sec === 'Presupuestos y alertas'
+              ? 'presupuesto alertas 80 95 limite umbral gasto'
+              : sec === 'Pagos Bancarios'
+              ? 'ebp dispersion layout clabe banco transferencia'
+              : sec === 'Roles y permisos'
+              ? 'rbac seguridad permisos accesos usuarios'
+              : ''
+          list.push({
+            id: `nav:sec:${modName}:${sec}`,
+            entityType: 'module',
+            groupLabel: 'Módulos y vistas',
+            title: `${modName} · ${sec}`,
+            subtitle: `Abrir sección ${sec} dentro de ${modName}`,
+            meta: modName,
+            keywords: `modulo ${modName} ${sec} vista pestaña seccion ${extraModuleKeywords}`,
+            iconKind: moduleIconMap[modName] || 'home',
+            priorityBoost:
+              sec === 'Estado de Resultados' || sec === 'Presupuestos y alertas' ? 88 : 72,
+            onSelect: () => goModuleSection(modName, sec),
+          })
+        })
+      }
+    )
+
+    // 2. Acciones rápidas
+    if (canCreateSec('CRM', 'Clientes')) {
+      list.push({
+        id: 'action:new-client',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nuevo cliente',
+        subtitle: 'Abrir formulario de alta rápida de cliente y direcciones',
+        meta: 'Crear',
+        keywords: 'alta crear registrar nuevo cliente crm',
+        iconKind: 'action',
+        priorityBoost: 78,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('client')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Proveedores')) {
+      list.push({
+        id: 'action:new-supplier',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nuevo proveedor',
+        subtitle: 'Registrar proveedor con RFC, CLABE y cuentas bancarias',
+        meta: 'Crear',
+        keywords: 'alta crear registrar nuevo proveedor clabe banco',
+        iconKind: 'action',
+        priorityBoost: 74,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('supplier')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Oportunidades')) {
+      list.push({
+        id: 'action:new-opportunity',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nueva oportunidad comercial',
+        subtitle: 'Añadir trato o prospecto al pipeline de ventas',
+        meta: 'Crear',
+        keywords: 'alta crear nuevo pipeline trato prospecto venta oportunidad',
+        iconKind: 'action',
+        priorityBoost: 70,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('opportunity')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Actividades')) {
+      list.push({
+        id: 'action:new-activity',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nueva actividad CRM',
+        subtitle: 'Programar llamada, envío o seguimiento con cliente',
+        meta: 'Crear',
+        keywords: 'alta crear nuevo agenda llamada seguimiento tarea actividad',
+        iconKind: 'action',
+        priorityBoost: 68,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('activity')
+        },
+      })
+    }
+    list.push({
+      id: 'action:workspace-checklist',
+      entityType: 'module',
+      groupLabel: 'Acciones rápidas',
+      title: 'Checklist: Tu espacio está listo',
+      subtitle: `Progreso de implementación: ${completedSetupCount} de ${totalSetupCount} pasos completados`,
+      meta: `${setupProgressPercent}%`,
+      keywords: 'configuracion inicial onboarding checklist espacio listo',
+      iconKind: 'action',
+      priorityBoost: 66,
+      onSelect: () => {
+        setMenuOpen(false)
+        setIsSetupChecklistOpen(true)
+      },
+    })
+    list.push({
+      id: 'action:toggle-theme',
+      entityType: 'module',
+      groupLabel: 'Acciones rápidas',
+      title: darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro',
+      subtitle: 'Alternar apariencia visual de todo el espacio de trabajo',
+      meta: 'Tema',
+      keywords: 'dark mode light mode oscuro claro apariencia tema',
+      iconKind: 'settings',
+      priorityBoost: 55,
+      onSelect: () => {
+        setDarkMode((prev) => {
+          const next = !prev
+          window.localStorage.setItem('aes-nexus-dark-mode', String(next))
+          return next
+        })
+      },
+    })
+
+    // 3. CRM: Clientes y Proveedores (filtros propios) + Equipo
+    if (canViewSec('CRM', 'Clientes')) {
+      clientRecords.forEach((c, idx) => {
+        list.push({
+          id: `crm:client:${c.clientCode || idx}-${c.company}`,
+          entityType: 'client',
+          groupLabel: 'Clientes',
+          title: c.company,
+          subtitle: `${c.name} · ${c.email}${c.city ? ` · ${c.city}` : ''} · ${c.status}`,
+          meta: c.clientCode || c.status,
+          keywords: `${c.rfc || ''} ${c.phone} ${c.status} ${c.paymentTerms || ''} ${c.city || ''} cliente clientes crm`,
+          iconKind: 'crm',
+          priorityBoost: 45,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Clientes')
+            setDetailDirectory({ kind: 'client', record: c })
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Proveedores')) {
+      supplierRecords.forEach((s, idx) => {
+        const hasClabe = Boolean(s.clabe || s.bankAccounts?.some((ba) => ba.clabe))
+        list.push({
+          id: `crm:supplier:${s.supplierCode || idx}-${s.company}`,
+          entityType: 'supplier',
+          groupLabel: 'Proveedores',
+          title: s.company,
+          subtitle: `${s.name} · ${s.email}${s.bankName ? ` · ${s.bankName}` : ''} · ${s.status}`,
+          meta: s.supplierCode || s.status,
+          keywords: `${s.rfc || ''} ${s.clabe || ''} ${s.bankName || ''} ${hasClabe ? 'clabe cuenta bancaria' : ''} ${s.phone} ${s.status} proveedor proveedores crm`,
+          iconKind: 'crm',
+          priorityBoost: 44,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Proveedores')
+            setDetailDirectory({ kind: 'supplier', record: s })
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Empleados')) {
+      employees.forEach((emp) => {
+        list.push({
+          id: `crm:emp:${emp.id}`,
+          entityType: 'operations',
+          groupLabel: 'Empleados',
+          title: emp.fullName,
+          subtitle: `${emp.roleTitle} · ${emp.departmentName} · ${emp.email}`,
+          meta: emp.employeeCode,
+          keywords: `${emp.rfc || ''} ${emp.status} empleado colaborador rrhh`,
+          iconKind: 'crm',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Empleados')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Nómina')) {
+      payrollRuns.forEach((run) => {
+        list.push({
+          id: `crm:payroll:${run.id}`,
+          entityType: 'operations',
+          groupLabel: 'Nómina',
+          title: `${run.folio} · ${run.periodLabel}`,
+          subtitle: `${run.frequency} · ${run.employeesCount} empleados · ${run.status}`,
+          meta: money(run.totalNet),
+          keywords: `${run.paymentDate} nomina dispersion`,
+          iconKind: 'crm',
+          priorityBoost: 32,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Nómina')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Oportunidades')) {
+      opportunityRecords.forEach((opp, idx) => {
+        list.push({
+          id: `crm:opp:${idx}-${opp.company}`,
+          entityType: 'operations',
+          groupLabel: 'Oportunidades',
+          title: opp.company,
+          subtitle: `${opp.person} · Etapa: ${opp.stage} · ${opp.date}`,
+          meta: money(opp.value),
+          keywords: `oportunidad pipeline ${opp.stage}`,
+          iconKind: 'crm',
+          priorityBoost: 35,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Oportunidades')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Actividades')) {
+      activityRecords.forEach((act, idx) => {
+        list.push({
+          id: `crm:act:${idx}-${act.title}`,
+          entityType: 'operations',
+          groupLabel: 'Actividades CRM',
+          title: act.title,
+          subtitle: `${act.company} · ${act.time}`,
+          meta: 'Actividad',
+          keywords: `${act.company} agenda seguimiento`,
+          iconKind: 'crm',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Actividades')
+          },
+        })
+      })
+    }
+
+    // 4. Facturas (CxC y CxP)
+    if (canViewSec('Ventas', 'Facturas') || canViewSec('Finanzas', 'Cobros')) {
+      receivables.forEach((inv) => {
+        list.push({
+          id: `fin:cxc:${inv.id}`,
+          entityType: 'invoice',
+          groupLabel: 'Facturas de venta (CxC)',
+          title: `${inv.folio} · ${inv.clientCompany}`,
+          subtitle: `${inv.clientName} · ${inv.status} · Saldo ${money(inv.balance)} · Vence ${inv.dueDate}`,
+          meta: money(inv.total),
+          keywords: `${inv.folio} ${inv.orderFolio} ${inv.clientRfc || ''} ${inv.status} factura cxc cobro cfdi cliente`,
+          iconKind: 'invoice',
+          priorityBoost: 52,
+          onSelect: () => {
+            setMenuOpen(false)
+            if (canViewSec('Ventas', 'Facturas')) {
+              setPresetInvoiceIdToView(inv.id)
+              navigateToSalesSection('Facturas')
+            } else {
+              navigateToFinanceSection('Cobros')
+            }
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Pagos') || canViewSec('Compras', 'Facturas')) {
+      payables.forEach((bill) => {
+        list.push({
+          id: `fin:cxp:${bill.id}`,
+          entityType: 'invoice',
+          groupLabel: 'Facturas de proveedor (CxP)',
+          title: `${bill.folio} · ${bill.supplierCompany}`,
+          subtitle: `${bill.status} · Saldo ${money(bill.balance)} · Vence ${bill.dueDate}`,
+          meta: money(bill.total),
+          keywords: `${bill.folio} ${bill.purchaseOrderFolio || ''} ${bill.status} factura cxp pagar proveedor`,
+          iconKind: 'invoice',
+          priorityBoost: 48,
+          onSelect: () => {
+            setMenuOpen(false)
+            if (canViewSec('Finanzas', 'Pagos')) {
+              navigateToFinanceSection('Pagos')
+            } else {
+              navigateToPurchasesSection('Facturas')
+            }
+          },
+        })
+      })
+    }
+
+    // 5. Ventas, compras, inventario, finanzas operativas y gastos
+    if (canViewSec('Ventas', 'Catálogo')) {
+      initialProductsAndServices.forEach((prod) => {
+        list.push({
+          id: `comm:prod:${prod.id}`,
+          entityType: 'operations',
+          groupLabel: 'Catálogo de productos y servicios',
+          title: prod.name,
+          subtitle: `${prod.category} · ${money(prod.unitPrice)} / ${prod.unitOfMeasure} · ${prod.status}`,
+          meta: prod.sku,
+          keywords: `${prod.description} ${prod.type} sku producto servicio`,
+          iconKind: 'product',
+          priorityBoost: 42,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Catálogo')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Cotizaciones')) {
+      quotes.forEach((q) => {
+        list.push({
+          id: `comm:quote:${q.id}`,
+          entityType: 'operations',
+          groupLabel: 'Cotizaciones',
+          title: `${q.folio} · ${q.clientCompany}`,
+          subtitle: `${q.clientName} · ${q.status} · Vence ${q.expiryDate}`,
+          meta: money(q.total),
+          keywords: `${q.date} cotizacion presupuesto venta`,
+          iconKind: 'sales',
+          priorityBoost: 46,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Cotizaciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Pedidos')) {
+      orders.forEach((ord) => {
+        list.push({
+          id: `comm:order:${ord.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pedidos de venta',
+          title: `${ord.folio} · ${ord.clientCompany}`,
+          subtitle: `${ord.clientName} · ${ord.status} · ${ord.date}`,
+          meta: money(ord.total),
+          keywords: `${ord.quoteFolio || ''} pedido orden venta`,
+          iconKind: 'order',
+          priorityBoost: 48,
+          onSelect: () => {
+            setMenuOpen(false)
+            setPresetOrderFolioToView(ord.folio)
+            navigateToSalesSection('Pedidos')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Devoluciones')) {
+      customerReturns.forEach((ret) => {
+        list.push({
+          id: `comm:rma-cli:${ret.id}`,
+          entityType: 'operations',
+          groupLabel: 'Devoluciones de cliente (RMA)',
+          title: `${ret.folio} · ${ret.clientCompany}`,
+          subtitle: `Pedido ${ret.orderFolio} · ${ret.resolution} · ${ret.status}`,
+          meta: money(ret.total),
+          keywords: `${ret.reason} rma devolucion cliente`,
+          iconKind: 'sales',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Devoluciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Requisiciones')) {
+      requisitions.forEach((req) => {
+        list.push({
+          id: `comm:req:${req.id}`,
+          entityType: 'operations',
+          groupLabel: 'Requisiciones de compra',
+          title: `${req.folio} · ${req.department}`,
+          subtitle: `Solicita ${req.requestedBy} · ${req.warehouseName} · ${req.status}`,
+          meta: money(req.estimatedTotal),
+          keywords: `${req.priority} requisicion compra`,
+          iconKind: 'purchases',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Requisiciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Órdenes de compra')) {
+      purchaseOrders.forEach((po) => {
+        list.push({
+          id: `comm:po:${po.id}`,
+          entityType: 'operations',
+          groupLabel: 'Órdenes de compra',
+          title: `${po.folio} · ${po.supplierCompany}`,
+          subtitle: `${po.warehouseName} · ${po.status} · Entrega ${po.expectedDeliveryDate}`,
+          meta: money(po.total),
+          keywords: `${po.supplierContact} oc orden compra proveedor`,
+          iconKind: 'purchases',
+          priorityBoost: 46,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Órdenes de compra')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Devoluciones')) {
+      supplierReturns.forEach((sret) => {
+        list.push({
+          id: `comm:rma-sup:${sret.id}`,
+          entityType: 'operations',
+          groupLabel: 'Devoluciones a proveedor',
+          title: `${sret.folio} · ${sret.supplierCompany}`,
+          subtitle: `OC ${sret.purchaseOrderFolio} · ${sret.resolution} · ${sret.status}`,
+          meta: money(sret.total),
+          keywords: `${sret.reason} rma devolucion proveedor`,
+          iconKind: 'purchases',
+          priorityBoost: 32,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Devoluciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Operaciones', 'Inventario')) {
+      inventory.forEach((invItem) => {
+        list.push({
+          id: `comm:inv:${invItem.id}`,
+          entityType: 'operations',
+          groupLabel: 'Inventario por almacén',
+          title: `${invItem.name} (${invItem.warehouseName})`,
+          subtitle: `Stock: ${invItem.stock} ${invItem.unitOfMeasure} · Bin ${invItem.locationBin}`,
+          meta: invItem.sku,
+          keywords: `${invItem.category || ''} inventario almacen stock minimo existencia`,
+          iconKind: 'operations',
+          priorityBoost: 38,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToOperationsSection('Inventario')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Operaciones', 'Entregas')) {
+      shipments.forEach((ship) => {
+        list.push({
+          id: `comm:ship:${ship.id}`,
+          entityType: 'operations',
+          groupLabel: 'Entregas y logística',
+          title: `${ship.folio} · ${ship.clientCompany}`,
+          subtitle: `Pedido ${ship.orderFolio} · ${ship.carrier} (${ship.trackingNumber}) · ${ship.status}`,
+          meta: ship.status,
+          keywords: `${ship.address} guia envio entrega paqueteria`,
+          iconKind: 'operations',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToOperationsSection('Entregas')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Pagos Bancarios')) {
+      ebpBatches.forEach((batch) => {
+        list.push({
+          id: `fin:ebp:${batch.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pagos Bancarios (EBP)',
+          title: `${batch.folio} · ${batch.packName}`,
+          subtitle: `${batch.batchType} · ${batch.bankAccountName} · ${batch.operationsCount} ops · ${batch.status}`,
+          meta: money(batch.totalAmount),
+          keywords: `${batch.sourceFolio} ${batch.generatedFilename} layout ebp dispersion bancaria`,
+          iconKind: 'bank',
+          priorityBoost: 40,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection('Pagos Bancarios')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Cuentas contables')) {
+      chartAccounts.forEach((acc) => {
+        list.push({
+          id: `fin:acct:${acc.id}`,
+          entityType: 'operations',
+          groupLabel: 'Catálogo de cuentas contables',
+          title: `${acc.code} · ${acc.name}`,
+          subtitle: `${acc.type} · Naturaleza ${acc.nature} · ${acc.status}`,
+          meta: money(acc.balance),
+          keywords: `${acc.description || ''} poliza contabilidad cuenta`,
+          iconKind: 'finance',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection('Cuentas contables')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Resumen') || canViewSec('Finanzas', 'Cobros')) {
+      bankAccounts.forEach((bank) => {
+        list.push({
+          id: `fin:bank:${bank.id}`,
+          entityType: 'operations',
+          groupLabel: 'Cuentas bancarias y tesorería',
+          title: `${bank.bankName} (${bank.accountNumber})`,
+          subtitle: `${bank.type} · CLABE ${bank.clabe}`,
+          meta: money(bank.balance),
+          keywords: `${bank.currency} banco tesoreria clabe`,
+          iconKind: 'bank',
+          priorityBoost: 38,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection(
+              canViewSec('Finanzas', 'Resumen') ? 'Resumen' : 'Cobros'
+            )
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Gastos', 'Registro y pólizas')) {
+      expenses.forEach((exp) => {
+        list.push({
+          id: `exp:rec:${exp.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pólizas de gasto',
+          title: `${exp.folio} · ${exp.beneficiary}`,
+          subtitle: `${exp.description} · ${exp.category} · ${exp.status || 'Pagado'}`,
+          meta: money(exp.total),
+          keywords: `${exp.accountCode || ''} ${exp.departmentName || ''} gasto poliza`,
+          iconKind: 'expenses',
+          priorityBoost: 42,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToExpensesSection('Registro y pólizas')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Gastos', 'Presupuestos y alertas')) {
+      expenseBudgets.forEach((b) => {
+        list.push({
+          id: `exp:budget:${b.id}`,
+          entityType: 'operations',
+          groupLabel: 'Presupuestos de gasto',
+          title: `${b.category || b.nature} (${b.nature})`,
+          subtitle: `Presupuesto mensual · Alertas al ${b.warningThresholdPct}% / ${b.criticalThresholdPct ?? 95}%`,
+          meta: money(b.monthlyLimit),
+          keywords: `${b.departmentName || ''} presupuesto limite umbral 80 95`,
+          iconKind: 'expenses',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToExpensesSection('Presupuestos y alertas')
+          },
+        })
+      })
+    }
+
+    // 6. Estructura organizacional y Centro de ayuda
+    if (canViewSec('Administración', 'Subsidiarias')) {
+      subsidiaries.forEach((sub) => {
+        list.push({
+          id: `struct:sub:${sub.id}`,
+          entityType: 'help',
+          groupLabel: 'Subsidiarias y razones sociales',
+          title: sub.name,
+          subtitle: `${sub.legalName} · RFC ${sub.taxId} · ${sub.country}`,
+          meta: sub.code,
+          keywords: `${sub.currency} subsidiaria empresa razon social`,
+          iconKind: 'admin',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSubsidiaryDetail(sub.id)
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Administración', 'Departamentos')) {
+      departments.forEach((dep) => {
+        list.push({
+          id: `struct:dept:${dep.id}`,
+          entityType: 'help',
+          groupLabel: 'Departamentos',
+          title: dep.name,
+          subtitle: `Líder: ${dep.leader}${dep.costCenter ? ` · CC ${dep.costCenter}` : ''}`,
+          meta: dep.code,
+          keywords: `${dep.description || ''} departamento area`,
+          iconKind: 'admin',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToAdminSection('Departamentos')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Administración', 'Ubicaciones')) {
+      locations.forEach((loc) => {
+        list.push({
+          id: `struct:loc:${loc.id}`,
+          entityType: 'help',
+          groupLabel: 'Ubicaciones y almacenes',
+          title: loc.name,
+          subtitle: `${loc.type} · ${loc.city}, ${loc.state}`,
+          meta: loc.code,
+          keywords: `${loc.address} sucursal bodega almacen`,
+          iconKind: 'operations',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToAdminSection('Ubicaciones')
+          },
+        })
+      })
+    }
+
+    HELP_ARTICLES.forEach((art) => {
+      list.push({
+        id: `help:art:${art.id}`,
+        entityType: 'help',
+        groupLabel: 'Guías del Centro de ayuda',
+        title: art.title,
+        subtitle: art.summary,
+        meta: `${art.readTimeMin} min`,
+        keywords: `${art.targetLabel} guia manual ayuda tutorial`,
+        iconKind: 'help',
+        priorityBoost: 24,
+        onSelect: () => {
+          setMenuOpen(false)
+          navigateTo('Centro de ayuda')
+        },
+      })
+    })
+
+    HELP_FAQS.forEach((faq) => {
+      list.push({
+        id: `help:faq:${faq.id}`,
+        entityType: 'help',
+        groupLabel: 'Preguntas frecuentes (FAQ)',
+        title: faq.question,
+        subtitle: `${faq.moduleTag} · Nivel ${faq.complexity} · ${faq.visualCategory}`,
+        meta: faq.moduleTag,
+        keywords: `${faq.tags.join(' ')} ${faq.answer}`,
+        iconKind: 'help',
+        priorityBoost: 20,
+        onSelect: () => {
+          setMenuOpen(false)
+          navigateTo('Centro de ayuda')
+        },
+      })
+    })
+
+    return list
+  }, [
+    activeCapabilities,
+    activeSectionAccess,
+    activeSessionProfile.isActive,
+    activityRecords,
+    bankAccounts,
+    chartAccounts,
+    clientRecords,
+    completedSetupCount,
+    customerReturns,
+    darkMode,
+    departments,
+    ebpBatches,
+    employees,
+    expenseBudgets,
+    expenses,
+    inventory,
+    isFullAdmin,
+    locations,
+    opportunityRecords,
+    orders,
+    payables,
+    payrollRuns,
+    purchaseOrders,
+    quotes,
+    receivables,
+    requisitions,
+    setupProgressPercent,
+    shipments,
+    subsidiaries,
+    supplierRecords,
+    supplierReturns,
+    totalSetupCount,
+  ])
 
   const handleCreate = () => {
     openCreate('opportunity')
@@ -4939,7 +6276,19 @@ function AppContent() {
           <ChevronDown size={15} />
         </button>
 
-        <label className="search-box"><Search size={15} /><input aria-label={t('nav.searchPlaceholder')} placeholder={t('nav.searchPlaceholder')} /><kbd>⌘ K</kbd></label>
+        <button
+          type="button"
+          className="search-box search-box-trigger"
+          aria-label={t('nav.searchPlaceholder')}
+          onClick={() => {
+            setIsGlobalSearchOpen(true)
+            setMenuOpen(false)
+          }}
+        >
+          <Search size={15} />
+          <span className="search-box-placeholder">{t('nav.searchPlaceholder')}</span>
+          <kbd>⌘ K</kbd>
+        </button>
 
         <nav className="side-nav" aria-label="Navegación principal">
           {sections.map((section) => {
@@ -4978,13 +6327,57 @@ function AppContent() {
         </nav>
 
         <div className="sidebar-spacer" />
-        <div className="progress-card">
-          <div className="progress-heading"><Sparkles size={15} /><span>{t('nav.progressTitle')}</span></div>
-          <p>{t('nav.progressBody')}</p>
-          <div className="progress-track"><span /></div>
-          <small>{t('nav.progressSteps')}</small>
-        </div>
-        <button className="nav-item quiet"><CircleHelp size={17} /><span>{t('nav.help')}</span></button>
+        <button
+          type="button"
+          className={`progress-card ${isAllSetupComplete ? 'is-complete' : ''}`}
+          onClick={() => setIsSetupChecklistOpen(true)}
+          aria-label={`${isAllSetupComplete ? t('nav.progressTitleComplete') : t('nav.progressTitle')}: ${t('nav.progressStepsDynamic', { completed: completedSetupCount, total: totalSetupCount })}`}
+        >
+          <div className="progress-heading">
+            <span className="progress-heading-label">
+              {isAllSetupComplete ? <CheckCircle2 size={15} /> : <Sparkles size={15} />}
+              <span>{isAllSetupComplete ? t('nav.progressTitleComplete') : t('nav.progressTitle')}</span>
+            </span>
+            <strong className="progress-pct">{setupProgressPercent}%</strong>
+          </div>
+          <p>
+            {isAllSetupComplete
+              ? t('nav.progressBodyComplete')
+              : completedSetupCount >= 3
+              ? t(
+                  remainingSetupCount === 1
+                    ? 'nav.progressBodyAlmost'
+                    : 'nav.progressBodyAlmostPlural',
+                  { remaining: remainingSetupCount }
+                )
+              : t('nav.progressBody')}
+          </p>
+          <div className="progress-track">
+            <span style={{ width: `${setupProgressPercent}%` }} />
+          </div>
+          <small className="progress-meta-row">
+            <span>
+              {t('nav.progressStepsDynamic', {
+                completed: completedSetupCount,
+                total: totalSetupCount,
+              })}
+            </span>
+            <span className="progress-checklist-link">{t('nav.progressViewChecklist')}</span>
+          </small>
+        </button>
+        <button
+          type="button"
+          className={`nav-item quiet ${activePage === 'Centro de ayuda' ? 'active' : ''}`}
+          aria-current={activePage === 'Centro de ayuda' ? 'page' : undefined}
+          onClick={() => {
+            navigateTo('Centro de ayuda')
+            setNotice('')
+            setMenuOpen(false)
+          }}
+        >
+          <CircleHelp size={17} />
+          <span>{t('nav.help')}</span>
+        </button>
         {canAccessModule(
           'Configuración',
           activeCapabilities,
@@ -5164,7 +6557,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Gastos' ? t('nav.expenses') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Gastos' ? <> <span className="crumb-slash">/</span> <span>{expensesSection === 'Registro y pólizas' ? t('tabs.expenses.ledger') : expensesSection === 'Presupuestos y alertas' ? t('tabs.expenses.budgets') : expensesSection === 'Gastos recurrentes' ? t('tabs.expenses.recurring') : t('tabs.expenses.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Gastos' ? t('nav.expenses') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage === 'Centro de ayuda' ? t('nav.help') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Gastos' ? <> <span className="crumb-slash">/</span> <span>{expensesSection === 'Registro y pólizas' ? t('tabs.expenses.ledger') : expensesSection === 'Presupuestos y alertas' ? t('tabs.expenses.budgets') : expensesSection === 'Gastos recurrentes' ? t('tabs.expenses.recurring') : t('tabs.expenses.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -5380,6 +6773,8 @@ function AppContent() {
                               : Package
                             : notice.targetModule === 'Finanzas'
                             ? Receipt
+                            : notice.targetModule === 'Reportes'
+                            ? BarChart3
                             : FileText
                         const handleOpenNoticeTarget = () => {
                           markSystemNotifRead(notice.id, notice.fingerprint, true)
@@ -5405,6 +6800,10 @@ function AppContent() {
                                   | 'Resumen'
                               )
                             }
+                          } else if (notice.targetModule === 'Reportes') {
+                            navigateToReportsSection(
+                              (notice.targetSection as ReportsSectionTab) || 'Estado de Resultados'
+                            )
                           } else {
                             navigateToSalesSection(
                               notice.targetSection as 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'
@@ -5638,6 +7037,7 @@ function AppContent() {
                 : 'Inicio'
             const isSectionAllowed =
               activePage === 'Inicio' ||
+              activePage === 'Centro de ayuda' ||
               canAccessSection(
                 activePage,
                 activeSectionName,
@@ -5697,6 +7097,7 @@ function AppContent() {
           })()}
           {!(
             activePage === 'Inicio' ||
+            activePage === 'Centro de ayuda' ||
             canAccessSection(
               activePage,
               activePage === 'Configuración'
@@ -5915,10 +7316,57 @@ function AppContent() {
                 <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="opportunity-summary"><article><span className="kpi-icon"><Target size={17} /></span><div><strong>{opportunityRecords.length}</strong><small>Abiertas</small></div></article><article><span className="kpi-icon icon-sand"><BriefcaseBusiness size={17} /></span><div><strong>{money(opportunityRecords.reduce((total, opportunity) => total + opportunity.value, 0))}</strong><small>Valor del pipeline</small></div></article><article><span className="kpi-icon icon-green"><ArrowUpRight size={17} /></span><div><strong>32%</strong><small>Tasa de conversión</small></div></article></div>
                 <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3>{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button>}</div><div className="opportunities-list">{opportunityRecords.map((opportunity, oppIdx) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}-${oppIdx}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span>{canEditInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button-icon-action" aria-label={`Editar oportunidad ${opportunity.company}`} title="Editar o eliminar oportunidad" onClick={() => { setConfirmDeleteOpp(false); setEditingOpportunity({ index: oppIdx, company: opportunity.company, person: opportunity.person, value: String(opportunity.value), stage: opportunity.stage, date: opportunity.date }) }}><Edit3 size={12} /> Editar</button>}</article>)}</div></div>
-              </> : crmSection === 'Actividades' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div>{canCreateInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button>}</div><div className="activities-list">{activityRecords.map((activity, actIdx) => <article className="activity-item" key={`${activity.title}-${activity.time}-${actIdx}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time>{canEditInSection('CRM', 'Actividades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button-icon-action" aria-label={`Editar actividad ${activity.title}`} title="Editar o eliminar actividad" onClick={() => { setConfirmDeleteAct(false); setEditingActivity({ index: actIdx, title: activity.title, company: activity.company, time: activity.time, icon: activity.icon, tone: (activity.tone as 'blue' | 'amber' | 'green') || 'green' }) }}><Edit3 size={12} /> Editar</button>}</article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
-              </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
+              </> : crmSection === 'Actividades' ? (
+                <CrmActivitiesSection
+                  activities={activityRecords}
+                  canCreate={canCreateInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onOpenCreate={(presetDate) => openCreate('activity', presetDate)}
+                  onOpenEdit={(actIdx, activity) => {
+                    setConfirmDeleteAct(false)
+                    setEditingActivity({
+                      index: actIdx,
+                      title: activity.title,
+                      company: activity.company,
+                      date: activity.date || CRM_TODAY_ISO,
+                      time: activity.time,
+                      icon: activity.icon,
+                      tone: (activity.tone as 'blue' | 'amber' | 'green') || 'green',
+                      status: activity.status || 'Pendiente',
+                      notes: activity.notes || '',
+                    })
+                  }}
+                  onToggleComplete={(actIdx) => {
+                    const target = activityRecords[actIdx]
+                    if (!target) return
+                    const nextStatus: CrmActivityStatus =
+                      target.status === 'Completada' ? 'Pendiente' : 'Completada'
+                    setActivityRecords((prev) =>
+                      prev.map((item, idx) =>
+                        idx === actIdx ? { ...item, status: nextStatus } : item
+                      )
+                    )
+                    toast.success(
+                      nextStatus === 'Completada'
+                        ? `Actividad “${target.title}” marcada como completada.`
+                        : `Actividad “${target.title}” reabierta como pendiente.`,
+                      nextStatus === 'Completada' ? 'Actividad completada' : 'Actividad reabierta'
+                    )
+                  }}
+                />
+              ) : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', crmSection, activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && (crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>)}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
                 <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
@@ -7570,6 +9018,78 @@ function AppContent() {
                 )
               }
             />
+          ) : activePage === 'Centro de ayuda' ? (
+            <HelpCenterSection
+              activeUserName={activeSessionProfile.name}
+              activeUserSubtitle={activeSessionProfile.subtitle}
+              onAuditTicket={(action, detail) => {
+                appendAuditLog({
+                  category: 'settings',
+                  crudOperation: 'CREATE',
+                  entityType: 'Ticket Centro de ayuda',
+                  action,
+                  detail,
+                  user: activeSessionProfile.name,
+                  userId: activeActorUserId,
+                })
+              }}
+              onNavigateTarget={(target: HelpModuleTarget) => {
+                if (target.page === 'Inicio') {
+                  navigateTo('Inicio')
+                  return
+                }
+                if (target.page === 'CRM') {
+                  if (
+                    target.section &&
+                    !canAccessSection(
+                      'CRM',
+                      target.section,
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                  ) {
+                    notifyAccessDenied(`CRM · ${target.section}`)
+                    return
+                  }
+                  navigateTo('CRM')
+                  if (target.section) setCrmSection(target.section)
+                  return
+                }
+                if (target.page === 'Ventas') {
+                  navigateToSalesSection(target.section)
+                  return
+                }
+                if (target.page === 'Compras') {
+                  navigateToPurchasesSection(target.section)
+                  return
+                }
+                if (target.page === 'Operaciones') {
+                  navigateToOperationsSection(target.section)
+                  return
+                }
+                if (target.page === 'Finanzas') {
+                  navigateToFinanceSection(target.section)
+                  return
+                }
+                if (target.page === 'Gastos') {
+                  navigateToExpensesSection(target.section)
+                  return
+                }
+                if (target.page === 'Reportes') {
+                  navigateToReportsSection(target.section)
+                  return
+                }
+                if (target.page === 'Administración') {
+                  navigateToAdminSection(target.section)
+                  return
+                }
+                if (target.page === 'Configuración') {
+                  navigateToSettingSection(target.section)
+                }
+              }}
+            />
           ) : activePage === 'Inicio' ? (
             <ExecutiveDashboard
               orders={orders}
@@ -8187,7 +9707,79 @@ function AppContent() {
               </>
             )}
             {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado (MXN)</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
-            {createKind === 'activity' && <><label className="form-field"><span>Actividad</span><input required autoFocus value={createForm.title} onChange={(event) => setCreateForm({ ...createForm, title: event.target.value })} placeholder="Ej. Confirmar reunión" /></label><div className="form-grid"><label className="form-field"><span>Empresa</span><input value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Empresa relacionada" /></label><label className="form-field"><span>Hora</span><input type="time" required value={createForm.time} onChange={(event) => setCreateForm({ ...createForm, time: event.target.value })} /></label></div></>}
+            {createKind === 'activity' && (
+              <>
+                <label className="form-field">
+                  <span>Actividad *</span>
+                  <input
+                    required
+                    autoFocus
+                    value={createForm.title}
+                    onChange={(event) => setCreateForm({ ...createForm, title: event.target.value })}
+                    placeholder="Ej. Confirmar reunión"
+                  />
+                </label>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Empresa</span>
+                    <input
+                      value={createForm.company}
+                      onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })}
+                      placeholder="Empresa relacionada"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Tipo de seguimiento</span>
+                    <select
+                      value={createForm.activityIcon}
+                      onChange={(event) =>
+                        setCreateForm({
+                          ...createForm,
+                          activityIcon: event.target.value as 'send' | 'phone' | 'check',
+                        })
+                      }
+                    >
+                      <option value="check">Revisión / Reunión</option>
+                      <option value="phone">Llamada de seguimiento</option>
+                      <option value="send">Envío de propuesta / correo</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Fecha *</span>
+                    <input
+                      type="date"
+                      required
+                      value={createForm.activityDate}
+                      onChange={(event) =>
+                        setCreateForm({ ...createForm, activityDate: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Hora *</span>
+                    <input
+                      type="time"
+                      required
+                      value={createForm.time}
+                      onChange={(event) => setCreateForm({ ...createForm, time: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="form-field">
+                  <span>Notas de seguimiento</span>
+                  <textarea
+                    rows={2}
+                    value={createForm.activityNotes}
+                    onChange={(event) =>
+                      setCreateForm({ ...createForm, activityNotes: event.target.value })
+                    }
+                    placeholder="Puntos clave a tratar o acuerdos esperados..."
+                  />
+                </label>
+              </>
+            )}
             <div className="create-modal-actions">
               <button className="button button-secondary" type="button" disabled={isSubmittingClient} onClick={closeCreate}>Cancelar</button>
               <button className="button button-primary" type="submit" disabled={isSubmittingClient}>
@@ -8733,9 +10325,12 @@ function AppContent() {
                           ...item,
                           title: cleanTitle,
                           company: editingActivity.company.trim() || 'Sin empresa',
+                          date: editingActivity.date || CRM_TODAY_ISO,
                           time: editingActivity.time,
                           icon: editingActivity.icon,
                           tone: editingActivity.tone,
+                          status: editingActivity.status,
+                          notes: editingActivity.notes.trim() || undefined,
                         }
                       : item
                   )
@@ -8770,6 +10365,36 @@ function AppContent() {
                   />
                 </label>
                 <label className="form-field">
+                  <span>Estado</span>
+                  <select
+                    value={editingActivity.status}
+                    onChange={(e) =>
+                      setEditingActivity({
+                        ...editingActivity,
+                        status: e.target.value as CrmActivityStatus,
+                      })
+                    }
+                  >
+                    <option value="Pendiente">Pendiente</option>
+                    <option value="Completada">Completada</option>
+                    <option value="Reprogramada">Reprogramada</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Fecha *</span>
+                  <input
+                    type="date"
+                    required
+                    value={editingActivity.date}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, date: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
                   <span>Hora *</span>
                   <input
                     type="time"
@@ -8797,6 +10422,18 @@ function AppContent() {
                   <option value="phone">Llamada de seguimiento</option>
                   <option value="check">Revisión / Tarea interna</option>
                 </select>
+              </label>
+
+              <label className="form-field">
+                <span>Notas de seguimiento</span>
+                <textarea
+                  rows={2}
+                  value={editingActivity.notes}
+                  onChange={(e) =>
+                    setEditingActivity({ ...editingActivity, notes: e.target.value })
+                  }
+                  placeholder="Acuerdos, contexto o siguiente paso..."
+                />
               </label>
 
               <div
@@ -8932,6 +10569,26 @@ function AppContent() {
           }
         />
       )}
+
+      <GlobalSearchModal
+        isOpen={isGlobalSearchOpen}
+        items={globalSearchItems}
+        onClose={() => setIsGlobalSearchOpen(false)}
+      />
+
+      <WorkspaceSetupModal
+        isOpen={isSetupChecklistOpen}
+        workspaceName={workspaceMeta.workspaceName}
+        steps={workspaceSetupSteps}
+        completedCount={completedSetupCount}
+        totalCount={totalSetupCount}
+        progressPercent={setupProgressPercent}
+        onClose={() => setIsSetupChecklistOpen(false)}
+        onToggleStep={handleToggleSetupStep}
+        onNavigateStep={handleNavigateSetupStep}
+        onCompleteAll={handleCompleteAllSetupSteps}
+        onResetProgress={handleResetSetupProgress}
+      />
     </div>
   )
 }

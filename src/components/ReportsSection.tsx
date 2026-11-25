@@ -3482,6 +3482,7 @@ export function ReportsSection({
           departmentBreakdown={pnlCostCenterBreakdown.departmentBreakdown}
           activeLocationFilter={filters.locationId}
           activeDepartmentFilter={filters.departmentId}
+          searchQuery={filters.searchQuery}
           onToggleLocationFilter={(locId) =>
             setFilters((prev) => ({
               ...prev,
