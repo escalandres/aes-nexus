@@ -4,6 +4,7 @@ export type PurchasesSectionTab =
   | 'Órdenes de compra'
   | 'Recepciones'
   | 'Facturas'
+  | 'Devoluciones'
 
 export type RequisitionStatus =
   | 'Pendiente'

@@ -13,6 +13,7 @@ import {
   Filter,
   RotateCcw,
   FileSpreadsheet,
+  Trash2,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import {
@@ -33,6 +34,7 @@ import { FinanceAccountingChart } from './FinanceAccountingChart'
 interface FinanceAccountingProps {
   accounts: ChartAccount[]
   onUpdateAccounts: (accounts: ChartAccount[]) => void
+  onDeleteAccount?: (accountId: string) => void
 }
 
 export type MacroAccountType = 'Todos' | 'Activo' | 'Pasivo' | 'Capital' | 'Ingreso' | 'Gasto'
@@ -46,6 +48,7 @@ const ACCOUNT_TYPES: AccountType[] = [
   'Ingresos',
   'Costos',
   'Gastos de operación',
+  'Gastos financieros',
   'Otros ingresos',
 ]
 
@@ -55,7 +58,8 @@ const matchesMacroType = (accType: AccountType, macro: MacroAccountType): boolea
   if (macro === 'Pasivo') return accType === 'Pasivo a corto plazo' || accType === 'Pasivo a largo plazo'
   if (macro === 'Capital') return accType === 'Capital contable'
   if (macro === 'Ingreso') return accType === 'Ingresos' || accType === 'Otros ingresos'
-  if (macro === 'Gasto') return accType === 'Costos' || accType === 'Gastos de operación'
+  if (macro === 'Gasto')
+    return accType === 'Costos' || accType === 'Gastos de operación' || accType === 'Gastos financieros'
   return false
 }
 
@@ -64,7 +68,7 @@ const getSubTypesForMacro = (macro: MacroAccountType): AccountType[] => {
   if (macro === 'Pasivo') return ['Pasivo a corto plazo', 'Pasivo a largo plazo']
   if (macro === 'Capital') return ['Capital contable']
   if (macro === 'Ingreso') return ['Ingresos', 'Otros ingresos']
-  if (macro === 'Gasto') return ['Costos', 'Gastos de operación']
+  if (macro === 'Gasto') return ['Costos', 'Gastos de operación', 'Gastos financieros']
   return ACCOUNT_TYPES
 }
 
@@ -78,6 +82,7 @@ const money = (val: number) =>
 export function FinanceAccounting({
   accounts,
   onUpdateAccounts,
+  onDeleteAccount,
 }: FinanceAccountingProps) {
   const toast = useToast()
   const [macroTypeFilter, setMacroTypeFilter] = useState<MacroAccountType>('Todos')
@@ -115,6 +120,7 @@ export function FinanceAccounting({
   const [editBalance, setEditBalance] = useState<number>(0)
   const [editDescription, setEditDescription] = useState('')
   const [editStatus, setEditStatus] = useState<'Activa' | 'Inactiva'>('Activa')
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const createCodeValidation = useMemo(
     () => validateAccountCodeForType(code, type),
@@ -148,6 +154,7 @@ export function FinanceAccounting({
   }
 
   const handleOpenEditModal = (account: ChartAccount) => {
+    setConfirmingDelete(false)
     setEditingAccount(account)
     setEditCode(account.code)
     setEditName(account.name)
@@ -915,7 +922,10 @@ export function FinanceAccounting({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setEditingAccount(null)
+            if (e.target === e.currentTarget) {
+              setEditingAccount(null)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
@@ -929,7 +939,10 @@ export function FinanceAccounting({
               </div>
               <button
                 className="icon-button"
-                onClick={() => setEditingAccount(null)}
+                onClick={() => {
+                  setEditingAccount(null)
+                  setConfirmingDelete(false)
+                }}
                 aria-label="Cerrar modal de edición"
               >
                 <X size={18} />
@@ -1086,17 +1099,59 @@ export function FinanceAccounting({
                 </label>
               </div>
 
-              <div className="create-modal-actions">
-                <button
-                  type="button"
-                  className="button button-secondary"
-                  onClick={() => setEditingAccount(null)}
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <Check size={14} /> Guardar cambios
-                </button>
+              <div className={`create-modal-actions ${onDeleteAccount ? 'has-delete-action' : ''}`}>
+                {onDeleteAccount && (
+                  <div className="modal-delete-slot">
+                    {!confirmingDelete ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmingDelete(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar cuenta
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar <strong>{editingAccount.code}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            onDeleteAccount(editingAccount.id)
+                            setEditingAccount(null)
+                            setConfirmingDelete(false)
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmingDelete(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => {
+                      setEditingAccount(null)
+                      setConfirmingDelete(false)
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <Check size={14} /> Guardar cambios
+                  </button>
+                </div>
               </div>
             </form>
           </section>

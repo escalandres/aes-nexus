@@ -51,12 +51,14 @@ export interface InventoryItemLocation {
   productId: string
   sku: string
   name: string
+  category?: string
   warehouseId: string
   warehouseName: string
   stock: number
   reserved: number
   inTransit: number
   minStock: number
+  thresholdSource?: 'sku' | 'category'
   cost: number
   unitOfMeasure: string
   locationBin: string

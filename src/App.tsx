@@ -1,15 +1,22 @@
 import { useEffect, useState, useMemo, useRef, type FormEvent } from 'react'
 import {
   ArrowRight, ArrowUpRight, Bell, BellRing, BriefcaseBusiness,
-  CalendarDays, ChevronDown, CircleHelp, Clock3, Edit3, Eye,
+  ChevronDown, CircleHelp, Clock3, Edit3, Eye,
   FolderKanban, Landmark, LayoutDashboard, Menu,
   MoreHorizontal, Plus, Search, Settings2, ShoppingBag, ShoppingCart, Sparkles,
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
-  LogIn, LogOut,
+  LogIn, LogOut, BarChart3, BadgeCheck, Trash2,
 } from 'lucide-react'
-import { activities, opportunities } from './data/dashboard'
+import {
+  activities,
+  CRM_TODAY_ISO,
+  opportunities,
+  type CrmActivity,
+  type CrmActivityStatus,
+} from './data/dashboard'
+import { CrmActivitiesSection } from './components/CrmActivitiesSection'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
 import { createClientApi, type ClientAddress } from './services/clientService'
 import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
@@ -22,16 +29,30 @@ import { RoleSessionSelectorModal } from './components/RoleSessionSelectorModal'
 import { CrmEmployees } from './components/CrmEmployees'
 import { CrmPayroll } from './components/CrmPayroll'
 import { DirectorySheetModal, DirectoryEditModal } from './components/DirectorySheetModal'
-import { initialEmployees, type EmployeeRecord } from './data/employees'
 import {
+  initialEmployees,
+  isEmployeeSystemUser,
+  type EmployeeRecord,
+} from './data/employees'
+import {
+  CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
   ROLES_CHANGED_EVENT,
+  STORAGE_KEYS,
+  SYSTEM_MODULE_SECTIONS,
   USERS_CHANGED_EVENT,
   appendAuditLog,
+  buildProductCategoryLookup,
   detectClientDeviceBrowser,
   getWorkspaceUserRoleIds,
+  loadStoredCategoryStockThresholds,
   loadStoredRoleDefinitions,
   loadStoredWorkspaceUsers,
+  readStoredJson,
+  resolveEffectiveStockThreshold,
   resolveSessionIpAddress,
+  saveStoredCategoryStockThresholds,
+  writeStoredJson,
+  type CategoryStockThresholdRule,
   type RoleDefinition,
   type RoleKey,
   type WorkspaceUserRecord,
@@ -41,6 +62,9 @@ import {
   CAPABILITY_LABELS_ES,
   canAccessModule,
   canAccessSection,
+  canCreateInSection,
+  canDeleteInSection,
+  canEditInSection,
   getFirstAccessibleSection,
   getRequiredCapabilities,
   resolveEffectiveAccess,
@@ -51,7 +75,7 @@ import { QuotesSection } from './components/QuotesSection'
 import { OrdersSection } from './components/OrdersSection'
 import { SalesInvoices } from './components/SalesInvoices'
 import { SalesOverview } from './components/SalesOverview'
-import { initialQuotes, initialOrders, type Quote, type SalesOrder } from './data/sales'
+import { initialQuotes, initialOrders, type Quote, type SalesOrder, type SalesSectionTab } from './data/sales'
 import { initialProductsAndServices } from './data/products'
 import { OperationsInventory } from './components/OperationsInventory'
 import { OperationsTransfers } from './components/OperationsTransfers'
@@ -62,6 +86,27 @@ import { PurchasesOverview } from './components/PurchasesOverview'
 import { PurchasesRequisitions } from './components/PurchasesRequisitions'
 import { PurchasesReceptions } from './components/PurchasesReceptions'
 import { PurchasesInvoices } from './components/PurchasesInvoices'
+import { SalesReturnsSection } from './components/SalesReturnsSection'
+import { PurchasesReturnsSection } from './components/PurchasesReturnsSection'
+import {
+  canUserApproveWorkflowStep,
+  doesTransitionRequireApproval,
+  getAllowedNextStatusesForReturn,
+  getDefaultInitialStatusForReturn,
+  isReturnDeleteBlocked,
+  isReturnEditBlocked,
+  loadStoredCustomerReturns,
+  loadStoredReturnWorkflows,
+  loadStoredSupplierReturns,
+  saveStoredCustomerReturns,
+  saveStoredReturnWorkflows,
+  saveStoredSupplierReturns,
+  type CustomerReturn,
+  type CustomerReturnStatus,
+  type ReturnWorkflowsSettings,
+  type SupplierReturn,
+  type SupplierReturnStatus,
+} from './data/returns'
 import {
   initialRequisitions,
   type PurchaseRequisition,
@@ -83,39 +128,76 @@ import {
 } from './data/operations'
 import { FinanceReceivables } from './components/FinanceReceivables'
 import { FinancePayables } from './components/FinancePayables'
-import { FinanceExpenses } from './components/FinanceExpenses'
+import {
+  FinanceCompanyExpenses,
+  type ExpensesSectionTab,
+} from './components/FinanceCompanyExpenses'
 import { FinanceOverview } from './components/FinanceOverview'
 import { FinanceAccounting } from './components/FinanceAccounting'
 import { FinanceEbp } from './components/FinanceEbp'
 import { EbpBatchWizardModal, type EbpWizardCandidateLine } from './components/EbpBatchWizardModal'
+import { SupplierBankAccountsManager } from './components/SupplierBankAccountsManager'
 import {
+  getPreferredSupplierBankAccount,
   initialBankFormatPacks,
   initialEbpBatches,
   makeValidClabe,
-  validateEbpFieldValue,
+  normalizeSupplierBankAccounts,
   type BankFormatPack,
+  type EbpAggregationMode,
   type ElectronicPaymentBatch,
+  type SupplierBankAccount,
 } from './data/ebp'
 import {
   AdministrationSection,
   type AdminSectionTab,
   type DepartmentRecord,
   type PhysicalLocationRecord,
+  type SubsidiaryRecord,
 } from './components/AdministrationSection'
+import { ReportsSection, type ReportsSectionTab } from './components/ReportsSection'
+import { HelpCenterSection } from './components/HelpCenterSection'
+import { HELP_ARTICLES, HELP_FAQS, type HelpModuleTarget } from './data/helpCenter'
+import {
+  GlobalSearchModal,
+  type GlobalSearchIconKind,
+  type GlobalSearchItem,
+} from './components/GlobalSearchModal'
 import {
   initialBankAccounts,
   initialReceivables,
   initialPayables,
   initialExpenses,
+  initialExpenseBudgets,
+  initialRecurringExpenses,
   initialTransactions,
   initialChartAccounts,
   type BankAccount,
   type InvoiceReceivable,
   type BillPayable,
   type ExpenseRecord,
+  type ExpenseBudgetRule,
+  type ExpenseStatus,
+  type RecurringExpenseTemplate,
   type PaymentTransaction,
   type ChartAccount,
 } from './data/finance'
+import { WorkspaceSetupModal } from './components/WorkspaceSetupModal'
+import {
+  DEFAULT_WORKSPACE_SETUP_STATE,
+  loadWorkspaceSetupState,
+  saveWorkspaceSetupState,
+  type WorkspaceSetupPersistedState,
+  type WorkspaceSetupStepId,
+  type WorkspaceSetupStepView,
+} from './data/workspaceSetup'
+import { computeIncomeStatementData } from './components/IncomeStatementReport'
+import {
+  evaluateMarginAlerts,
+  loadMarginAlertSettings,
+  MARGIN_ALERTS_CHANGED_EVENT,
+  type MarginAlertSettings,
+} from './data/marginAlerts'
 
 const sections: { labelKey: TranslationKey; items: { name: string; labelKey: TranslationKey; icon: typeof LayoutDashboard; count?: string }[] }[] = [
   { labelKey: 'nav.workspace', items: [{ name: 'Inicio', labelKey: 'nav.home', icon: LayoutDashboard }] },
@@ -125,6 +207,8 @@ const sections: { labelKey: TranslationKey; items: { name: string; labelKey: Tra
     { name: 'Compras', labelKey: 'nav.purchases', icon: ShoppingCart, count: 'H3' },
     { name: 'Operaciones', labelKey: 'nav.operations', icon: WarehouseIcon, count: 'H3' },
     { name: 'Finanzas', labelKey: 'nav.finance', icon: WalletCards, count: 'H3' },
+    { name: 'Gastos', labelKey: 'nav.expenses', icon: Receipt, count: 'OPS' },
+    { name: 'Reportes', labelKey: 'nav.reports', icon: BarChart3, count: 'BI' },
     { name: 'Administración', labelKey: 'nav.admin', icon: ShieldCheck, count: 'H1' },
   ] },
 ]
@@ -135,7 +219,9 @@ const moduleDetails = {
   Compras: { icon: ShoppingCart, phase: 'H3 · MVP operativo', description: 'Centraliza requisiciones internas, órdenes de compra a proveedores, recepciones en almacén y facturas sincronizadas con Finanzas.', areas: ['Requisiciones y aprobación', 'Órdenes de compra', 'Recepciones en andén', 'Facturas de proveedor (CxP)'] },
   Operaciones: { icon: WarehouseIcon, phase: 'H3 · MVP operativo', description: 'Organiza el movimiento de productos desde compras y recepción hasta la entrega.', areas: ['Inventario por almacén', 'Traslados entre ubicaciones', 'Compras y recepciones', 'Entregas y devoluciones'] },
   Finanzas: { icon: WalletCards, phase: 'H3 · MVP operativo', description: 'Da seguimiento a saldos, cobros, pagos y gastos con finanzas operativas.', areas: ['Cuentas por cobrar y cobros', 'Cuentas por pagar', 'Gastos y reportes'] },
-  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Centros de costos', 'Historial de auditoría'] },
+  Gastos: { icon: Receipt, phase: 'OPS · Control de egresos', description: 'Control integral de egresos, flujo de autorización y pago, presupuestos por naturaleza y plantillas recurrentes.', areas: ['Resumen y control', 'Registro y pólizas', 'Presupuestos y alertas', 'Gastos recurrentes'] },
+  Reportes: { icon: BarChart3, phase: 'BI · Analítica ERP', description: 'Inteligencia financiera y operativa consolidada en tiempo real con exportación CSV e impresión.', areas: ['Resumen ejecutivo', 'Estado de Resultados', 'Finanzas y Tesorería', 'CxP y Pagos EBP', 'Ventas, Inventario y Nómina'] },
+  Administración: { icon: ShieldCheck, phase: 'H1 · Núcleo del sistema', description: 'Gestiona la estructura organizativa interna: subsidiarias, departamentos, sedes físicas, centros de costos e historial de auditoría.', areas: ['Subsidiarias y razones sociales', 'Departamentos y líderes', 'Ubicaciones físicas y sedes', 'Historial de auditoría'] },
 } as const
 
 type DirectoryRecord = {
@@ -163,6 +249,7 @@ type DirectoryRecord = {
   accountNumber?: string
   defaultReference?: string
   bankPackValues?: Record<string, Record<string, string>>
+  bankAccounts?: SupplierBankAccount[]
 }
 
 const clients: DirectoryRecord[] = [
@@ -174,26 +261,281 @@ const clients: DirectoryRecord[] = [
 ]
 
 const suppliers: DirectoryRecord[] = [
-  { supplierCode: 'PRV-001', name: 'Distribuidora Atlas', company: 'Atlas Comercial', email: 'contacto@atlascomercial.mx', phone: '55 3055 4820', status: 'Activo', lastActivity: 'Hoy', initials: 'DA', color: 'blue', rfc: 'ACO170812K90', bankName: 'BBVA México', clabe: makeValidClabe('01218000512098761'), accountNumber: '0512098761', defaultReference: '1049201', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } }, country: 'MX', city: 'CDMX', addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }] },
-  { supplierCode: 'PRV-002', name: 'Papelería Central', company: 'Central de Insumos', email: 'ventas@centralinsumos.mx', phone: '81 2104 6651', status: 'Activo', lastActivity: '3 nov', initials: 'PC', color: 'sage', rfc: 'CIN190305AB4', bankName: 'Banorte', clabe: makeValidClabe('07258000334455112'), accountNumber: '0334455112', defaultReference: '2055102', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } }, country: 'MX' },
-  { supplierCode: 'PRV-003', name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', rfc: 'LVA200918RT2', bankName: 'Santander', clabe: makeValidClabe('01432000991122334'), accountNumber: '9911223340', defaultReference: '3091122', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } }, country: 'MX' },
-  { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
+  {
+    supplierCode: 'PRV-001',
+    name: 'Distribuidora Atlas',
+    company: 'Atlas Comercial',
+    email: 'contacto@atlascomercial.mx',
+    phone: '55 3055 4820',
+    status: 'Activo',
+    lastActivity: 'Hoy',
+    initials: 'DA',
+    color: 'blue',
+    rfc: 'ACO170812K90',
+    currency: 'MXN',
+    bankName: 'BBVA México',
+    clabe: makeValidClabe('01218000512098761'),
+    accountNumber: '0512098761',
+    defaultReference: '1049201',
+    bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } },
+    bankAccounts: [
+      {
+        id: 'sba_atlas_1',
+        alias: 'BBVA Principal Mercancía',
+        bankName: 'BBVA México',
+        clabe: makeValidClabe('01218000512098761'),
+        accountNumber: '0512098761',
+        currency: 'MXN',
+        defaultReference: '1049201',
+        isDefault: true,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '012' } },
+      },
+      {
+        id: 'sba_atlas_2',
+        alias: 'Banorte Operativa Logística',
+        bankName: 'Banorte',
+        clabe: makeValidClabe('07218000912044551'),
+        accountNumber: '0912044551',
+        currency: 'MXN',
+        defaultReference: '1049209',
+        isDefault: false,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+      },
+    ],
+    country: 'MX',
+    city: 'CDMX',
+    addresses: [{ id: 's1', street: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', zipCode: '02300', country: 'MX', isShipping: true, isBilling: true }],
+  },
+  {
+    supplierCode: 'PRV-002',
+    name: 'Papelería Central',
+    company: 'Central de Insumos',
+    email: 'ventas@centralinsumos.mx',
+    phone: '81 2104 6651',
+    status: 'Activo',
+    lastActivity: '3 nov',
+    initials: 'PC',
+    color: 'sage',
+    rfc: 'CIN190305AB4',
+    currency: 'MXN',
+    bankName: 'Banorte',
+    clabe: makeValidClabe('07258000334455112'),
+    accountNumber: '0334455112',
+    defaultReference: '2055102',
+    bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+    bankAccounts: [
+      {
+        id: 'sba_central_1',
+        alias: 'Banorte Cuenta Principal',
+        bankName: 'Banorte',
+        clabe: makeValidClabe('07258000334455112'),
+        accountNumber: '0334455112',
+        currency: 'MXN',
+        defaultReference: '2055102',
+        isDefault: true,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '01', destBankCode: '072' } },
+      },
+      {
+        id: 'sba_central_2',
+        alias: 'Santander Sucursal Monterrey',
+        bankName: 'Santander',
+        clabe: makeValidClabe('01458000778899001'),
+        accountNumber: '7788990012',
+        currency: 'MXN',
+        defaultReference: '2055199',
+        isDefault: false,
+        active: true,
+        bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } },
+      },
+    ],
+    country: 'MX',
+  },
+  { supplierCode: 'PRV-003', name: 'Logística del Valle', company: 'Logística del Valle', email: 'operaciones@logisticavalle.mx', phone: '33 3810 9920', status: 'Prospecto', lastActivity: '30 oct', initials: 'LV', color: 'lilac', rfc: 'LVA200918RT2', currency: 'MXN', bankName: 'Santander', clabe: makeValidClabe('01432000991122334'), accountNumber: '9911223340', defaultReference: '3091122', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '014' } }, country: 'MX' },
+  { supplierCode: 'PRV-004', name: 'Servicios Nube', company: 'Nube Digital', email: 'soporte@nubedigital.mx', phone: '55 7284 1176', status: 'Activo', lastActivity: '25 oct', initials: 'SN', color: 'peach', rfc: 'NDI181122M88', currency: 'MXN', bankName: 'HSBC', clabe: makeValidClabe('02118000665544332'), accountNumber: '6655443320', defaultReference: '4066554', bankPackValues: { pack_banorte_bem_pagos: { operationCode: '04', destBankCode: '021' } }, country: 'MX' },
+]
+
+const initialSubsidiaries: SubsidiaryRecord[] = [
+  {
+    id: 'sub_1',
+    code: 'SUB-MX',
+    name: 'AES Nexus México (Matriz)',
+    legalName: 'AES Nexus Corporativo México S.A. de C.V.',
+    taxId: 'ANM210412KX8',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Andrea Morales',
+    fiscalAddress: 'Paseo de la Reforma 222, Piso 14, Cuauhtémoc, CDMX',
+    isHolding: true,
+    active: true,
+  },
+  {
+    id: 'sub_2',
+    code: 'SUB-NTE',
+    name: 'AES Nexus Norte Operaciones',
+    legalName: 'AES Nexus Norte Logística S.A.P.I. de C.V.',
+    taxId: 'ANN220815PL4',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Roberto Santos',
+    fiscalAddress: 'Av. Constitución 1400, Monterrey, Nuevo León',
+    isHolding: false,
+    active: true,
+  },
+  {
+    id: 'sub_3',
+    code: 'SUB-OCC',
+    name: 'AES Nexus Occidente Comercial',
+    legalName: 'AES Nexus Occidente S. de R.L. de C.V.',
+    taxId: 'ANO230309TR1',
+    country: 'México',
+    currency: 'MXN',
+    legalRep: 'Carlos Méndez',
+    fiscalAddress: 'Av. Chapultepec 480, Guadalajara, Jalisco',
+    isHolding: false,
+    active: true,
+  },
 ]
 
 const initialDepartments: DepartmentRecord[] = [
-  { id: 'dep_1', code: 'DIR-01', name: 'Dirección General', leader: 'Andrea Morales', costCenter: 'CC-100', description: 'Toma de decisiones estratégicas y gobierno corporativo.', active: true },
-  { id: 'dep_2', code: 'OPE-02', name: 'Operaciones y Logística', leader: 'Roberto Santos', costCenter: 'CC-200', description: 'Control de inventarios, compras, almacén y distribución.', active: true },
-  { id: 'dep_3', code: 'FIN-03', name: 'Finanzas y Tesorería', leader: 'Gabriela Morales', costCenter: 'CC-300', description: 'Flujo de caja, cuentas por cobrar, pagos e impuestos.', active: true },
-  { id: 'dep_4', code: 'VEN-04', name: 'Ventas y Comercial', leader: 'Carlos Méndez', costCenter: 'CC-400', description: 'Prospección, cotizaciones, pedidos y atención a cuentas.', active: true },
-  { id: 'dep_5', code: 'TEC-05', name: 'Tecnología y Sistemas', leader: 'Laura R.', costCenter: 'CC-500', description: 'Infraestructura TI, software ERP y soporte técnico.', active: true },
+  { id: 'dep_1', code: 'DIR-01', name: 'Dirección General', leader: 'Andrea Morales', costCenter: 'CC-100', description: 'Toma de decisiones estratégicas y gobierno corporativo.', subsidiaryIds: ['sub_1', 'sub_2', 'sub_3'], active: true },
+  { id: 'dep_2', code: 'OPE-02', name: 'Operaciones y Logística', leader: 'Roberto Santos', costCenter: 'CC-200', description: 'Control de inventarios, compras, almacén y distribución.', subsidiaryIds: ['sub_1', 'sub_2'], active: true },
+  { id: 'dep_3', code: 'FIN-03', name: 'Finanzas y Tesorería', leader: 'Gabriela Morales', costCenter: 'CC-300', description: 'Flujo de caja, cuentas por cobrar, pagos e impuestos.', subsidiaryIds: ['sub_1', 'sub_2', 'sub_3'], active: true },
+  { id: 'dep_4', code: 'VEN-04', name: 'Ventas y Comercial', leader: 'Carlos Méndez', costCenter: 'CC-400', description: 'Prospección, cotizaciones, pedidos y atención a cuentas.', subsidiaryIds: ['sub_1', 'sub_3'], active: true },
+  { id: 'dep_5', code: 'TEC-05', name: 'Tecnología y Sistemas', leader: 'Laura R.', costCenter: 'CC-500', description: 'Infraestructura TI, software ERP y soporte técnico.', subsidiaryIds: ['sub_1'], active: true },
 ]
 
 const initialLocations: PhysicalLocationRecord[] = [
-  { id: 'loc_1', code: 'CORP-CDMX', name: 'Sede Corporativa Reforma', type: 'Oficina corporativa', address: 'Paseo de la Reforma 222, Piso 14', city: 'Ciudad de México', state: 'CDMX', country: 'México', manager: 'Andrea Morales', active: true },
-  { id: 'loc_2', code: 'ALM-VALLEJO', name: 'Almacén Central Vallejo', type: 'Almacén / Bodega', address: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', country: 'México', manager: 'Roberto Santos', active: true },
-  { id: 'loc_3', code: 'SUC-MTY', name: 'Sucursal y Bodega Monterrey', type: 'Sucursal', address: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', country: 'México', manager: 'Diego Fernández', active: true },
-  { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', active: true },
+  { id: 'loc_1', code: 'CORP-CDMX', name: 'Sede Corporativa Reforma', type: 'Oficina corporativa', address: 'Paseo de la Reforma 222, Piso 14', city: 'Ciudad de México', state: 'CDMX', country: 'México', manager: 'Andrea Morales', subsidiaryIds: ['sub_1'], active: true },
+  { id: 'loc_2', code: 'ALM-VALLEJO', name: 'Almacén Central Vallejo', type: 'Almacén / Bodega', address: 'Calz. Vallejo 1020, Bodega 4', city: 'Azcapotzalco', state: 'CDMX', country: 'México', manager: 'Roberto Santos', subsidiaryIds: ['sub_1', 'sub_2'], active: true },
+  { id: 'loc_3', code: 'SUC-MTY', name: 'Sucursal y Bodega Monterrey', type: 'Sucursal', address: 'Av. Constitución 1400', city: 'Monterrey', state: 'Nuevo León', country: 'México', manager: 'Diego Fernández', subsidiaryIds: ['sub_2'], active: true },
+  { id: 'loc_4', code: 'SUC-GDL', name: 'Punto de Operación Guadalajara', type: 'Punto de venta', address: 'Av. Chapultepec 480', city: 'Guadalajara', state: 'Jalisco', country: 'México', manager: 'Valentina Ruiz', subsidiaryIds: ['sub_1', 'sub_3'], active: true },
 ]
+
+function loadStoredSubsidiaries(): SubsidiaryRecord[] {
+  const raw = readStoredJson<SubsidiaryRecord[] | null>(STORAGE_KEYS.subsidiaries, null)
+  if (!Array.isArray(raw)) return initialSubsidiaries
+  return raw
+    .filter((item): item is SubsidiaryRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => ({
+      ...item,
+      code: String(item.code || '').toUpperCase(),
+      country: item.country || 'México',
+      currency: String(item.currency || 'MXN').toUpperCase(),
+      isHolding: Boolean(item.isHolding),
+      active: item.active !== false,
+    }))
+}
+
+function normalizeSubsidiaryIdsList(ids: unknown, validSubIds: Set<string>, fallbackIds: string[] = []): string[] {
+  if (!Array.isArray(ids)) return fallbackIds.filter((id) => validSubIds.has(id))
+  const seen = new Set<string>()
+  const next: string[] = []
+  for (const rawId of ids) {
+    if (typeof rawId !== 'string' || !validSubIds.has(rawId) || seen.has(rawId)) continue
+    seen.add(rawId)
+    next.push(rawId)
+  }
+  return next
+}
+
+function loadStoredDepartments(validSubIds: Set<string>): DepartmentRecord[] {
+  const raw = readStoredJson<DepartmentRecord[] | null>(STORAGE_KEYS.departments, null)
+  if (!Array.isArray(raw)) return initialDepartments
+  return raw
+    .filter((item): item is DepartmentRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => {
+      const seedMatch = initialDepartments.find((d) => d.id === item.id)
+      return {
+        ...item,
+        code: String(item.code || '').toUpperCase(),
+        subsidiaryIds: normalizeSubsidiaryIdsList(
+          item.subsidiaryIds,
+          validSubIds,
+          seedMatch?.subsidiaryIds || []
+        ),
+        active: item.active !== false,
+      }
+    })
+}
+
+function loadStoredLocations(validSubIds: Set<string>): PhysicalLocationRecord[] {
+  const raw = readStoredJson<PhysicalLocationRecord[] | null>(STORAGE_KEYS.locations, null)
+  if (!Array.isArray(raw)) return initialLocations
+  return raw
+    .filter((item): item is PhysicalLocationRecord => Boolean(item && typeof item.id === 'string' && typeof item.name === 'string'))
+    .map((item) => {
+      const seedMatch = initialLocations.find((l) => l.id === item.id)
+      return {
+        ...item,
+        code: String(item.code || '').toUpperCase(),
+        country: item.country || 'México',
+        subsidiaryIds: normalizeSubsidiaryIdsList(
+          item.subsidiaryIds,
+          validSubIds,
+          seedMatch?.subsidiaryIds || []
+        ),
+        active: item.active !== false,
+      }
+    })
+}
+
+function buildWarehousesFromLocations(persistedLocations: PhysicalLocationRecord[]): Warehouse[] {
+  const matchedLocationIds = new Set<string>()
+  const syncedDefaults = initialWarehouses
+    .map((w) => {
+      const matched = persistedLocations.find(
+        (l) =>
+          l.id === w.locationId ||
+          l.code.toLowerCase() === w.code.toLowerCase() ||
+          l.name.toLowerCase() === w.name.toLowerCase()
+      )
+      if (!matched) {
+        return w.locationId ? null : w
+      }
+      matchedLocationIds.add(matched.id)
+      return {
+        ...w,
+        active: matched.active,
+        name: matched.name,
+        city: matched.city,
+        state: matched.state,
+        address: matched.address,
+        locationType: matched.type,
+      }
+    })
+    .filter((w): w is Warehouse => w !== null)
+
+  const extraWarehouses: Warehouse[] = persistedLocations
+    .filter(
+      (loc) =>
+        !matchedLocationIds.has(loc.id) &&
+        loc.id !== 'loc_1' &&
+        !syncedDefaults.some(
+          (w) =>
+            w.locationId === loc.id ||
+            w.code.toLowerCase() === loc.code.toLowerCase() ||
+            w.name.toLowerCase() === loc.name.toLowerCase()
+        )
+    )
+    .map((loc) => ({
+      id: `wh_${loc.id}`,
+      code: loc.code,
+      name: loc.name,
+      city: loc.city,
+      state: loc.state,
+      address: loc.address,
+      capacityPercentage: 0,
+      isDefault: false,
+      active: loc.active,
+      locationId: loc.id,
+      locationType: loc.type,
+    }))
+
+  return [...syncedDefaults, ...extraWarehouses]
+}
 
 const accentOptions = [
   { id: 'green', label: 'Verde', color: '#456a61', description: 'Natural y equilibrado' },
@@ -249,18 +591,47 @@ const pageRoutes: Record<string, string> = {
   Compras: '/purchases',
   Operaciones: '/operations',
   Finanzas: '/finance',
+  Gastos: '/expenses',
+  Reportes: '/reports',
   Administración: '/admin',
   Configuración: '/settings',
+  'Centro de ayuda': '/help',
 }
 
 const pageFromPath = (pathname: string) => {
   if (pathname.startsWith('/crm')) return 'CRM'
   if (pathname.startsWith('/sales') || pathname.startsWith('/ventas')) return 'Ventas'
-  if (pathname.startsWith('/purchases') || pathname.startsWith('/compras')) return 'Compras'
+  if (
+    pathname.startsWith('/purchases') ||
+    pathname.startsWith('/compras') ||
+    pathname === '/vendorbill' ||
+    pathname === '/vendorbills'
+  ) {
+    return 'Compras'
+  }
   if (pathname.startsWith('/operations') || pathname.startsWith('/operaciones')) return 'Operaciones'
+  if (
+    pathname === '/finance/company-expenses' ||
+    pathname === '/finance/gastos-empresa' ||
+    pathname === '/finanzas/gastos-empresa' ||
+    pathname === '/finance/expenses' ||
+    pathname === '/finance/gastos' ||
+    pathname === '/finanzas/gastos'
+  ) {
+    return 'Gastos'
+  }
   if (pathname.startsWith('/finance') || pathname.startsWith('/finanzas')) return 'Finanzas'
+  if (pathname.startsWith('/expenses') || pathname.startsWith('/gastos')) return 'Gastos'
+  if (pathname.startsWith('/reports') || pathname.startsWith('/reportes')) return 'Reportes'
+  if (pathname.startsWith('/admin') || pathname.startsWith('/administracion')) return 'Administración'
+  if (
+    pathname.startsWith('/help') ||
+    pathname.startsWith('/ayuda') ||
+    pathname.startsWith('/centro-ayuda')
+  ) {
+    return 'Centro de ayuda'
+  }
   const normalized = pathname.replace(/\/$/, '') || '/'
-  if (normalized === '/administracion') return 'Administración'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
 }
 
@@ -271,8 +642,16 @@ const purchasesSectionFromPath = (pathname: string): PurchasesSectionTab =>
     ? 'Órdenes de compra'
     : pathname === '/purchases/receptions' || pathname === '/compras/recepciones'
     ? 'Recepciones'
-    : pathname === '/purchases/invoices' || pathname === '/compras/facturas'
+    : pathname === '/purchases/vendorbill' ||
+      pathname === '/purchases/vendorbills' ||
+      pathname === '/purchases/vendor-bills' ||
+      pathname === '/vendorbill' ||
+      pathname === '/vendorbills' ||
+      pathname === '/purchases/invoices' ||
+      pathname === '/compras/facturas'
     ? 'Facturas'
+    : pathname === '/purchases/returns' || pathname === '/compras/devoluciones'
+    ? 'Devoluciones'
     : 'Resumen'
 
 const crmSectionFromPath = (pathname: string) =>
@@ -290,13 +669,15 @@ const crmSectionFromPath = (pathname: string) =>
     ? 'Actividades'
     : 'Resumen'
 
-const salesSectionFromPath = (pathname: string) =>
+const salesSectionFromPath = (pathname: string): SalesSectionTab =>
   pathname === '/sales/quotes' || pathname === '/ventas/cotizaciones'
     ? 'Cotizaciones'
     : pathname === '/sales/orders' || pathname === '/ventas/pedidos'
     ? 'Pedidos'
     : pathname === '/sales/invoices' || pathname === '/ventas/facturas'
     ? 'Facturas'
+    : pathname === '/sales/returns' || pathname === '/ventas/devoluciones'
+    ? 'Devoluciones'
     : pathname === '/sales/summary' || pathname === '/ventas/resumen'
     ? 'Resumen'
     : 'Catálogo'
@@ -319,40 +700,168 @@ const financeSectionFromPath = (pathname: string) =>
     ? 'Pagos Bancarios'
     : pathname === '/finance/payables' || pathname === '/finance/pagos' || pathname === '/finanzas/pagos'
     ? 'Pagos'
-    : pathname === '/finance/expenses' || pathname === '/finance/gastos' || pathname === '/finanzas/gastos'
-    ? 'Gastos'
     : pathname === '/finance/summary' || pathname === '/finance/resumen' || pathname === '/finanzas/resumen'
     ? 'Resumen'
     : 'Cobros'
 
+const expensesSectionFromPath = (pathname: string): ExpensesSectionTab =>
+  pathname === '/expenses/ledger' || pathname === '/gastos/polizas'
+    ? 'Registro y pólizas'
+    : pathname === '/expenses/budgets' || pathname === '/gastos/presupuestos'
+      ? 'Presupuestos y alertas'
+      : pathname === '/expenses/recurring' || pathname === '/gastos/recurrentes'
+        ? 'Gastos recurrentes'
+        : 'Resumen y control'
+
+const reportsSectionFromPath = (pathname: string): ReportsSectionTab =>
+  pathname === '/reports/income-statement' || pathname === '/reportes/estado-resultados'
+    ? 'Estado de Resultados'
+    : pathname === '/reports/financial' || pathname === '/reportes/finanzas'
+    ? 'Finanzas y Tesorería'
+    : pathname === '/reports/payables-ebp' || pathname === '/reportes/cxp-ebp'
+    ? 'CxP y Pagos EBP'
+    : pathname === '/reports/sales' || pathname === '/reportes/ventas'
+    ? 'Ventas y CxC'
+    : pathname === '/reports/inventory' || pathname === '/reportes/inventario'
+    ? 'Compras e Inventario'
+    : pathname === '/reports/payroll' || pathname === '/reportes/nomina'
+    ? 'Nómina y RRHH'
+    : 'Resumen ejecutivo'
+
 const adminSectionFromPath = (pathname: string): AdminSectionTab =>
-  pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
+  pathname.startsWith('/admin/subsidiaries') ||
+  pathname.startsWith('/admin/subsidiarias') ||
+  pathname.startsWith('/administracion/subsidiarias')
+    ? 'Subsidiarias'
+    : pathname === '/admin/locations' || pathname === '/admin/ubicaciones' || pathname === '/administracion/ubicaciones'
     ? 'Ubicaciones'
+    : pathname === '/admin/return-workflows' ||
+      pathname === '/admin/flujos-devoluciones' ||
+      pathname === '/administracion/flujos-devoluciones'
+    ? 'Flujos de devoluciones'
     : pathname === '/admin/summary' || pathname === '/admin/resumen' || pathname === '/administracion/resumen'
     ? 'Resumen'
     : pathname === '/admin/audit' || pathname === '/admin/auditoria' || pathname === '/administracion/auditoria'
     ? 'Historial de Auditoría'
     : 'Departamentos'
 
+const subsidiaryIdFromPath = (pathname: string): string | null => {
+  const prefixes = ['/admin/subsidiaries/', '/admin/subsidiarias/', '/administracion/subsidiarias/']
+  for (const prefix of prefixes) {
+    if (pathname.startsWith(prefix)) {
+      const slug = pathname.slice(prefix.length).split('/')[0]?.trim()
+      if (!slug) return null
+      if (slug === 'nueva' || slug === 'new') return '__new__'
+      try {
+        return decodeURIComponent(slug)
+      } catch {
+        return slug
+      }
+    }
+  }
+  return null
+}
+
 function AppContent() {
   const toast = useToast()
   const { t } = useI18n()
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
-  const [salesSection, setSalesSection] = useState<'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen'>(() => salesSectionFromPath(window.location.pathname))
+  const [salesSection, setSalesSection] = useState<SalesSectionTab>(() => salesSectionFromPath(window.location.pathname))
   const [purchasesSection, setPurchasesSection] = useState<PurchasesSectionTab>(() => purchasesSectionFromPath(window.location.pathname))
   const [operationsSection, setOperationsSection] = useState<'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'>(() => operationsSectionFromPath(window.location.pathname))
-  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [financeSection, setFinanceSection] = useState<'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen'>(() => financeSectionFromPath(window.location.pathname))
+  const [expensesSection, setExpensesSection] = useState<ExpensesSectionTab>(() => expensesSectionFromPath(window.location.pathname))
+  const [reportsSection, setReportsSection] = useState<ReportsSectionTab>(() => reportsSectionFromPath(window.location.pathname))
   const [adminSection, setAdminSection] = useState<AdminSectionTab>(() => adminSectionFromPath(window.location.pathname))
+  const [selectedSubsidiaryId, setSelectedSubsidiaryId] = useState<string | null>(() =>
+    subsidiaryIdFromPath(window.location.pathname)
+  )
   const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
   const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
+  const [customerReturns, setCustomerReturns] = useState<CustomerReturn[]>(() => loadStoredCustomerReturns())
+  const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>(() => loadStoredSupplierReturns())
+  const [returnWorkflows, setReturnWorkflows] = useState<ReturnWorkflowsSettings>(() => loadStoredReturnWorkflows())
   const [presetOrderToInvoice, setPresetOrderToInvoice] = useState<SalesOrder | null>(null)
   const [presetInvoiceIdToView, setPresetInvoiceIdToView] = useState<string | null>(null)
   const [presetOrderFolioToView, setPresetOrderFolioToView] = useState<string | null>(null)
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(initialWarehouses)
+  const [subsidiaries, setSubsidiaries] = useState<SubsidiaryRecord[]>(() => loadStoredSubsidiaries())
+  const [departments, setDepartments] = useState<DepartmentRecord[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return loadStoredDepartments(validSubIds)
+  })
+  const [locations, setLocations] = useState<PhysicalLocationRecord[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return loadStoredLocations(validSubIds)
+  })
+  const [warehouses, setWarehouses] = useState<Warehouse[]>(() => {
+    const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
+    return buildWarehousesFromLocations(loadStoredLocations(validSubIds))
+  })
   const [inventory, setInventory] = useState<InventoryItemLocation[]>(initialInventory)
   const [transfers, setTransfers] = useState<InventoryTransfer[]>(initialTransfers)
   const [presetTransferItem, setPresetTransferItem] = useState<InventoryItemLocation | null>(null)
+  const [categoryStockThresholds, setCategoryStockThresholds] = useState<CategoryStockThresholdRule[]>(
+    () => loadStoredCategoryStockThresholds()
+  )
+
+  useEffect(() => {
+    const syncCategoryThresholds = (e: Event) => {
+      const custom = e as CustomEvent<{ rules?: CategoryStockThresholdRule[] }>
+      if (custom.detail?.rules) {
+        setCategoryStockThresholds(custom.detail.rules)
+      } else {
+        setCategoryStockThresholds(loadStoredCategoryStockThresholds())
+      }
+    }
+    window.addEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, syncCategoryThresholds)
+    return () =>
+      window.removeEventListener(CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT, syncCategoryThresholds)
+  }, [])
+
+  const productCategoryMap = useMemo(
+    () => buildProductCategoryLookup(initialProductsAndServices),
+    []
+  )
+
+  const effectiveInventory = useMemo<InventoryItemLocation[]>(() => {
+    return inventory.map((item) => {
+      const resolved = resolveEffectiveStockThreshold(
+        item,
+        categoryStockThresholds,
+        productCategoryMap
+      )
+      if (resolved.effectiveMinStock === item.minStock && item.category === resolved.category) {
+        return item
+      }
+      return {
+        ...item,
+        category: resolved.category,
+        minStock: resolved.effectiveMinStock,
+      }
+    })
+  }, [inventory, categoryStockThresholds, productCategoryMap])
+
+  const handleUpdateCategoryThresholds = (nextRules: CategoryStockThresholdRule[]) => {
+    setCategoryStockThresholds(nextRules)
+    saveStoredCategoryStockThresholds(nextRules)
+    const activeSummary = nextRules
+      .filter((r) => r.enabled)
+      .map(
+        (r) =>
+          `${r.category}: ${r.minStock} uds. (${r.mode === 'override_sku' ? 'Forzado' : 'Heredado'})`
+      )
+      .join(' · ')
+    appendAuditLog({
+      category: 'settings',
+      crudOperation: 'UPDATE',
+      entityType: 'Umbral por categoría',
+      action: 'Actualización de umbrales de stock por categoría',
+      detail: activeSummary || `${nextRules.length} categoría(s) configuradas`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+  }
 
   // Notificaciones Push y Alerta Persistente de Stock en Barra Superior
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => {
@@ -401,10 +910,10 @@ function AppContent() {
     }
   }
 
-  // Ítems de inventario bajo umbral mínimo
+  // Ítems de inventario bajo umbral mínimo (considerando umbrales por categoría y SKU)
   const lowStockItems = useMemo(() => {
-    return inventory.filter((item) => item.stock <= item.minStock)
-  }, [inventory])
+    return effectiveInventory.filter((item) => item.stock <= item.minStock)
+  }, [effectiveInventory])
 
   // Estado del Centro de Notificaciones Superior
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false)
@@ -467,10 +976,116 @@ function AppContent() {
   const [receivables, setReceivables] = useState<InvoiceReceivable[]>(initialReceivables)
   const [payables, setPayables] = useState<BillPayable[]>(initialPayables)
   const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetRule[]>(initialExpenseBudgets)
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseTemplate[]>(initialRecurringExpenses)
   const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
   const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
-  const [departments, setDepartments] = useState<DepartmentRecord[]>(initialDepartments)
-  const [locations, setLocations] = useState<PhysicalLocationRecord[]>(initialLocations)
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
+
+  const [marginAlertSettings, setMarginAlertSettings] = useState<MarginAlertSettings>(() =>
+    loadMarginAlertSettings()
+  )
+
+  useEffect(() => {
+    const syncMarginAlertSettings = (e: Event) => {
+      const custom = e as CustomEvent<{ settings?: MarginAlertSettings }>
+      if (custom.detail?.settings) {
+        setMarginAlertSettings(custom.detail.settings)
+      } else {
+        setMarginAlertSettings(loadMarginAlertSettings())
+      }
+    }
+    const handleStorageSync = (e: StorageEvent) => {
+      if (!e.key || e.key === 'aes_nexus_pnl_margin_alerts_v1') {
+        setMarginAlertSettings(loadMarginAlertSettings())
+      }
+    }
+    window.addEventListener(MARGIN_ALERTS_CHANGED_EVENT, syncMarginAlertSettings)
+    window.addEventListener('storage', handleStorageSync)
+    return () => {
+      window.removeEventListener(MARGIN_ALERTS_CHANGED_EVENT, syncMarginAlertSettings)
+      window.removeEventListener('storage', handleStorageSync)
+    }
+  }, [])
+
+  const livePnlMarginEval = useMemo(() => {
+    const computedPnl = computeIncomeStatementData({
+      scopedExpenses: expenses.filter((e) => e.status !== 'Cancelado'),
+      allExpenses: expenses,
+      chartAccounts,
+      scopedReceivables: receivables,
+      allReceivables: receivables,
+      scopedOrders: orders,
+      allOrders: orders,
+      inventory,
+      scopedPayrollRuns: payrollRuns,
+      allPayrollRuns: payrollRuns,
+      sourceMode: 'consolidated',
+      taxRate: 30,
+      currencyFilter: 'Todas',
+      hasScopedDateOrOrgFilter: false,
+    })
+    return evaluateMarginAlerts({
+      operatingMarginPct: computedPnl.operatingMarginPct,
+      netMarginPct: computedPnl.netMarginPct,
+      operatingIncome: computedPnl.operatingIncome,
+      netIncome: computedPnl.netIncome,
+      totalRevenue: computedPnl.totalRevenue,
+      settings: marginAlertSettings,
+    })
+  }, [expenses, chartAccounts, receivables, orders, inventory, payrollRuns, marginAlertSettings])
+
+  const prevGlobalPnlBreachRef = useRef<string | null>(null)
+  useEffect(() => {
+    const signature = livePnlMarginEval.triggeredAlerts
+      .map((a) => `${a.id}:${a.severity}:${a.targetPct}`)
+      .join('|')
+    if (prevGlobalPnlBreachRef.current === null) {
+      prevGlobalPnlBreachRef.current = signature
+      return
+    }
+    const isViewingPnl =
+      activePage === 'Reportes' && reportsSection === 'Estado de Resultados'
+    if (
+      !isViewingPnl &&
+      signature !== '' &&
+      signature !== prevGlobalPnlBreachRef.current &&
+      marginAlertSettings.enabled &&
+      marginAlertSettings.notifyInAppToast &&
+      pushEnabled
+    ) {
+      const hasCritical = livePnlMarginEval.triggeredAlerts.some(
+        (a) => a.severity === 'critical'
+      )
+      const summary = livePnlMarginEval.triggeredAlerts.map((a) => a.message).join(' ')
+      if (hasCritical) {
+        toast.error(summary, 'Alerta crítica · Estado de Resultados')
+      } else {
+        toast.warning(summary, 'Alerta de margen · Estado de Resultados')
+      }
+    }
+    prevGlobalPnlBreachRef.current = signature
+  }, [
+    livePnlMarginEval.triggeredAlerts,
+    marginAlertSettings.enabled,
+    marginAlertSettings.notifyInAppToast,
+    pushEnabled,
+    activePage,
+    reportsSection,
+    toast,
+  ])
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.subsidiaries, subsidiaries)
+  }, [subsidiaries])
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.departments, departments)
+  }, [departments])
+
+  useEffect(() => {
+    writeStoredJson(STORAGE_KEYS.locations, locations)
+  }, [locations])
 
   // Centro de Notificaciones: Avisos dinámicos conectados a Operaciones, Finanzas y Ventas + estado leído/descartado
   const [notifPrefState, setNotifPrefState] = useState<{
@@ -507,13 +1122,39 @@ function AppContent() {
     title: string
     desc: string
     meta: string
-    targetModule: 'Compras' | 'Operaciones' | 'Finanzas' | 'Ventas'
+    targetModule: 'Compras' | 'Operaciones' | 'Finanzas' | 'Ventas' | 'Reportes'
     targetSection: string
     actionLabel: string
   }
 
   const liveSystemNotifications = useMemo<SystemNotice[]>(() => {
     const items: SystemNotice[] = []
+
+    if (
+      marginAlertSettings.enabled &&
+      marginAlertSettings.notifyNotificationCenter &&
+      livePnlMarginEval.triggeredAlerts.length > 0
+    ) {
+      const breachedNames = livePnlMarginEval.triggeredAlerts
+        .map((a) => a.metricLabel)
+        .join(' y ')
+      items.push({
+        id: 'pnl_margin_alert',
+        fingerprint: livePnlMarginEval.triggeredAlerts
+          .map(
+            (a) =>
+              `${a.id}:${a.severity}:${a.currentPct.toFixed(1)}:${a.targetPct.toFixed(1)}`
+          )
+          .join('|'),
+        tone: 'amber',
+        title: `Alerta de rentabilidad: ${breachedNames} bajo objetivo`,
+        desc: livePnlMarginEval.triggeredAlerts.map((a) => a.message).join(' '),
+        meta: 'Reportes · Estado de Resultados',
+        targetModule: 'Reportes',
+        targetSection: 'Estado de Resultados',
+        actionLabel: 'Ir a Estado de Resultados',
+      })
+    }
 
     const pendingShipments = shipments.filter(
       (s) => s.status === 'Preparando' || s.status === 'En ruta'
@@ -640,7 +1281,17 @@ function AppContent() {
     }
 
     return items
-  }, [shipments, purchaseOrders, receivables, payables, orders, quotes])
+  }, [
+    shipments,
+    purchaseOrders,
+    receivables,
+    payables,
+    orders,
+    quotes,
+    marginAlertSettings.enabled,
+    marginAlertSettings.notifyNotificationCenter,
+    livePnlMarginEval.triggeredAlerts,
+  ])
 
   const activeSystemNotifications = useMemo(
     () =>
@@ -718,9 +1369,12 @@ function AppContent() {
           return parsed.map((emp) => {
             const fallbackRoles = initialEmployees.find((i) => i.id === emp.id)?.roles || []
             const rawRoles = Array.isArray(emp.roles) ? emp.roles : fallbackRoles
+            const filteredRoles = rawRoles.filter((id) => validRoleIds.has(id))
+            const hasAccess = emp.hasSystemAccess !== false && filteredRoles.length > 0
             return {
               ...emp,
-              roles: rawRoles.filter((id) => validRoleIds.has(id)),
+              hasSystemAccess: hasAccess,
+              roles: hasAccess ? filteredRoles : [],
             }
           })
         }
@@ -746,9 +1400,10 @@ function AppContent() {
         let changed = false
         const next = prev.map((emp) => {
           const filtered = (emp.roles || []).filter((rId) => validIds.has(rId))
-          if (filtered.length !== (emp.roles || []).length) {
+          const nextAccess = emp.hasSystemAccess !== false && filtered.length > 0
+          if (filtered.length !== (emp.roles || []).length || emp.hasSystemAccess !== nextAccess) {
             changed = true
-            return { ...emp, roles: filtered }
+            return { ...emp, hasSystemAccess: nextAccess, roles: nextAccess ? filtered : [] }
           }
           return emp
         })
@@ -899,8 +1554,9 @@ function AppContent() {
       const empId = activeSessionId.slice(4)
       const emp = employees.find((e) => e.id === empId)
       if (emp) {
-        const empRoles = emp.roles || []
-        const isActive = emp.status !== 'Inactivo'
+        const isSysUser = isEmployeeSystemUser(emp, validRoleIds)
+        const empRoles = isSysUser ? (emp.roles || []).filter((id) => validRoleIds.has(id)) : []
+        const isActive = isSysUser && emp.status !== 'Inactivo'
         const fallbackUser = workspaceUsers.find((u) => u.status === 'active') || workspaceUsers[0]
         return {
           key: `emp:${emp.id}`,
@@ -911,12 +1567,12 @@ function AppContent() {
           initials: emp.initials,
           roles: empRoles,
           isActive,
-          statusLabel: emp.status,
-          subtitle: !isActive
+          statusLabel: !isSysUser ? 'Sin acceso' : emp.status,
+          subtitle: !isSysUser
+            ? 'Solo empleado (sin acceso)'
+            : emp.status === 'Inactivo'
             ? 'Inactivo'
-            : empRoles.length > 0
-            ? empRoles.map(getRoleDisplayName).join(', ')
-            : 'Sin rol asignado',
+            : empRoles.map(getRoleDisplayName).join(', '),
         }
       }
     }
@@ -941,7 +1597,21 @@ function AppContent() {
     }
   }, [activeSessionId, employees, workspaceUsers, roleDefinitions])
 
-  const { isFullAdmin, capabilities: activeCapabilities } = useMemo(
+  const activeActorUserId = useMemo(() => {
+    if (activeSessionProfile.kind === 'employee') {
+      return activeSessionProfile.key.slice(4) || activeSessionProfile.baseUserId
+    }
+    if (activeSessionProfile.kind === 'role') {
+      return activeSessionProfile.key
+    }
+    return activeSessionProfile.baseUserId
+  }, [activeSessionProfile])
+
+  const {
+    isFullAdmin,
+    capabilities: activeCapabilities,
+    sectionAccess: activeSectionAccess,
+  } = useMemo(
     () =>
       resolveEffectiveAccess(
         activeSessionProfile.roles,
@@ -1048,12 +1718,17 @@ function AppContent() {
     const nextAccess = resolveEffectiveAccess(nextRoles, roleDefinitions, true)
     if (
       activePage !== 'Inicio' &&
-      !canAccessModule(activePage, nextAccess.capabilities, nextAccess.isFullAdmin, true)
+      !canAccessModule(
+        activePage,
+        nextAccess.capabilities,
+        nextAccess.isFullAdmin,
+        true,
+        nextAccess.sectionAccess
+      )
     ) {
       navigateTo('Inicio')
     }
   }
-  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
   const [ebpPacks, setEbpPacks] = useState<BankFormatPack[]>(() => {
     try {
       const saved = window.localStorage.getItem('aes_nexus_ebp_packs_v1')
@@ -1070,6 +1745,7 @@ function AppContent() {
   const [globalEbpWizard, setGlobalEbpWizard] = useState<{
     isOpen: boolean
     batchType: 'Nómina' | 'Proveedores'
+    defaultAggregationMode?: EbpAggregationMode
     sourceRefId: string
     sourceFolio: string
     candidates: EbpWizardCandidateLine[]
@@ -1091,6 +1767,27 @@ function AppContent() {
     originalCompany: string
     record: DirectoryRecord
   } | null>(null)
+  const [editingOpportunity, setEditingOpportunity] = useState<{
+    index: number
+    company: string
+    person: string
+    value: string
+    stage: string
+    date: string
+  } | null>(null)
+  const [confirmDeleteOpp, setConfirmDeleteOpp] = useState(false)
+  const [editingActivity, setEditingActivity] = useState<{
+    index: number
+    title: string
+    company: string
+    date: string
+    time: string
+    icon: string
+    tone: 'blue' | 'amber' | 'green'
+    status: CrmActivityStatus
+    notes: string
+  } | null>(null)
+  const [confirmDeleteAct, setConfirmDeleteAct] = useState(false)
 
   const handleUpdateEbpPacks = (next: BankFormatPack[]) => {
     setEbpPacks(next)
@@ -1256,10 +1953,29 @@ function AppContent() {
         }
       }
     } else {
-      // Proveedores: liquidar facturas incluidas en el lote
-      const lineAmountByBillId = new Map(
-        batch.lines.map((l) => [l.sourceLineId, l.amount])
-      )
+      // Proveedores: liquidar todas las facturas individuales o consolidadas incluidas en el lote
+      const lineAmountByBillId = new Map<string, number>()
+      const paymentLabelByBillId = new Map<string, string>()
+
+      batch.lines.forEach((line) => {
+        const destLabel = `${batch.folio} · ${line.selectedBankAlias || line.bankName}`
+        if (line.billAllocations && line.billAllocations.length > 0) {
+          line.billAllocations.forEach((alloc) => {
+            lineAmountByBillId.set(
+              alloc.billId,
+              (lineAmountByBillId.get(alloc.billId) || 0) + alloc.amountToPay
+            )
+            paymentLabelByBillId.set(alloc.billId, `EBP ${destLabel}`)
+          })
+        } else {
+          lineAmountByBillId.set(
+            line.sourceLineId,
+            (lineAmountByBillId.get(line.sourceLineId) || 0) + line.amount
+          )
+          paymentLabelByBillId.set(line.sourceLineId, `EBP ${destLabel}`)
+        }
+      })
+
       setPayables((prev) =>
         prev.map((bill) => {
           const paidDelta = lineAmountByBillId.get(bill.id)
@@ -1271,21 +1987,29 @@ function AppContent() {
             paidAmount: nextPaid,
             balance: nextBal,
             status: nextBal === 0 ? 'Pagada' : 'Parcial',
-            paymentMethod: `EBP · ${batch.folio}`,
+            paymentMethod: paymentLabelByBillId.get(bill.id) || `EBP · ${batch.folio}`,
           }
         })
       )
       handleUpdateBankAccountBalance(bankAcc.id, -batch.totalAmount)
-      handleAddTransaction({
-        id: `txn_${Date.now()}`,
-        folio: `PAG-2026-${String(transactions.length + 1).padStart(3, '0')}`,
-        date: dateStr,
-        type: 'Pago a proveedor',
-        entityName: `Lote EBP (${batch.operationsCount} proveedores)`,
-        reference: `${batch.folio} · ${batch.generatedFilename}`,
-        amount: batch.totalAmount,
-        method: `EBP (${batch.packName})`,
-        account: bankAcc.bankName,
+      batch.lines.forEach((line, idx) => {
+        const foliosText =
+          line.billAllocations && line.billAllocations.length > 0
+            ? line.billAllocations.map((a) => a.billFolio).join(', ')
+            : line.beneficiaryCode
+        const destAccText = line.selectedBankAlias || `${line.bankName} ${line.clabe.slice(-4)}`
+        const reasonText = line.paymentReason ? ` · ${line.paymentReason}` : ''
+        handleAddTransaction({
+          id: `txn_${Date.now()}_${idx}`,
+          folio: `PAG-2026-${String(transactions.length + idx + 1).padStart(3, '0')}`,
+          date: dateStr,
+          type: 'Pago a proveedor',
+          entityName: line.beneficiaryName,
+          reference: `${batch.folio} (${destAccText})${reasonText} · Facturas: ${foliosText}`,
+          amount: line.amount,
+          method: `EBP (${batch.packName})`,
+          account: bankAcc.bankName,
+        })
       })
       const bankAccCode = bankAcc.id === 'bank_2' ? '1002-002' : '1002-001'
       setChartAccounts((prev) =>
@@ -1310,7 +2034,7 @@ function AppContent() {
     appendAuditLog({
       category: 'finance',
       action: 'Dispersión bancaria aplicada (EBP)',
-      detail: `Lote ${batch.folio} aplicado en banco ${bankAcc.bankName} · ${money(batch.totalAmount)} (${batch.operationsCount} operaciones)`,
+      detail: `Lote ${batch.folio} aplicado en banco ${bankAcc.bankName} · ${money(batch.totalAmount)} (${batch.operationsCount} operación(es))`,
       user: activeSessionProfile.name,
     })
   }
@@ -1336,37 +2060,114 @@ function AppContent() {
     setGlobalEbpWizard({
       isOpen: true,
       batchType: 'Nómina',
+      defaultAggregationMode: 'individual',
       sourceRefId: run.id,
       sourceFolio: run.folio,
       candidates,
     })
   }
 
-  const openEbpWizardForVendorBills = (bills: BillPayable[]) => {
+  const openEbpWizardForVendorBills = (
+    bills: BillPayable[],
+    preferredMode?: EbpAggregationMode
+  ) => {
     const supMap = new Map(supplierRecords.map((s) => [s.company.toLowerCase(), s]))
     const candidates: EbpWizardCandidateLine[] = bills.map((bill) => {
       const sup = supMap.get(bill.supplierCompany.toLowerCase())
+      const accounts = sup
+        ? normalizeSupplierBankAccounts({
+            company: sup.company,
+            currency: sup.currency || bill.currency || 'MXN',
+            bankName: sup.bankName,
+            clabe: sup.clabe,
+            accountNumber: sup.accountNumber,
+            defaultReference: sup.defaultReference,
+            bankPackValues: sup.bankPackValues,
+            bankAccounts: sup.bankAccounts,
+          })
+        : []
+      const preferredAcc = getPreferredSupplierBankAccount(
+        accounts,
+        bill.currency || 'MXN'
+      )
+
       return {
         sourceLineId: bill.id,
+        supplierKey: bill.supplierCompany.toLowerCase(),
+        billId: bill.id,
+        billFolio: bill.folio,
+        purchaseOrderFolio: bill.purchaseOrderFolio,
+        dueDate: bill.dueDate,
+        currency: bill.currency || 'MXN',
         beneficiaryName: bill.supplierCompany,
         beneficiaryCode: bill.folio,
         rfc: sup?.rfc,
-        bankName: sup?.bankName || '',
-        clabe: sup?.clabe || '',
-        accountNumber: sup?.accountNumber,
+        bankName: preferredAcc?.bankName || sup?.bankName || '',
+        clabe: preferredAcc?.clabe || sup?.clabe || '',
+        accountNumber: preferredAcc?.accountNumber ?? sup?.accountNumber,
         amount: bill.balance,
-        reference: sup?.defaultReference || bill.folio.replace(/\D/g, '').slice(-7) || '100001',
+        reference:
+          preferredAcc?.defaultReference ||
+          sup?.defaultReference ||
+          bill.folio.replace(/\D/g, '').slice(-7) ||
+          '100001',
         concept: `PAGO ${bill.folio}`,
-        bankPackValues: sup?.bankPackValues,
+        bankPackValues: preferredAcc?.bankPackValues || sup?.bankPackValues,
+        availableBankAccounts: accounts,
+        selectedBankAccountId: preferredAcc?.id,
       }
     })
     setGlobalEbpWizard({
       isOpen: true,
       batchType: 'Proveedores',
+      defaultAggregationMode:
+        preferredMode || (bills.length > 1 ? 'consolidated' : 'individual'),
       sourceRefId: bills.map((b) => b.id).join(','),
       sourceFolio:
         bills.length === 1 ? bills[0].folio : `LOTE-CXP (${bills.length} fact.)`,
       candidates,
+    })
+  }
+
+  const usedSupplierBankAccountIds = useMemo(() => {
+    const ids = new Set<string>()
+    ebpBatches.forEach((b) => {
+      b.lines.forEach((l) => {
+        if (l.selectedBankAccountId) ids.add(l.selectedBankAccountId)
+      })
+    })
+    return ids
+  }, [ebpBatches])
+
+  const handleUpdateSupplierBankAccounts = (
+    supplierCompany: string,
+    nextAccounts: SupplierBankAccount[]
+  ) => {
+    const targetKey = supplierCompany.trim().toLowerCase()
+    setSupplierRecords((prev) =>
+      prev.map((s) => {
+        if (s.company.trim().toLowerCase() !== targetKey) return s
+        const primaryAcc = getPreferredSupplierBankAccount(
+          nextAccounts,
+          s.currency || 'MXN'
+        )
+        return {
+          ...s,
+          bankAccounts: nextAccounts,
+          bankName: primaryAcc?.bankName || undefined,
+          clabe: primaryAcc?.clabe || undefined,
+          accountNumber: primaryAcc?.accountNumber || undefined,
+          defaultReference: primaryAcc?.defaultReference || undefined,
+          bankPackValues: primaryAcc?.bankPackValues || {},
+          lastActivity: 'Ahora',
+        }
+      })
+    )
+    appendAuditLog({
+      category: 'finance',
+      action: 'Edición de cuentas bancarias de proveedor (EBP)',
+      detail: `Actualización de detalles bancarios de ${supplierCompany} · ${nextAccounts.length} cuenta(s) registrada(s)`,
+      user: activeSessionProfile.name,
     })
   }
 
@@ -1389,58 +2190,736 @@ function AppContent() {
     setExpenses((prev) => [exp, ...prev])
     appendAuditLog({
       category: 'finance',
-      action: 'Registro de gasto operativo',
-      detail: `${exp.folio} · ${exp.description} · ${money(exp.total)}`,
+      action: `Registro de gasto (${exp.expenseNature || exp.companyCategory || exp.category})`,
+      detail: `${exp.folio} · ${exp.status || 'Pagado'} · ${exp.description} · ${money(exp.total)}`,
       user: activeSessionProfile.name,
     })
+  }
+
+  const handleUpdateExpense = (updated: ExpenseRecord) => {
+    setExpenses((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
+    appendAuditLog({
+      category: 'finance',
+      action: `Edición / reclasificación de gasto (${updated.expenseNature || updated.category})`,
+      detail: `${updated.folio} · ${updated.costBehavior || 'Fijo'} · ${updated.locationName || 'Matriz'} · ${updated.departmentName || 'General'} · ${money(updated.total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Póliza ${updated.folio} actualizada y auditada (${updated.expenseNature || updated.category} · ${updated.costBehavior || 'Fijo'}).`,
+      'Póliza actualizada'
+    )
+  }
+
+  const handleUpdateExpenseStatus = (
+    expenseId: string,
+    nextStatus: ExpenseStatus,
+    explicitBankId?: string
+  ) => {
+    const target = expenses.find((e) => e.id === expenseId)
+    if (!target) return
+    const prevStatus = target.status || 'Pagado'
+    if (prevStatus === nextStatus) return
+
+    let assignedBankName = target.bankAccountName
+    if (nextStatus === 'Pagado' && prevStatus !== 'Pagado') {
+      const targetBank =
+        (explicitBankId ? bankAccounts.find((b) => b.id === explicitBankId) : undefined) ||
+        bankAccounts.find((b) => b.bankName === target.bankAccountName) ||
+        bankAccounts[0]
+      if (!targetBank) {
+        toast.error('No hay cuenta bancaria configurada para liquidar la póliza.', 'Cuenta requerida')
+        return
+      }
+      if (targetBank.balance < target.total) {
+        toast.warning(
+          `Saldo insuficiente en ${targetBank.bankName} (Disponible: ${money(targetBank.balance)}) para pagar ${target.folio}.`,
+          'Saldo insuficiente'
+        )
+        return
+      }
+      assignedBankName = targetBank.bankName
+      handleUpdateBankAccountBalance(targetBank.id, -target.total)
+      const now = new Date()
+      const paidDate = `${String(now.getDate()).padStart(2, '0')} ${['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][now.getMonth()]} ${now.getFullYear()}`
+      handleAddTransaction({
+        id: `txn_${Date.now()}`,
+        folio: `PAG-2026-${String(Math.floor(100 + Math.random() * 900))}`,
+        date: paidDate,
+        type: 'Gasto operativo',
+        entityName: target.beneficiary,
+        reference: `${target.expenseNature || target.category} · ${target.folio} · ${target.description}`,
+        amount: target.total,
+        method: target.paymentMethod,
+        account: targetBank.bankName,
+      })
+    }
+
+    setExpenses((prev) =>
+      prev.map((e) =>
+        e.id === expenseId
+          ? {
+              ...e,
+              status: nextStatus,
+              bankAccountName: assignedBankName || e.bankAccountName,
+            }
+          : e
+      )
+    )
+    appendAuditLog({
+      category: 'finance',
+      action: `Cambio de estado de gasto (${prevStatus} → ${nextStatus})`,
+      detail: `${target.folio} · ${target.description} · ${money(target.total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      nextStatus === 'Pagado'
+        ? `Póliza ${target.folio} pagada por ${money(target.total)} desde ${assignedBankName}.`
+        : nextStatus === 'Cancelado'
+          ? `Póliza ${target.folio} cancelada y excluida de totales y P&L.`
+          : `Póliza ${target.folio} aprobada y lista para pago.`,
+      `Estado: ${nextStatus}`
+    )
+  }
+
+  const handleSaveExpenseBudget = (budget: ExpenseBudgetRule) => {
+    setExpenseBudgets((prev) => {
+      const exists = prev.some((b) => b.id === budget.id)
+      if (exists) return prev.map((b) => (b.id === budget.id ? budget : b))
+      return [...prev, budget]
+    })
+    appendAuditLog({
+      category: 'finance',
+      action: 'Configuración de presupuesto mensual',
+      detail: `${budget.nature} · Límite ${money(budget.monthlyLimit)} · Alertas ${budget.warningThresholdPct}% / ${budget.criticalThresholdPct ?? 95}%`,
+      user: activeSessionProfile.name,
+    })
+  }
+
+  const handleToggleExpenseBudget = (budgetId: string) => {
+    setExpenseBudgets((prev) =>
+      prev.map((b) => (b.id === budgetId ? { ...b, active: !b.active } : b))
+    )
+  }
+
+  const handleAddRecurringExpense = (tpl: RecurringExpenseTemplate) => {
+    setRecurringExpenses((prev) => [tpl, ...prev])
+    appendAuditLog({
+      category: 'finance',
+      action: 'Alta de plantilla de gasto recurrente',
+      detail: `${tpl.title} · ${tpl.frequency} · ${money(tpl.amount)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(`Plantilla recurrente “${tpl.title}” creada.`, 'Plantilla guardada')
+  }
+
+  const handleToggleRecurringExpense = (tplId: string) => {
+    setRecurringExpenses((prev) =>
+      prev.map((t) => (t.id === tplId ? { ...t, active: !t.active } : t))
+    )
+  }
+
+  const handleUpdateRecurringExpense = (updated: RecurringExpenseTemplate) => {
+    setRecurringExpenses((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+    appendAuditLog({
+      category: 'finance',
+      action: 'Edición de plantilla de gasto recurrente',
+      detail: `${updated.title} · ${updated.frequency} · ${money(updated.amount)} · Próx. ${updated.nextRunDate}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(`Plantilla “${updated.title}” actualizada.`, 'Plantilla actualizada')
+  }
+
+  const handleDeleteRecurringExpense = (tplId: string) => {
+    const target = recurringExpenses.find((t) => t.id === tplId)
+    setRecurringExpenses((prev) => prev.filter((t) => t.id !== tplId))
+    if (target) {
+      appendAuditLog({
+        category: 'finance',
+        action: 'Eliminación de plantilla de gasto recurrente',
+        detail: `${target.title} · ${target.beneficiary}`,
+        user: activeSessionProfile.name,
+      })
+      toast.info(`Plantilla “${target.title}” eliminada.`, 'Plantilla eliminada')
+    }
+  }
+
+  const buildRecurringExecution = (
+    tpl: RecurringExpenseTemplate,
+    nextSeq: number,
+    uidSuffix = ''
+  ) => {
+    const tax = tpl.hasTax ? Number((tpl.amount * 0.16).toFixed(2)) : 0
+    const total = Number((tpl.amount + tax).toFixed(2))
+    const folio = `GST-2026-${String(nextSeq).padStart(3, '0')}`
+    const runIso = tpl.nextRunDate || new Date().toISOString().split('T')[0]
+    const [yStr, mStr, dStr] = runIso.split('-')
+    const mIdx = Math.max(0, Math.min(11, (Number(mStr) || 1) - 1))
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    const formattedDate = `${String(Number(dStr) || 1).padStart(2, '0')} ${months[mIdx]} ${yStr || '2026'}`
+
+    const generated: ExpenseRecord = {
+      id: `exp_${Date.now()}${uidSuffix}`,
+      folio,
+      date: formattedDate,
+      category: tpl.category,
+      expenseNature: tpl.nature,
+      status: 'Pendiente',
+      costBehavior: tpl.costBehavior,
+      departmentId:
+        tpl.departmentId || departments.find((d) => d.name === tpl.departmentName)?.id,
+      departmentName: tpl.departmentName,
+      costCenter:
+        tpl.costCenter || departments.find((d) => d.name === tpl.departmentName)?.costCenter,
+      locationId: tpl.locationId,
+      locationName: tpl.locationName,
+      accountCode: tpl.accountCode,
+      accountName: tpl.accountName,
+      bankAccountName: tpl.bankAccountName,
+      description: tpl.description,
+      beneficiary: tpl.beneficiary,
+      amount: tpl.amount,
+      tax,
+      total,
+      paymentMethod: tpl.paymentMethod,
+      referenceDoc: `REC-${tpl.frequency.slice(0, 3).toUpperCase()}`,
+      user: activeSessionProfile.name,
+      isRecurring: true,
+      recurrenceId: tpl.id,
+    }
+
+    const baseDate = new Date(`${runIso}T12:00:00`)
+    if (!Number.isNaN(baseDate.getTime())) {
+      if (tpl.frequency === 'Quincenal') baseDate.setDate(baseDate.getDate() + 15)
+      else if (tpl.frequency === 'Anual') baseDate.setFullYear(baseDate.getFullYear() + 1)
+      else baseDate.setMonth(baseDate.getMonth() + 1)
+    }
+    const nextIso = Number.isNaN(baseDate.getTime())
+      ? runIso
+      : baseDate.toISOString().split('T')[0]
+
+    return { generated, runIso, nextIso, folio, total }
+  }
+
+  const handleGenerateRecurringExpense = (tplId: string) => {
+    const tpl = recurringExpenses.find((t) => t.id === tplId)
+    if (!tpl) return
+
+    const { generated, runIso, nextIso, folio, total } = buildRecurringExecution(
+      tpl,
+      expenses.length + 1
+    )
+
+    setExpenses((prev) => [generated, ...prev])
+    setRecurringExpenses((prev) =>
+      prev.map((t) =>
+        t.id === tpl.id
+          ? { ...t, lastGeneratedDate: runIso, nextRunDate: nextIso }
+          : t
+      )
+    )
+
+    appendAuditLog({
+      category: 'finance',
+      action: 'Generación de póliza desde gasto recurrente',
+      detail: `${folio} · ${tpl.title} · ${money(total)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Póliza ${folio} por ${money(total)} generada como Pendiente. Próxima fecha: ${nextIso}.`,
+      'Póliza recurrente generada'
+    )
+  }
+
+  const handleGenerateRecurringBatch = (tplIds: string[]) => {
+    const targets = tplIds
+      .map((id) => recurringExpenses.find((t) => t.id === id))
+      .filter((t): t is RecurringExpenseTemplate => Boolean(t))
+    if (targets.length === 0) return
+
+    const baseSeq = expenses.length + 1
+    const executions = targets.map((tpl, idx) =>
+      buildRecurringExecution(tpl, baseSeq + idx, `_b${idx}`)
+    )
+
+    const generatedList = executions.map((ex) => ex.generated).reverse()
+    const updatesById = new Map(
+      targets.map((tpl, idx) => [
+        tpl.id,
+        { runIso: executions[idx].runIso, nextIso: executions[idx].nextIso },
+      ])
+    )
+
+    setExpenses((prev) => [...generatedList, ...prev])
+    setRecurringExpenses((prev) =>
+      prev.map((t) => {
+        const upd = updatesById.get(t.id)
+        return upd ? { ...t, lastGeneratedDate: upd.runIso, nextRunDate: upd.nextIso } : t
+      })
+    )
+
+    const totalBatch = executions.reduce((s, ex) => s + ex.total, 0)
+    const folios = executions.map((ex) => ex.folio).join(', ')
+    appendAuditLog({
+      category: 'finance',
+      action: 'Generación asistida en lote de gastos recurrentes',
+      detail: `${targets.length} póliza(s) (${folios}) · Total ${money(totalBatch)}`,
+      user: activeSessionProfile.name,
+    })
+    toast.success(
+      `Se generaron ${targets.length} póliza(s) recurrentes (${folios}) por ${money(totalBatch)}.`,
+      'Generación asistida completada'
+    )
+  }
+
+  const handleAddSubsidiary = (sub: SubsidiaryRecord) => {
+    setSubsidiaries((prev) => [sub, ...prev])
+    appendAuditLog({
+      category: 'admin',
+      crudOperation: 'CREATE',
+      entityType: 'Subsidiaria',
+      entityId: sub.id,
+      action: 'Creación de subsidiaria',
+      detail: `${sub.code} · ${sub.name} (RFC: ${sub.taxId} · ${sub.currency}${sub.isHolding ? ' · Matriz' : ''})`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+  }
+
+  const handleUpdateSubsidiaries = (updatedSubs: SubsidiaryRecord[]) => {
+    const prevById = new Map(subsidiaries.map((s) => [s.id, s]))
+
+    updatedSubs.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.legalName !== next.legalName) changes.push('Razón social actualizada')
+      if (prev.taxId !== next.taxId) changes.push(`RFC: ${prev.taxId} → ${next.taxId}`)
+      if (prev.country !== next.country) changes.push(`País: ${prev.country} → ${next.country}`)
+      if (prev.currency !== next.currency) changes.push(`Divisa: ${prev.currency} → ${next.currency}`)
+      if ((prev.legalRep || '') !== (next.legalRep || '')) {
+        changes.push(`Rep. legal: ${prev.legalRep || '—'} → ${next.legalRep || '—'}`)
+      }
+      if ((prev.fiscalAddress || '') !== (next.fiscalAddress || '')) {
+        changes.push('Domicilio fiscal actualizado')
+      }
+      if (Boolean(prev.isHolding) !== Boolean(next.isHolding)) {
+        changes.push(`Matriz: ${prev.isHolding ? 'Sí' : 'No'} → ${next.isHolding ? 'Sí' : 'No'}`)
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activa' : 'Inactiva'} → ${next.active ? 'Activa' : 'Inactiva'}`)
+      }
+
+      if (changes.length === 0) return
+
+      const isStatusOnly = changes.length === 1 && prev.active !== next.active
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Subsidiaria',
+        entityId: next.id,
+        action: isStatusOnly ? 'Cambio de estado de subsidiaria' : 'Actualización de subsidiaria',
+        detail: isStatusOnly
+          ? `${next.code} · ${next.name} → ${next.active ? 'Activa' : 'Inactiva'}`
+          : `${next.code} · ${next.name} (${changes.join(' · ')})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    })
+
+    setSubsidiaries(updatedSubs)
+  }
+
+  const handleDeleteSubsidiary = (subsidiaryId: string) => {
+    const target = subsidiaries.find((s) => s.id === subsidiaryId)
+    const unlinkedDepts = departments.filter((d) => (d.subsidiaryIds || []).includes(subsidiaryId)).length
+    const unlinkedLocs = locations.filter((l) => (l.subsidiaryIds || []).includes(subsidiaryId)).length
+
+    setSubsidiaries((prev) => prev.filter((s) => s.id !== subsidiaryId))
+    setDepartments((prev) =>
+      prev.map((d) => ({
+        ...d,
+        subsidiaryIds: (d.subsidiaryIds || []).filter((id) => id !== subsidiaryId),
+      }))
+    )
+    setLocations((prev) =>
+      prev.map((l) => ({
+        ...l,
+        subsidiaryIds: (l.subsidiaryIds || []).filter((id) => id !== subsidiaryId),
+      }))
+    )
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Subsidiaria',
+        entityId: target.id,
+        action: 'Eliminación de subsidiaria',
+        detail: `${target.code} · ${target.name} (${target.taxId})${
+          unlinkedDepts + unlinkedLocs > 0
+            ? ` · ${unlinkedDepts} depto(s) y ${unlinkedLocs} sede(s) desvinculadas`
+            : ''
+        }`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Subsidiaria “${target.name}” eliminada del sistema.`, 'Subsidiaria eliminada')
+    }
   }
 
   const handleAddDepartment = (dep: DepartmentRecord) => {
     setDepartments((prev) => [dep, ...prev])
+    const subCodes = (dep.subsidiaryIds || [])
+      .map((id) => subsidiaries.find((s) => s.id === id)?.code || id)
+      .join(', ')
     appendAuditLog({
       category: 'admin',
+      crudOperation: 'CREATE',
+      entityType: 'Departamento',
+      entityId: dep.id,
       action: 'Creación de departamento',
-      detail: `${dep.code} · ${dep.name} (Líder: ${dep.leader})`,
+      detail: `${dep.code} · ${dep.name} (Líder: ${dep.leader}${
+        subCodes ? ` · Subsidiarias: ${subCodes}` : ''
+      })`,
       user: activeSessionProfile.name,
+      userId: activeActorUserId,
     })
   }
 
+  const handleUpdateDepartments = (updatedDepartments: DepartmentRecord[]) => {
+    const prevById = new Map(departments.map((d) => [d.id, d]))
+    const subCodeById = new Map(subsidiaries.map((s) => [s.id, s.code]))
+
+    const relationOnlyChanges: Array<{
+      dept: DepartmentRecord
+      addedSubId: string | null
+      removedSubId: string | null
+    }> = []
+    const detailedChanges: Array<{
+      dept: DepartmentRecord
+      changes: string[]
+      isStatusOnly: boolean
+    }> = []
+
+    updatedDepartments.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.leader !== next.leader) changes.push(`Líder: ${prev.leader} → ${next.leader}`)
+      if ((prev.costCenter || '') !== (next.costCenter || '')) {
+        changes.push(`CC: ${prev.costCenter || '—'} → ${next.costCenter || '—'}`)
+      }
+      if ((prev.description || '') !== (next.description || '')) {
+        changes.push('Descripción actualizada')
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activo' : 'Inactivo'} → ${next.active ? 'Activo' : 'Inactivo'}`)
+      }
+
+      const prevSubSet = new Set(prev.subsidiaryIds || [])
+      const nextSubSet = new Set(next.subsidiaryIds || [])
+      const addedSubs = Array.from(nextSubSet).filter((id) => !prevSubSet.has(id))
+      const removedSubs = Array.from(prevSubSet).filter((id) => !nextSubSet.has(id))
+
+      if (addedSubs.length > 0) {
+        changes.push(
+          `+Vinculado a: ${addedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+      if (removedSubs.length > 0) {
+        changes.push(
+          `-Desvinculado de: ${removedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+
+      if (changes.length === 0) return
+
+      const onlySingleSubToggle =
+        changes.length === 1 &&
+        ((addedSubs.length === 1 && removedSubs.length === 0) ||
+          (removedSubs.length === 1 && addedSubs.length === 0))
+
+      if (onlySingleSubToggle) {
+        relationOnlyChanges.push({
+          dept: next,
+          addedSubId: addedSubs[0] || null,
+          removedSubId: removedSubs[0] || null,
+        })
+      }
+
+      detailedChanges.push({
+        dept: next,
+        changes,
+        isStatusOnly: changes.length === 1 && prev.active !== next.active,
+      })
+    })
+
+    const sharedAddedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.addedSubId && item.addedSubId === relationOnlyChanges[0].addedSubId
+      )
+        ? relationOnlyChanges[0].addedSubId
+        : null
+
+    const sharedRemovedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.removedSubId && item.removedSubId === relationOnlyChanges[0].removedSubId
+      )
+        ? relationOnlyChanges[0].removedSubId
+        : null
+
+    if (sharedAddedSubId || sharedRemovedSubId) {
+      const targetSubId = (sharedAddedSubId || sharedRemovedSubId)!
+      const subLabel = subCodeById.get(targetSubId) || targetSubId
+      const codes = relationOnlyChanges.map((item) => item.dept.code).join(', ')
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Departamento',
+        entityId: relationOnlyChanges.map((item) => item.dept.id).join(','),
+        action: sharedAddedSubId
+          ? 'Vinculación masiva de departamentos'
+          : 'Desvinculación masiva de departamentos',
+        detail: `${relationOnlyChanges.length} departamento(s) ${
+          sharedAddedSubId ? 'vinculados a' : 'desvinculados de'
+        } ${subLabel} (${codes})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    } else {
+      detailedChanges.forEach(({ dept, changes, isStatusOnly }) => {
+        appendAuditLog({
+          category: 'admin',
+          crudOperation: 'UPDATE',
+          entityType: 'Departamento',
+          entityId: dept.id,
+          action: isStatusOnly
+            ? 'Cambio de estado de departamento'
+            : 'Actualización de departamento',
+          detail: isStatusOnly
+            ? `${dept.code} · ${dept.name} → ${dept.active ? 'Activo' : 'Inactivo'}`
+            : `${dept.code} · ${dept.name} (${changes.join(' · ')})`,
+          user: activeSessionProfile.name,
+          userId: activeActorUserId,
+        })
+      })
+    }
+
+    setDepartments(updatedDepartments)
+  }
+
+  const handleDeleteDepartment = (departmentId: string) => {
+    const target = departments.find((d) => d.id === departmentId)
+    setDepartments((prev) => prev.filter((d) => d.id !== departmentId))
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Departamento',
+        entityId: target.id,
+        action: 'Eliminación de departamento',
+        detail: `${target.code} · ${target.name} (Líder: ${target.leader})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Departamento “${target.name}” eliminado del sistema.`, 'Departamento eliminado')
+    }
+  }
+
   const handleAddLocation = (loc: PhysicalLocationRecord) => {
-    setLocations((prev) => [loc, ...prev])
+    const defaultSub =
+      subsidiaries.find((s) => s.active && s.isHolding) ||
+      subsidiaries.find((s) => s.active) ||
+      subsidiaries[0]
+    const normalizedLoc: PhysicalLocationRecord = {
+      ...loc,
+      subsidiaryIds:
+        loc.subsidiaryIds && loc.subsidiaryIds.length > 0
+          ? loc.subsidiaryIds
+          : defaultSub
+          ? [defaultSub.id]
+          : [],
+    }
+    setLocations((prev) => [normalizedLoc, ...prev])
+    const subCodes = normalizedLoc.subsidiaryIds
+      .map((id) => subsidiaries.find((s) => s.id === id)?.code || id)
+      .join(', ')
     appendAuditLog({
       category: 'admin',
-      action: 'Alta de ubicación física',
-      detail: `${loc.code} · ${loc.name} (${loc.city}, ${loc.state})`,
+      crudOperation: 'CREATE',
+      entityType: 'Ubicación física',
+      entityId: normalizedLoc.id,
+      action: 'Creación de ubicación física',
+      detail: `${normalizedLoc.code} · ${normalizedLoc.name} (${normalizedLoc.city}, ${normalizedLoc.state}${
+        subCodes ? ` · Subsidiarias: ${subCodes}` : ''
+      })`,
       user: activeSessionProfile.name,
+      userId: activeActorUserId,
     })
     setWarehouses((prev) => {
       const exists = prev.some(
         (w) =>
-          w.locationId === loc.id ||
-          w.code.toLowerCase() === loc.code.toLowerCase() ||
-          w.name.toLowerCase() === loc.name.toLowerCase()
+          w.locationId === normalizedLoc.id ||
+          w.code.toLowerCase() === normalizedLoc.code.toLowerCase() ||
+          w.name.toLowerCase() === normalizedLoc.name.toLowerCase()
       )
       if (exists) return prev
       return [
         ...prev,
         {
-          id: `wh_${loc.id}`,
-          code: loc.code,
-          name: loc.name,
-          city: loc.city,
-          state: loc.state,
-          address: loc.address,
+          id: `wh_${normalizedLoc.id}`,
+          code: normalizedLoc.code,
+          name: normalizedLoc.name,
+          city: normalizedLoc.city,
+          state: normalizedLoc.state,
+          address: normalizedLoc.address,
           capacityPercentage: 0,
           isDefault: false,
-          active: loc.active,
-          locationId: loc.id,
-          locationType: loc.type,
+          active: normalizedLoc.active,
+          locationId: normalizedLoc.id,
+          locationType: normalizedLoc.type,
         },
       ]
     })
   }
 
   const handleUpdateLocations = (updatedLocations: PhysicalLocationRecord[]) => {
+    const prevById = new Map(locations.map((l) => [l.id, l]))
+    const subCodeById = new Map(subsidiaries.map((s) => [s.id, s.code]))
+
+    const relationOnlyChanges: Array<{
+      loc: PhysicalLocationRecord
+      addedSubId: string | null
+      removedSubId: string | null
+    }> = []
+    const detailedChanges: Array<{
+      loc: PhysicalLocationRecord
+      changes: string[]
+      isStatusOnly: boolean
+    }> = []
+
+    updatedLocations.forEach((next) => {
+      const prev = prevById.get(next.id)
+      if (!prev) return
+
+      const changes: string[] = []
+      if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
+      if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
+      if (prev.type !== next.type) changes.push(`Tipo: ${prev.type} → ${next.type}`)
+      if (prev.address !== next.address) changes.push('Dirección actualizada')
+      if (prev.city !== next.city || prev.state !== next.state) {
+        changes.push(`Ciudad: ${prev.city}, ${prev.state} → ${next.city}, ${next.state}`)
+      }
+      if (prev.country !== next.country) changes.push(`País: ${prev.country} → ${next.country}`)
+      if ((prev.manager || '') !== (next.manager || '')) {
+        changes.push(`Encargado: ${prev.manager || '—'} → ${next.manager || '—'}`)
+      }
+      if (prev.active !== next.active) {
+        changes.push(`Estado: ${prev.active ? 'Activa' : 'Inactiva'} → ${next.active ? 'Activa' : 'Inactiva'}`)
+      }
+
+      const prevSubSet = new Set(prev.subsidiaryIds || [])
+      const nextSubSet = new Set(next.subsidiaryIds || [])
+      const addedSubs = Array.from(nextSubSet).filter((id) => !prevSubSet.has(id))
+      const removedSubs = Array.from(prevSubSet).filter((id) => !nextSubSet.has(id))
+
+      if (addedSubs.length > 0) {
+        changes.push(
+          `+Vinculada a: ${addedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+      if (removedSubs.length > 0) {
+        changes.push(
+          `-Desvinculada de: ${removedSubs.map((id) => subCodeById.get(id) || id).join(', ')}`
+        )
+      }
+
+      if (changes.length === 0) return
+
+      const onlySingleSubToggle =
+        changes.length === 1 &&
+        ((addedSubs.length === 1 && removedSubs.length === 0) ||
+          (removedSubs.length === 1 && addedSubs.length === 0))
+
+      if (onlySingleSubToggle) {
+        relationOnlyChanges.push({
+          loc: next,
+          addedSubId: addedSubs[0] || null,
+          removedSubId: removedSubs[0] || null,
+        })
+      }
+
+      detailedChanges.push({
+        loc: next,
+        changes,
+        isStatusOnly: changes.length === 1 && prev.active !== next.active,
+      })
+    })
+
+    const sharedAddedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.addedSubId && item.addedSubId === relationOnlyChanges[0].addedSubId
+      )
+        ? relationOnlyChanges[0].addedSubId
+        : null
+
+    const sharedRemovedSubId =
+      relationOnlyChanges.length > 1 &&
+      relationOnlyChanges.length === detailedChanges.length &&
+      relationOnlyChanges.every(
+        (item) => item.removedSubId && item.removedSubId === relationOnlyChanges[0].removedSubId
+      )
+        ? relationOnlyChanges[0].removedSubId
+        : null
+
+    if (sharedAddedSubId || sharedRemovedSubId) {
+      const targetSubId = (sharedAddedSubId || sharedRemovedSubId)!
+      const subLabel = subCodeById.get(targetSubId) || targetSubId
+      const codes = relationOnlyChanges.map((item) => item.loc.code).join(', ')
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'UPDATE',
+        entityType: 'Ubicación física',
+        entityId: relationOnlyChanges.map((item) => item.loc.id).join(','),
+        action: sharedAddedSubId
+          ? 'Vinculación masiva de ubicaciones'
+          : 'Desvinculación masiva de ubicaciones',
+        detail: `${relationOnlyChanges.length} ubicación(es) ${
+          sharedAddedSubId ? 'vinculadas a' : 'desvinculadas de'
+        } ${subLabel} (${codes})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    } else {
+      detailedChanges.forEach(({ loc, changes, isStatusOnly }) => {
+        appendAuditLog({
+          category: 'admin',
+          crudOperation: 'UPDATE',
+          entityType: 'Ubicación física',
+          entityId: loc.id,
+          action: isStatusOnly
+            ? 'Cambio de estado de ubicación física'
+            : 'Actualización de ubicación física',
+          detail: isStatusOnly
+            ? `${loc.code} · ${loc.name} → ${loc.active ? 'Activa' : 'Inactiva'}`
+            : `${loc.code} · ${loc.name} (${changes.join(' · ')})`,
+          user: activeSessionProfile.name,
+          userId: activeActorUserId,
+        })
+      })
+    }
+
     setLocations(updatedLocations)
     setWarehouses((prev) =>
       prev.map((w) => {
@@ -1477,6 +2956,24 @@ function AppContent() {
             w.name.toLowerCase() !== target.name.toLowerCase()
         )
       )
+    }
+  }
+
+  const handleDeleteAdminLocation = (locationId: string) => {
+    const target = locations.find((l) => l.id === locationId)
+    handleRemoveLocation(locationId)
+    if (target) {
+      appendAuditLog({
+        category: 'admin',
+        crudOperation: 'DELETE',
+        entityType: 'Ubicación física',
+        entityId: target.id,
+        action: 'Eliminación de ubicación física',
+        detail: `${target.code} · ${target.name} (${target.city}, ${target.state})`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Ubicación física “${target.name}” eliminada del sistema.`, 'Ubicación eliminada')
     }
   }
 
@@ -1566,6 +3063,953 @@ function AppContent() {
       detail: `Folio ${invoice.folio} · ${invoice.clientCompany} · ${money(invoice.total)}`,
       user: activeSessionProfile.name,
     })
+  }
+
+  const formatShortReturnDate = () => {
+    const d = new Date()
+    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+    return `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`
+  }
+
+  const handleUpdateReturnWorkflows = (
+    next: ReturnWorkflowsSettings,
+    summaryDetail: string
+  ) => {
+    setReturnWorkflows(next)
+    saveStoredReturnWorkflows(next)
+    appendAuditLog({
+      category: 'admin',
+      crudOperation: 'UPDATE',
+      entityType: 'Flujos de devoluciones',
+      entityId: 'return_workflows',
+      action: 'Actualización de flujos y aprobaciones de devoluciones',
+      detail: summaryDetail,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(
+      'Flujos de trabajo de devoluciones actualizados y aplicados en Ventas y Compras.',
+      'Flujos guardados'
+    )
+  }
+
+  const handleCreateCustomerReturn = (ret: CustomerReturn) => {
+    const resolvedInitialStatus = getDefaultInitialStatusForReturn(returnWorkflows.customer)
+    let created: CustomerReturn = {
+      ...ret,
+      status: resolvedInitialStatus,
+      workflowHistory:
+        ret.workflowHistory && ret.workflowHistory.length > 0
+          ? ret.workflowHistory.map((h, i) =>
+              i === 0 ? { ...h, toStatus: resolvedInitialStatus } : h
+            )
+          : [
+              {
+                id: `whist_c_${Date.now()}`,
+                timestampIso: new Date().toISOString(),
+                toStatus: resolvedInitialStatus,
+                actor: activeSessionProfile.name,
+                action: 'created',
+                note: ret.notes,
+              },
+            ],
+    }
+    if (created.status === 'Recibida en almacén' && !created.inventoryApplied) {
+      const restockLines = created.items.filter((it) => it.disposition === 'Reingreso a almacén')
+      if (restockLines.length > 0) {
+        setInventory((prev) =>
+          prev.map((inv) => {
+            if (inv.warehouseId !== created.warehouseId) return inv
+            const matched = restockLines.find(
+              (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+            )
+            return matched ? { ...inv, stock: inv.stock + matched.quantity } : inv
+          })
+        )
+        restockLines.forEach((line, idx) => {
+          handleAddMovement({
+            id: `mov_cli_ret_init_${Date.now()}_${idx}`,
+            folio: `MOV-DEV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+            date: formatShortReturnDate(),
+            type: 'Entrada',
+            sku: line.sku,
+            productName: line.name,
+            quantity: line.quantity,
+            targetWarehouse: created.warehouseName,
+            referenceDoc: created.folio,
+            reason: `Reingreso inicial por devolución de cliente (${created.clientCompany})`,
+            user: activeSessionProfile.name,
+          })
+        })
+      }
+      created = { ...created, inventoryApplied: true }
+    }
+    setCustomerReturns((prev) => {
+      const next = [created, ...prev]
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'CREATE',
+      entityType: 'Devolución de cliente',
+      entityId: created.id,
+      action: 'Registro de devolución de cliente (RMA)',
+      detail: `${created.folio} · ${created.clientCompany} · ${created.orderFolio} · Estado inicial: ${created.status} · ${money(created.total)}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Devolución ${created.folio} registrada para ${created.clientCompany}.`, 'RMA registrado')
+  }
+
+  const applyCustomerReturnTransition = (
+    target: CustomerReturn,
+    nextStatus: CustomerReturnStatus,
+    options?: { noteOverride?: string; approvedBy?: string }
+  ) => {
+    let appliedInv = Boolean(target.inventoryApplied)
+    let appliedFin = Boolean(target.financeApplied)
+    let creditNoteFolio = target.creditNoteFolio
+
+    if (nextStatus === 'Recibida en almacén' && !appliedInv) {
+      const restockLines = target.items.filter((it) => it.disposition === 'Reingreso a almacén')
+      if (restockLines.length > 0) {
+        setInventory((prev) =>
+          prev.map((inv) => {
+            if (inv.warehouseId !== target.warehouseId) return inv
+            const matched = restockLines.find(
+              (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+            )
+            return matched ? { ...inv, stock: inv.stock + matched.quantity } : inv
+          })
+        )
+        restockLines.forEach((line, idx) => {
+          handleAddMovement({
+            id: `mov_cli_ret_${Date.now()}_${idx}`,
+            folio: `MOV-DEV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+            date: formatShortReturnDate(),
+            type: 'Entrada',
+            sku: line.sku,
+            productName: line.name,
+            quantity: line.quantity,
+            targetWarehouse: target.warehouseName,
+            referenceDoc: target.folio,
+            reason: `Reingreso por devolución de cliente (${target.clientCompany})`,
+            user: activeSessionProfile.name,
+          })
+        })
+      }
+      appliedInv = true
+    }
+
+    if (nextStatus === 'Nota de crédito emitida' && !appliedFin) {
+      creditNoteFolio =
+        creditNoteFolio || `NC-CLI-2026-${String(customerReturns.length + 101).padStart(3, '0')}`
+      if (target.invoiceId || target.invoiceFolio) {
+        setReceivables((prev) =>
+          prev.map((inv) => {
+            const matches =
+              (target.invoiceId && inv.id === target.invoiceId) ||
+              (target.invoiceFolio && inv.folio === target.invoiceFolio)
+            if (!matches) return inv
+            const nextBalance = Math.max(0, inv.balance - target.total)
+            const nextStatusInv =
+              nextBalance === 0
+                ? ('Pagada' as const)
+                : inv.paidAmount > 0 || nextBalance < inv.total
+                ? ('Parcial' as const)
+                : inv.status
+            return {
+              ...inv,
+              balance: nextBalance,
+              status: nextStatusInv,
+              notes: `${inv.notes ? `${inv.notes} · ` : ''}Acreditado por ${creditNoteFolio} (${money(target.total)})`,
+            }
+          })
+        )
+      }
+      appliedFin = true
+    }
+
+    const nowIso = new Date().toISOString()
+    const mergedNotes = options?.noteOverride
+      ? target.notes
+        ? `${target.notes} · ${options.noteOverride}`
+        : options.noteOverride
+      : target.notes
+
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === target.id
+          ? {
+              ...r,
+              status: nextStatus,
+              notes: mergedNotes,
+              inventoryApplied: appliedInv,
+              financeApplied: appliedFin,
+              creditNoteFolio,
+              approvalStatus: options?.approvedBy ? ('approved' as const) : ('not_required' as const),
+              pendingTargetStatus: undefined,
+              approvedBy: options?.approvedBy || r.approvedBy,
+              approvedAtIso: options?.approvedBy ? nowIso : r.approvedAtIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_c_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: nextStatus,
+                  actor: options?.approvedBy || activeSessionProfile.name,
+                  action: options?.approvedBy ? ('approved' as const) : ('transition' as const),
+                  note: options?.noteOverride,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: nextStatus === 'Nota de crédito emitida' ? 'finance' : 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: options?.approvedBy
+        ? `Aprobación y transición de RMA cliente a "${nextStatus}"`
+        : `Actualización de RMA cliente a "${nextStatus}"`,
+      detail: `${target.folio} · ${target.clientCompany}${creditNoteFolio ? ` · ${creditNoteFolio}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    if (nextStatus === 'Recibida en almacén') {
+      toast.success(
+        `Devolución ${target.folio} recibida en ${target.warehouseName}. Existencias y Kardex actualizados.`,
+        'Recepción en almacén'
+      )
+    } else if (nextStatus === 'Nota de crédito emitida') {
+      toast.success(
+        `Nota de crédito ${creditNoteFolio} emitida${target.invoiceFolio ? ` sobre ${target.invoiceFolio}` : ''}.`,
+        'Nota de crédito aplicada'
+      )
+    } else {
+      toast.info(`Devolución ${target.folio} actualizada a "${nextStatus}".`, 'Estado RMA')
+    }
+  }
+
+  const handleRequestCustomerReturnApproval = (
+    returnId: string,
+    targetStatus: CustomerReturnStatus,
+    noteOverride?: string
+  ) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
+    if (!allowed.includes(targetStatus)) {
+      toast.warning(
+        `El flujo configurado no permite pasar de "${target.status}" a "${targetStatus}".`,
+        'Transición restringida'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.customer.steps.find((s) => s.status === targetStatus)
+    const nowIso = new Date().toISOString()
+    const mergedNotes = noteOverride
+      ? target.notes
+        ? `${target.notes} · ${noteOverride}`
+        : noteOverride
+      : target.notes
+
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              notes: mergedNotes,
+              approvalStatus: 'pending' as const,
+              pendingTargetStatus: targetStatus,
+              approvalRequestedBy: activeSessionProfile.name,
+              approvalRequestedAtIso: nowIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_creq_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: targetStatus,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_requested' as const,
+                  note: noteOverride || `Requiere: ${targetRule?.approverRole || 'Administrador'}`,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: `Solicitud de aprobación RMA → "${targetStatus}"`,
+      detail: `${target.folio} · ${target.clientCompany} · Requiere rol: ${targetRule?.approverRole || 'Administrador'}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    toast.info(
+      `Aprobación solicitada para ${target.folio} (${targetRule?.approverRole || 'Administrador'}).`,
+      'En cola de aprobación'
+    )
+  }
+
+  const handleApproveCustomerReturnTransition = (returnId: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.customer.steps.find(
+      (s) => s.status === target.pendingTargetStatus
+    )
+    const canApprove = canUserApproveWorkflowStep(
+      targetRule?.approverRole || 'Administrador',
+      activeSessionProfile.roles,
+      isFullAdmin,
+      true
+    )
+    if (!canApprove) {
+      toast.warning(
+        `Esta transición requiere aprobación del rol "${targetRule?.approverRole || 'Administrador'}".`,
+        'Aprobación denegada'
+      )
+      return
+    }
+    applyCustomerReturnTransition(target, target.pendingTargetStatus, {
+      approvedBy: activeSessionProfile.name,
+    })
+  }
+
+  const handleRejectCustomerReturnApproval = (returnId: string, reason?: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending') return
+    const nowIso = new Date().toISOString()
+    const rejectedTarget = target.pendingTargetStatus || target.status
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              approvalStatus: 'rejected' as const,
+              pendingTargetStatus: undefined,
+              rejectionReason: reason,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_crej_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: rejectedTarget,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_rejected' as const,
+                  note: reason || 'Solicitud rechazada por aprobador',
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: `Rechazo de aprobación RMA → "${rejectedTarget}"`,
+      detail: `${target.folio} · ${target.clientCompany}${reason ? ` · ${reason}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
+  }
+
+  const handleUpdateCustomerReturnDetails = (returnId: string, notes: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Edición bloqueada'
+      )
+      return
+    }
+    const nowIso = new Date().toISOString()
+    const mergedNotes = target.notes ? `${target.notes} · ${notes}` : notes
+    setCustomerReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId ? { ...r, notes: mergedNotes, updatedAtIso: nowIso } : r
+      )
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución de cliente',
+      entityId: target.id,
+      action: 'Actualización de notas en RMA cliente',
+      detail: `${target.folio} · ${notes}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Nota agregada a ${target.folio}.`, 'RMA actualizado')
+  }
+
+  const handleAdvanceCustomerReturn = (
+    returnId: string,
+    nextStatus: CustomerReturnStatus,
+    noteOverride?: string
+  ) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.customer, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.customer, target.status)
+    if (!allowed.includes(nextStatus)) {
+      toast.warning(
+        `Transición de "${target.status}" a "${nextStatus}" deshabilitada en el flujo.`,
+        'Flujo de devoluciones'
+      )
+      return
+    }
+    if (doesTransitionRequireApproval(returnWorkflows.customer, nextStatus, target.total)) {
+      handleRequestCustomerReturnApproval(returnId, nextStatus, noteOverride)
+      return
+    }
+    applyCustomerReturnTransition(target, nextStatus, { noteOverride })
+  }
+
+  const handleDeleteCustomerReturn = (returnId: string) => {
+    const target = customerReturns.find((r) => r.id === returnId)
+    if (
+      target &&
+      isReturnDeleteBlocked(returnWorkflows.customer, target.status, {
+        inventoryApplied: target.inventoryApplied,
+        financeApplied: target.financeApplied,
+      })
+    ) {
+      toast.warning(
+        'No se puede eliminar un expediente en estado final o con impacto aplicado en Kardex/CxC.',
+        'Bloqueado por flujo'
+      )
+      return
+    }
+    setCustomerReturns((prev) => {
+      const next = prev.filter((r) => r.id !== returnId)
+      saveStoredCustomerReturns(next)
+      return next
+    })
+    if (target) {
+      appendAuditLog({
+        category: 'sales',
+        crudOperation: 'DELETE',
+        entityType: 'Devolución de cliente',
+        entityId: target.id,
+        action: 'Eliminación de devolución de cliente',
+        detail: `${target.folio} · ${target.clientCompany}`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Devolución ${target.folio} eliminada.`, 'RMA eliminado')
+    }
+  }
+
+  const handleCreateSupplierReturn = (ret: SupplierReturn) => {
+    const resolvedInitialStatus = getDefaultInitialStatusForReturn(returnWorkflows.supplier)
+    let created: SupplierReturn = {
+      ...ret,
+      status: resolvedInitialStatus,
+      workflowHistory:
+        ret.workflowHistory && ret.workflowHistory.length > 0
+          ? ret.workflowHistory.map((h, i) =>
+              i === 0 ? { ...h, toStatus: resolvedInitialStatus } : h
+            )
+          : [
+              {
+                id: `whist_p_${Date.now()}`,
+                timestampIso: new Date().toISOString(),
+                toStatus: resolvedInitialStatus,
+                actor: activeSessionProfile.name,
+                action: 'created',
+                note: ret.notes,
+              },
+            ],
+    }
+    if (created.status === 'Enviada a proveedor' && !created.inventoryApplied) {
+      setInventory((prev) =>
+        prev.map((inv) => {
+          if (inv.warehouseId !== created.warehouseId) return inv
+          const matched = created.items.find(
+            (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+          )
+          return matched ? { ...inv, stock: Math.max(0, inv.stock - matched.quantity) } : inv
+        })
+      )
+      created.items.forEach((line, idx) => {
+        handleAddMovement({
+          id: `mov_prv_ret_init_${Date.now()}_${idx}`,
+          folio: `MOV-RTV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+          date: formatShortReturnDate(),
+          type: 'Salida',
+          sku: line.sku,
+          productName: line.name,
+          quantity: line.quantity,
+          sourceWarehouse: created.warehouseName,
+          referenceDoc: created.folio,
+          reason: `Salida inicial por devolución a proveedor (${created.supplierCompany})`,
+          user: activeSessionProfile.name,
+        })
+      })
+      created = { ...created, inventoryApplied: true }
+    }
+    setSupplierReturns((prev) => {
+      const next = [created, ...prev]
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'CREATE',
+      entityType: 'Devolución a proveedor',
+      entityId: created.id,
+      action: 'Registro de devolución a proveedor (RTV)',
+      detail: `${created.folio} · ${created.supplierCompany} · ${created.purchaseOrderFolio} · Estado inicial: ${created.status} · ${money(created.total)}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Devolución ${created.folio} creada para ${created.supplierCompany}.`, 'RTV registrado')
+  }
+
+  const applySupplierReturnTransition = (
+    target: SupplierReturn,
+    nextStatus: SupplierReturnStatus,
+    options?: { noteOverride?: string; rmaOverride?: string; approvedBy?: string }
+  ) => {
+    let appliedInv = Boolean(target.inventoryApplied)
+    let appliedFin = Boolean(target.financeApplied)
+    let creditNoteFolio = target.creditNoteFolio
+
+    if (nextStatus === 'Enviada a proveedor' && !appliedInv) {
+      setInventory((prev) =>
+        prev.map((inv) => {
+          if (inv.warehouseId !== target.warehouseId) return inv
+          const matched = target.items.find(
+            (l) => l.sku.trim().toLowerCase() === inv.sku.trim().toLowerCase()
+          )
+          return matched ? { ...inv, stock: Math.max(0, inv.stock - matched.quantity) } : inv
+        })
+      )
+      target.items.forEach((line, idx) => {
+        handleAddMovement({
+          id: `mov_prv_ret_${Date.now()}_${idx}`,
+          folio: `MOV-RTV-${String(movements.length + idx + 1).padStart(3, '0')}`,
+          date: formatShortReturnDate(),
+          type: 'Salida',
+          sku: line.sku,
+          productName: line.name,
+          quantity: line.quantity,
+          sourceWarehouse: target.warehouseName,
+          referenceDoc: target.folio,
+          reason: `Salida por devolución a proveedor (${target.supplierCompany})`,
+          user: activeSessionProfile.name,
+        })
+      })
+      appliedInv = true
+    }
+
+    if (nextStatus === 'Acreditada / compensada' && !appliedFin) {
+      creditNoteFolio =
+        creditNoteFolio || `NC-PRV-2026-${String(supplierReturns.length + 201).padStart(3, '0')}`
+      if (target.billId || target.billFolio) {
+        setPayables((prev) =>
+          prev.map((bill) => {
+            const matches =
+              (target.billId && bill.id === target.billId) ||
+              (target.billFolio && bill.folio === target.billFolio)
+            if (!matches) return bill
+            const nextBalance = Math.max(0, bill.balance - target.total)
+            const nextBillStatus =
+              nextBalance === 0
+                ? ('Pagada' as const)
+                : bill.paidAmount > 0 || nextBalance < bill.total
+                ? ('Parcial' as const)
+                : bill.status
+            return {
+              ...bill,
+              balance: nextBalance,
+              status: nextBillStatus,
+            }
+          })
+        )
+      }
+      appliedFin = true
+    }
+
+    const nowIso = new Date().toISOString()
+    const mergedNotes = options?.noteOverride
+      ? target.notes
+        ? `${target.notes} · ${options.noteOverride}`
+        : options.noteOverride
+      : target.notes
+
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === target.id
+          ? {
+              ...r,
+              status: nextStatus,
+              notes: mergedNotes,
+              rmaSupplierCode: options?.rmaOverride || r.rmaSupplierCode,
+              inventoryApplied: appliedInv,
+              financeApplied: appliedFin,
+              creditNoteFolio,
+              approvalStatus: options?.approvedBy ? ('approved' as const) : ('not_required' as const),
+              pendingTargetStatus: undefined,
+              approvedBy: options?.approvedBy || r.approvedBy,
+              approvedAtIso: options?.approvedBy ? nowIso : r.approvedAtIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_p_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: nextStatus,
+                  actor: options?.approvedBy || activeSessionProfile.name,
+                  action: options?.approvedBy ? ('approved' as const) : ('transition' as const),
+                  note: options?.noteOverride,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: nextStatus === 'Acreditada / compensada' ? 'finance' : 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: options?.approvedBy
+        ? `Aprobación y transición de RTV proveedor a "${nextStatus}"`
+        : `Actualización de RTV proveedor a "${nextStatus}"`,
+      detail: `${target.folio} · ${target.supplierCompany}${creditNoteFolio ? ` · ${creditNoteFolio}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    if (nextStatus === 'Enviada a proveedor') {
+      toast.success(
+        `Mercancía de ${target.folio} despachada desde ${target.warehouseName}. Salida registrada en Kardex.`,
+        'Salida despachada'
+      )
+    } else if (nextStatus === 'Acreditada / compensada') {
+      toast.success(
+        `Nota de crédito ${creditNoteFolio} compensada en CxP (${target.supplierCompany}).`,
+        'Crédito CxP aplicado'
+      )
+    } else {
+      toast.info(`Devolución ${target.folio} actualizada a "${nextStatus}".`, 'Estado RTV')
+    }
+  }
+
+  const handleRequestSupplierReturnApproval = (
+    returnId: string,
+    targetStatus: SupplierReturnStatus,
+    noteOverride?: string,
+    rmaOverride?: string
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
+    if (!allowed.includes(targetStatus)) {
+      toast.warning(
+        `El flujo configurado no permite pasar de "${target.status}" a "${targetStatus}".`,
+        'Transición restringida'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.supplier.steps.find((s) => s.status === targetStatus)
+    const nowIso = new Date().toISOString()
+    const mergedNotes = noteOverride
+      ? target.notes
+        ? `${target.notes} · ${noteOverride}`
+        : noteOverride
+      : target.notes
+
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              notes: mergedNotes,
+              rmaSupplierCode: rmaOverride || r.rmaSupplierCode,
+              approvalStatus: 'pending' as const,
+              pendingTargetStatus: targetStatus,
+              approvalRequestedBy: activeSessionProfile.name,
+              approvalRequestedAtIso: nowIso,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_preq_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: targetStatus,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_requested' as const,
+                  note: noteOverride || `Requiere: ${targetRule?.approverRole || 'Administrador'}`,
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: `Solicitud de aprobación RTV → "${targetStatus}"`,
+      detail: `${target.folio} · ${target.supplierCompany} · Requiere rol: ${targetRule?.approverRole || 'Administrador'}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    toast.info(
+      `Aprobación solicitada para ${target.folio} (${targetRule?.approverRole || 'Administrador'}).`,
+      'En cola de aprobación'
+    )
+  }
+
+  const handleApproveSupplierReturnTransition = (returnId: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending' || !target.pendingTargetStatus) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const targetRule = returnWorkflows.supplier.steps.find(
+      (s) => s.status === target.pendingTargetStatus
+    )
+    const canApprove = canUserApproveWorkflowStep(
+      targetRule?.approverRole || 'Administrador',
+      activeSessionProfile.roles,
+      isFullAdmin,
+      true
+    )
+    if (!canApprove) {
+      toast.warning(
+        `Esta transición requiere aprobación del rol "${targetRule?.approverRole || 'Administrador'}".`,
+        'Aprobación denegada'
+      )
+      return
+    }
+    applySupplierReturnTransition(target, target.pendingTargetStatus, {
+      approvedBy: activeSessionProfile.name,
+    })
+  }
+
+  const handleRejectSupplierReturnApproval = (returnId: string, reason?: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target || target.approvalStatus !== 'pending') return
+    const nowIso = new Date().toISOString()
+    const rejectedTarget = target.pendingTargetStatus || target.status
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? {
+              ...r,
+              approvalStatus: 'rejected' as const,
+              pendingTargetStatus: undefined,
+              rejectionReason: reason,
+              updatedAtIso: nowIso,
+              workflowHistory: [
+                {
+                  id: `whist_prej_${Date.now()}`,
+                  timestampIso: nowIso,
+                  fromStatus: target.status,
+                  toStatus: rejectedTarget,
+                  actor: activeSessionProfile.name,
+                  action: 'approval_rejected' as const,
+                  note: reason || 'Solicitud rechazada por aprobador',
+                },
+                ...(r.workflowHistory || []),
+              ],
+            }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: `Rechazo de aprobación RTV → "${rejectedTarget}"`,
+      detail: `${target.folio} · ${target.supplierCompany}${reason ? ` · ${reason}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.warning(`Solicitud de transición para ${target.folio} rechazada.`, 'Aprobación rechazada')
+  }
+
+  const handleUpdateSupplierReturnDetails = (
+    returnId: string,
+    payload: { notes?: string; rmaSupplierCode?: string }
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Edición bloqueada'
+      )
+      return
+    }
+    const nowIso = new Date().toISOString()
+    const mergedNotes = payload.notes
+      ? target.notes
+        ? `${target.notes} · ${payload.notes}`
+        : payload.notes
+      : target.notes
+    const nextRma = payload.rmaSupplierCode ?? target.rmaSupplierCode
+    setSupplierReturns((prev) => {
+      const next = prev.map((r) =>
+        r.id === returnId
+          ? { ...r, notes: mergedNotes, rmaSupplierCode: nextRma, updatedAtIso: nowIso }
+          : r
+      )
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    appendAuditLog({
+      category: 'inventory',
+      crudOperation: 'UPDATE',
+      entityType: 'Devolución a proveedor',
+      entityId: target.id,
+      action: 'Actualización de datos en RTV proveedor',
+      detail: `${target.folio}${nextRma ? ` · RMA ${nextRma}` : ''}${payload.notes ? ` · ${payload.notes}` : ''}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(`Expediente ${target.folio} actualizado.`, 'RTV actualizado')
+  }
+
+  const handleAdvanceSupplierReturn = (
+    returnId: string,
+    nextStatus: SupplierReturnStatus,
+    noteOverride?: string,
+    rmaOverride?: string
+  ) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (!target) return
+    if (isReturnEditBlocked(returnWorkflows.supplier, target.status)) {
+      toast.warning(
+        `El expediente ${target.folio} está en el estado final "${target.status}" y tiene la edición bloqueada.`,
+        'Estado final bloqueado'
+      )
+      return
+    }
+    const allowed = getAllowedNextStatusesForReturn(returnWorkflows.supplier, target.status)
+    if (!allowed.includes(nextStatus)) {
+      toast.warning(
+        `Transición de "${target.status}" a "${nextStatus}" deshabilitada en el flujo.`,
+        'Flujo de devoluciones'
+      )
+      return
+    }
+    if (doesTransitionRequireApproval(returnWorkflows.supplier, nextStatus, target.total)) {
+      handleRequestSupplierReturnApproval(returnId, nextStatus, noteOverride, rmaOverride)
+      return
+    }
+    applySupplierReturnTransition(target, nextStatus, { noteOverride, rmaOverride })
+  }
+
+  const handleDeleteSupplierReturn = (returnId: string) => {
+    const target = supplierReturns.find((r) => r.id === returnId)
+    if (
+      target &&
+      isReturnDeleteBlocked(returnWorkflows.supplier, target.status, {
+        inventoryApplied: target.inventoryApplied,
+        financeApplied: target.financeApplied,
+      })
+    ) {
+      toast.warning(
+        'No se puede eliminar un expediente en estado final o con impacto aplicado en Kardex/CxP.',
+        'Bloqueado por flujo'
+      )
+      return
+    }
+    setSupplierReturns((prev) => {
+      const next = prev.filter((r) => r.id !== returnId)
+      saveStoredSupplierReturns(next)
+      return next
+    })
+    if (target) {
+      appendAuditLog({
+        category: 'inventory',
+        crudOperation: 'DELETE',
+        entityType: 'Devolución a proveedor',
+        entityId: target.id,
+        action: 'Eliminación de devolución a proveedor',
+        detail: `${target.folio} · ${target.supplierCompany}`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+      toast.info(`Devolución ${target.folio} eliminada.`, 'RTV eliminado')
+    }
   }
 
   const handleCreateRequisition = (req: PurchaseRequisition) => {
@@ -1787,7 +4231,7 @@ function AppContent() {
   const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
   const [supplierRecords, setSupplierRecords] = useState(suppliers)
   const [opportunityRecords, setOpportunityRecords] = useState(opportunities)
-  const [activityRecords, setActivityRecords] = useState(activities)
+  const [activityRecords, setActivityRecords] = useState<CrmActivity[]>(activities)
   const [createKind, setCreateKind] = useState<CreateKind | null>(null)
   const [createForm, setCreateForm] = useState({
     supplierCode: '',
@@ -1797,6 +4241,9 @@ function AppContent() {
     phone: '',
     title: '',
     time: '10:00',
+    activityDate: CRM_TODAY_ISO,
+    activityIcon: 'check' as 'send' | 'phone' | 'check',
+    activityNotes: '',
     value: '',
     country: 'MX',
     addressStreet: '',
@@ -1923,7 +4370,14 @@ function AppContent() {
   const navigateTo = (page: string) => {
     if (
       page !== 'Inicio' &&
-      !canAccessModule(page, activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+      page !== 'Centro de ayuda' &&
+      !canAccessModule(
+        page,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
     ) {
       notifyAccessDenied(page)
       return
@@ -1934,7 +4388,8 @@ function AppContent() {
         'Ventas',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setSalesSection((first as typeof salesSection) || 'Catálogo')
     }
@@ -1943,7 +4398,8 @@ function AppContent() {
         'CRM',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setCrmSection(first || 'Resumen')
     }
@@ -1952,7 +4408,8 @@ function AppContent() {
         'Compras',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setPurchasesSection((first as PurchasesSectionTab) || 'Resumen')
     }
@@ -1961,7 +4418,8 @@ function AppContent() {
         'Operaciones',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setOperationsSection((first as typeof operationsSection) || 'Inventario')
     }
@@ -1970,16 +4428,38 @@ function AppContent() {
         'Finanzas',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setFinanceSection((first as typeof financeSection) || 'Cobros')
+    }
+    if (page === 'Gastos') {
+      const first = getFirstAccessibleSection(
+        'Gastos',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+      setExpensesSection((first as ExpensesSectionTab) || 'Resumen y control')
+    }
+    if (page === 'Reportes') {
+      const first = getFirstAccessibleSection(
+        'Reportes',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+      setReportsSection((first as ReportsSectionTab) || 'Resumen ejecutivo')
     }
     if (page === 'Administración') {
       const first = getFirstAccessibleSection(
         'Administración',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       setAdminSection((first as typeof adminSection) || 'Departamentos')
     }
@@ -1988,11 +4468,45 @@ function AppContent() {
         'Configuración',
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
       if (first) setActiveSetting(first)
     }
     const route = pageRoutes[page] ?? '/'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToReportsSection = (section: ReportsSectionTab) => {
+    if (
+      !canAccessSection(
+        'Reportes',
+        section,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    ) {
+      notifyAccessDenied(`Reportes · ${section}`)
+      return
+    }
+    setActivePage('Reportes')
+    setReportsSection(section)
+    const route =
+      section === 'Estado de Resultados'
+        ? '/reports/income-statement'
+        : section === 'Finanzas y Tesorería'
+        ? '/reports/financial'
+        : section === 'CxP y Pagos EBP'
+        ? '/reports/payables-ebp'
+        : section === 'Ventas y CxC'
+        ? '/reports/sales'
+        : section === 'Compras e Inventario'
+        ? '/reports/inventory'
+        : section === 'Nómina y RRHH'
+        ? '/reports/payroll'
+        : '/reports'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -2003,7 +4517,8 @@ function AppContent() {
         setting,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Settings · ${setting}`)
@@ -2023,7 +4538,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Administración · ${section}`)
@@ -2031,9 +4547,14 @@ function AppContent() {
     }
     setActivePage('Administración')
     setAdminSection(section)
+    setSelectedSubsidiaryId(null)
     const route =
-      section === 'Ubicaciones'
+      section === 'Subsidiarias'
+        ? '/admin/subsidiaries'
+        : section === 'Ubicaciones'
         ? '/admin/locations'
+        : section === 'Flujos de devoluciones'
+        ? '/admin/return-workflows'
         : section === 'Resumen'
         ? '/admin/summary'
         : section === 'Historial de Auditoría'
@@ -2042,14 +4563,38 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen') => {
+  const navigateToSubsidiaryDetail = (subsidiaryId: string | null) => {
+    if (
+      !canAccessSection(
+        'Administración',
+        'Subsidiarias',
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    ) {
+      notifyAccessDenied('Administración · Subsidiarias')
+      return
+    }
+    setActivePage('Administración')
+    setAdminSection('Subsidiarias')
+    setSelectedSubsidiaryId(subsidiaryId)
+    const route = subsidiaryId
+      ? `/admin/subsidiaries/${subsidiaryId === '__new__' ? 'nueva' : encodeURIComponent(subsidiaryId)}`
+      : '/admin/subsidiaries'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToFinanceSection = (section: 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen') => {
     if (
       !canAccessSection(
         'Finanzas',
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Finanzas · ${section}`)
@@ -2064,11 +4609,36 @@ function AppContent() {
         ? '/finance/ebp'
         : section === 'Pagos'
         ? '/finance/payables'
-        : section === 'Gastos'
-        ? '/finance/expenses'
         : section === 'Resumen'
         ? '/finance/summary'
         : '/finance'
+    if (window.location.pathname !== route) window.history.pushState({}, '', route)
+  }
+
+  const navigateToExpensesSection = (section: ExpensesSectionTab = 'Resumen y control') => {
+    if (
+      !canAccessSection(
+        'Gastos',
+        section,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    ) {
+      notifyAccessDenied(`Gastos · ${section}`)
+      return
+    }
+    setActivePage('Gastos')
+    setExpensesSection(section)
+    const route =
+      section === 'Registro y pólizas'
+        ? '/expenses/ledger'
+        : section === 'Presupuestos y alertas'
+          ? '/expenses/budgets'
+          : section === 'Gastos recurrentes'
+            ? '/expenses/recurring'
+            : '/expenses'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -2079,7 +4649,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Operaciones · ${section}`)
@@ -2107,7 +4678,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Compras · ${section}`)
@@ -2123,19 +4695,22 @@ function AppContent() {
         : section === 'Recepciones'
         ? '/purchases/receptions'
         : section === 'Facturas'
-        ? '/purchases/invoices'
+        ? '/purchases/vendorbill'
+        : section === 'Devoluciones'
+        ? '/purchases/returns'
         : '/purchases'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const navigateToSalesSection = (section: 'Catálogo' | 'Cotizaciones' | 'Pedidos' | 'Facturas' | 'Resumen') => {
+  const navigateToSalesSection = (section: SalesSectionTab) => {
     if (
       !canAccessSection(
         'Ventas',
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`Ventas · ${section}`)
@@ -2150,6 +4725,8 @@ function AppContent() {
         ? '/sales/orders'
         : section === 'Facturas'
         ? '/sales/invoices'
+        : section === 'Devoluciones'
+        ? '/sales/returns'
         : section === 'Resumen'
         ? '/sales/summary'
         : '/sales'
@@ -2163,7 +4740,8 @@ function AppContent() {
         section,
         activeCapabilities,
         isFullAdmin,
-        activeSessionProfile.isActive
+        activeSessionProfile.isActive,
+        activeSectionAccess
       )
     ) {
       notifyAccessDenied(`CRM · ${section}`)
@@ -2188,7 +4766,30 @@ function AppContent() {
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
-  const openCreate = (kind: CreateKind) => {
+  const openCreate = (kind: CreateKind, presetActivityDate?: string) => {
+    const targetSection =
+      kind === 'client'
+        ? 'Clientes'
+        : kind === 'supplier'
+        ? 'Proveedores'
+        : kind === 'opportunity'
+        ? 'Oportunidades'
+        : 'Actividades'
+    if (
+      !canCreateInSection(
+        'CRM',
+        targetSection,
+        activeSectionAccess,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+    ) {
+      toast.warning(
+        `Tu rol actual solo tiene nivel de consulta en CRM · ${targetSection} y no permite crear registros.`,
+        'Permiso insuficiente'
+      )
+      return
+    }
     setCreateKind(kind)
     setCreateForm({
       supplierCode: '',
@@ -2198,6 +4799,9 @@ function AppContent() {
       phone: '',
       title: '',
       time: '10:00',
+      activityDate: presetActivityDate || CRM_TODAY_ISO,
+      activityIcon: 'check',
+      activityNotes: '',
       value: '',
       country: 'MX',
       addressStreet: '',
@@ -2362,11 +4966,31 @@ function AppContent() {
           state: supplierAddresses[0]?.state,
           addresses: supplierAddresses,
           rfc: createForm.rfc.trim().toUpperCase() || undefined,
+          currency: 'MXN',
           bankName: createForm.bankName.trim() || undefined,
           clabe: createForm.clabe.trim() || undefined,
           accountNumber: createForm.accountNumber.trim() || undefined,
           defaultReference: createForm.defaultReference.trim() || undefined,
           bankPackValues: createForm.bankPackValues,
+          bankAccounts:
+            createForm.bankName.trim() || createForm.clabe.trim()
+              ? [
+                  {
+                    id: `sba_${Date.now()}`,
+                    alias: createForm.bankName.trim()
+                      ? `${createForm.bankName.trim()} Principal`
+                      : 'Cuenta Principal',
+                    bankName: createForm.bankName.trim(),
+                    clabe: createForm.clabe.trim(),
+                    accountNumber: createForm.accountNumber.trim() || undefined,
+                    currency: 'MXN',
+                    defaultReference: createForm.defaultReference.trim() || undefined,
+                    isDefault: true,
+                    active: true,
+                    bankPackValues: createForm.bankPackValues || {},
+                  },
+                ]
+              : [],
         },
         ...records,
       ])
@@ -2386,8 +5010,26 @@ function AppContent() {
     }
     if (createKind === 'activity') {
       const title = createForm.title.trim()
-      setActivityRecords((records) => [...records, { title, company: createForm.company.trim() || 'Sin empresa', time: createForm.time, icon: 'check', tone: 'green' }])
-      const actMsg = `Actividad “${title}” programada para las ${createForm.time}.`
+      const actDate = createForm.activityDate || CRM_TODAY_ISO
+      const actIcon = createForm.activityIcon || 'check'
+      const actTone: 'blue' | 'amber' | 'green' =
+        actIcon === 'send' ? 'blue' : actIcon === 'phone' ? 'amber' : 'green'
+      setActivityRecords((records) => [
+        ...records,
+        {
+          id: `act_${Date.now()}`,
+          title,
+          company: createForm.company.trim() || 'Sin empresa',
+          date: actDate,
+          time: createForm.time,
+          icon: actIcon,
+          tone: actTone,
+          status: 'Pendiente',
+          owner: activeSessionProfile.name,
+          notes: createForm.activityNotes.trim() || undefined,
+        },
+      ])
+      const actMsg = `Actividad “${title}” programada para el ${actDate} a las ${createForm.time}.`
       setNotice(actMsg)
       toast.success(actMsg, 'Actividad agendada')
       setCrmSection('Actividades')
@@ -2402,12 +5044,1158 @@ function AppContent() {
       setSalesSection(salesSectionFromPath(window.location.pathname))
       setPurchasesSection(purchasesSectionFromPath(window.location.pathname))
       setOperationsSection(operationsSectionFromPath(window.location.pathname))
+      setFinanceSection(financeSectionFromPath(window.location.pathname))
+      setExpensesSection(expensesSectionFromPath(window.location.pathname))
+      setReportsSection(reportsSectionFromPath(window.location.pathname))
+      setAdminSection(adminSectionFromPath(window.location.pathname))
+      setSelectedSubsidiaryId(subsidiaryIdFromPath(window.location.pathname))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
   const [menuOpen, setMenuOpen] = useState(false)
   const [notice, setNotice] = useState('')
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
+  const [isSetupChecklistOpen, setIsSetupChecklistOpen] = useState(false)
+  const [setupState, setSetupState] = useState<WorkspaceSetupPersistedState>(() =>
+    loadWorkspaceSetupState()
+  )
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIsGlobalSearchOpen((prev) => !prev)
+        return
+      }
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const target = event.target as HTMLElement | null
+        const tagName = target?.tagName?.toLowerCase() || ''
+        const isEditable =
+          tagName === 'input' ||
+          tagName === 'textarea' ||
+          tagName === 'select' ||
+          Boolean(target?.isContentEditable)
+        if (!isEditable && !isGlobalSearchOpen) {
+          event.preventDefault()
+          setIsGlobalSearchOpen(true)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [isGlobalSearchOpen])
+
+  const orgStructureSignal = subsidiaries.length > 0 && departments.length > 0
+  const commercialDirectorySignal =
+    clientRecords.length > 0 && supplierRecords.length > 0 && bankAccounts.length > 0
+  const salesPurchasesSignal =
+    quotes !== initialQuotes ||
+    orders !== initialOrders ||
+    requisitions !== initialRequisitions ||
+    purchaseOrders !== initialPurchaseOrders ||
+    receivables !== initialReceivables ||
+    clientRecords !== clients ||
+    supplierRecords !== suppliers ||
+    opportunityRecords !== opportunities ||
+    activityRecords !== activities ||
+    transfers !== initialTransfers ||
+    inventory !== initialInventory
+  const financeBudgetsSignal =
+    expenses !== initialExpenses ||
+    expenseBudgets !== initialExpenseBudgets ||
+    recurringExpenses !== initialRecurringExpenses ||
+    transactions !== initialTransactions ||
+    payables !== initialPayables ||
+    ebpBatches !== initialEbpBatches
+  const governanceHelpSignal =
+    activePage === 'Centro de ayuda' ||
+    activePage === 'Configuración' ||
+    darkMode ||
+    accentTheme !== 'green' ||
+    workspaceMeta.workspaceName !== 'Brújula Estudio' ||
+    orgLogoUrl !== '' ||
+    activeSessionId !== 'user:usr_1'
+
+  useEffect(() => {
+    const signalMap: Record<WorkspaceSetupStepId, boolean> = {
+      org_structure: orgStructureSignal,
+      commercial_directory: commercialDirectorySignal,
+      sales_purchases: salesPurchasesSignal,
+      finance_budgets: financeBudgetsSignal,
+      governance_help: governanceHelpSignal,
+    }
+    setSetupState((prev) => {
+      let changed = false
+      const nextLatched = { ...prev.latchedMilestones }
+      for (const stepId of Object.keys(signalMap) as WorkspaceSetupStepId[]) {
+        if (signalMap[stepId] && !prev.latchedMilestones[stepId]) {
+          nextLatched[stepId] = true
+          changed = true
+        }
+      }
+      if (!changed) return prev
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        latchedMilestones: nextLatched,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }, [
+    orgStructureSignal,
+    commercialDirectorySignal,
+    salesPurchasesSignal,
+    financeBudgetsSignal,
+    governanceHelpSignal,
+  ])
+
+  const workspaceSetupSteps = useMemo<WorkspaceSetupStepView[]>(() => {
+    const customBrand =
+      workspaceMeta.workspaceName !== 'Brújula Estudio' || Boolean(orgLogoUrl)
+    const resolveStep = (
+      id: WorkspaceSetupStepId,
+      liveSignal: boolean
+    ): { autoCompleted: boolean; completed: boolean; isManualOverride: boolean } => {
+      const autoCompleted = liveSignal || Boolean(setupState.latchedMilestones[id])
+      const hasManual = typeof setupState.manualOverrides[id] === 'boolean'
+      const completed = hasManual ? Boolean(setupState.manualOverrides[id]) : autoCompleted
+      return {
+        autoCompleted,
+        completed,
+        isManualOverride: hasManual && completed !== autoCompleted,
+      }
+    }
+
+    const s1 = resolveStep('org_structure', orgStructureSignal)
+    const s2 = resolveStep('commercial_directory', commercialDirectorySignal)
+    const s3 = resolveStep('sales_purchases', salesPurchasesSignal)
+    const s4 = resolveStep('finance_budgets', financeBudgetsSignal)
+    const s5 = resolveStep('governance_help', governanceHelpSignal)
+
+    return [
+      {
+        id: 'org_structure',
+        order: 1,
+        title: 'Identidad y estructura organizacional',
+        description:
+          'Define la marca de tu espacio, subsidiarias, departamentos y ubicaciones operativas.',
+        evidenceText: `${subsidiaries.length} subsidiarias · ${departments.length} departamentos · ${locations.length} ubicaciones${customBrand ? ' · Marca personalizada' : ''}`,
+        ...s1,
+        targetLabel: 'Ir a Estructura',
+      },
+      {
+        id: 'commercial_directory',
+        order: 2,
+        title: 'Directorio comercial y tesorería',
+        description:
+          'Mantén activos clientes, proveedores con CLABE y tus cuentas bancarias de operación.',
+        evidenceText: `${clientRecords.length} clientes · ${supplierRecords.length} proveedores · ${bankAccounts.length} cuentas`,
+        ...s2,
+        targetLabel: 'Ir a CRM',
+      },
+      {
+        id: 'sales_purchases',
+        order: 3,
+        title: 'Operación de Ventas o Compras',
+        description:
+          'Crea o actualiza una cotización, pedido, requisición, orden de compra o ficha CRM.',
+        evidenceText: s3.autoCompleted
+          ? `${quotes.length} cotizaciones · ${orders.length} pedidos · ${purchaseOrders.length} OC registradas`
+          : 'Aún sin movimientos nuevos en Ventas, Compras o CRM',
+        ...s3,
+        targetLabel: 'Ir a Ventas',
+      },
+      {
+        id: 'finance_budgets',
+        order: 4,
+        title: 'Control de gastos y presupuestos 80% / 95%',
+        description:
+          'Registra un gasto, ajusta un presupuesto mensual o programa una plantilla recurrente.',
+        evidenceText: s4.autoCompleted
+          ? `${expenses.length} pólizas · ${expenseBudgets.filter((b) => b.active).length} presupuestos activos`
+          : 'Registra una póliza o configura umbrales en Gastos',
+        ...s4,
+        targetLabel: 'Ir a Presupuestos',
+      },
+      {
+        id: 'governance_help',
+        order: 5,
+        title: 'Seguridad, preferencias o Centro de ayuda',
+        description:
+          'Personaliza tema/roles o consulta las guías y preguntas frecuentes en el Centro de ayuda.',
+        evidenceText: s5.autoCompleted
+          ? 'Preferencias, permisos o Centro de ayuda verificados'
+          : 'Explora Configuración o el Centro de ayuda para completarlo',
+        ...s5,
+        targetLabel: 'Ir a Ayuda',
+      },
+    ]
+  }, [
+    setupState,
+    orgStructureSignal,
+    commercialDirectorySignal,
+    salesPurchasesSignal,
+    financeBudgetsSignal,
+    governanceHelpSignal,
+    subsidiaries.length,
+    departments.length,
+    locations.length,
+    workspaceMeta.workspaceName,
+    orgLogoUrl,
+    clientRecords.length,
+    supplierRecords.length,
+    bankAccounts.length,
+    quotes.length,
+    orders.length,
+    purchaseOrders.length,
+    expenses.length,
+    expenseBudgets,
+  ])
+
+  const completedSetupCount = useMemo(
+    () => workspaceSetupSteps.filter((s) => s.completed).length,
+    [workspaceSetupSteps]
+  )
+  const totalSetupCount = workspaceSetupSteps.length
+  const remainingSetupCount = Math.max(0, totalSetupCount - completedSetupCount)
+  const setupProgressPercent = Math.round((completedSetupCount / totalSetupCount) * 100)
+  const isAllSetupComplete = completedSetupCount === totalSetupCount
+
+  const prevSetupCompletedRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (prevSetupCompletedRef.current === null) {
+      prevSetupCompletedRef.current = completedSetupCount
+      return
+    }
+    if (completedSetupCount > prevSetupCompletedRef.current) {
+      if (completedSetupCount === totalSetupCount) {
+        toast.success(
+          '¡Tu espacio está 100% configurado! Todos los pasos de puesta en marcha se completaron.',
+          'Espacio listo'
+        )
+      } else {
+        toast.success(
+          `Avance actualizado: ${completedSetupCount} de ${totalSetupCount} pasos completados (${setupProgressPercent}%).`,
+          'Tu espacio avanza'
+        )
+      }
+    }
+    prevSetupCompletedRef.current = completedSetupCount
+  }, [completedSetupCount, totalSetupCount, setupProgressPercent, toast])
+
+  const handleToggleSetupStep = (stepId: WorkspaceSetupStepId) => {
+    const target = workspaceSetupSteps.find((s) => s.id === stepId)
+    if (!target) return
+    const nextCompleted = !target.completed
+    setSetupState((prev) => {
+      const nextOverrides = { ...prev.manualOverrides }
+      if (nextCompleted === target.autoCompleted) {
+        delete nextOverrides[stepId]
+      } else {
+        nextOverrides[stepId] = nextCompleted
+      }
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        manualOverrides: nextOverrides,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }
+
+  const handleCompleteAllSetupSteps = () => {
+    setSetupState((prev) => {
+      const nextOverrides = { ...prev.manualOverrides }
+      for (const step of workspaceSetupSteps) {
+        if (!step.completed) {
+          nextOverrides[step.id] = true
+        }
+      }
+      const updated: WorkspaceSetupPersistedState = {
+        ...prev,
+        manualOverrides: nextOverrides,
+        updatedAt: new Date().toISOString(),
+      }
+      saveWorkspaceSetupState(updated)
+      return updated
+    })
+  }
+
+  const handleResetSetupProgress = () => {
+    const reset: WorkspaceSetupPersistedState = {
+      ...DEFAULT_WORKSPACE_SETUP_STATE,
+      latchedMilestones: {
+        org_structure: orgStructureSignal,
+        commercial_directory: commercialDirectorySignal,
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    setSetupState(reset)
+    saveWorkspaceSetupState(reset)
+    toast.info('Seguimiento restablecido al estado base del espacio.', 'Checklist restablecido')
+  }
+
+  const handleNavigateSetupStep = (stepId: WorkspaceSetupStepId) => {
+    setIsSetupChecklistOpen(false)
+    setMenuOpen(false)
+    if (stepId === 'org_structure') {
+      navigateToAdminSection('Subsidiarias')
+      return
+    }
+    if (stepId === 'commercial_directory') {
+      navigateToCrmSection('Clientes')
+      return
+    }
+    if (stepId === 'sales_purchases') {
+      navigateToSalesSection('Cotizaciones')
+      return
+    }
+    if (stepId === 'finance_budgets') {
+      navigateToExpensesSection('Presupuestos y alertas')
+      return
+    }
+    navigateTo('Centro de ayuda')
+  }
+
+  const globalSearchItems = useMemo<GlobalSearchItem[]>(() => {
+    const list: GlobalSearchItem[] = []
+    const canViewSec = (mod: string, sec: string) =>
+      canAccessSection(
+        mod,
+        sec,
+        activeCapabilities,
+        isFullAdmin,
+        activeSessionProfile.isActive,
+        activeSectionAccess
+      )
+    const canCreateSec = (mod: string, sec: string) =>
+      canCreateInSection(
+        mod,
+        sec,
+        activeSectionAccess,
+        isFullAdmin,
+        activeSessionProfile.isActive
+      )
+
+    const moduleIconMap: Record<string, GlobalSearchIconKind> = {
+      Inicio: 'home',
+      CRM: 'crm',
+      Ventas: 'sales',
+      Compras: 'purchases',
+      Operaciones: 'operations',
+      Finanzas: 'finance',
+      Gastos: 'expenses',
+      Reportes: 'reports',
+      Administración: 'admin',
+      Configuración: 'settings',
+      'Centro de ayuda': 'help',
+    }
+
+    const goModuleSection = (mod: string, sec: string) => {
+      setMenuOpen(false)
+      if (mod === 'CRM') {
+        navigateToCrmSection(sec)
+      } else if (mod === 'Ventas') {
+        navigateToSalesSection(sec as SalesSectionTab)
+      } else if (mod === 'Compras') {
+        navigateToPurchasesSection(sec as PurchasesSectionTab)
+      } else if (mod === 'Operaciones') {
+        navigateToOperationsSection(
+          sec as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
+        )
+      } else if (mod === 'Finanzas') {
+        navigateToFinanceSection(
+          sec as 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Cuentas contables' | 'Resumen'
+        )
+      } else if (mod === 'Gastos') {
+        navigateToExpensesSection(sec as ExpensesSectionTab)
+      } else if (mod === 'Reportes') {
+        navigateToReportsSection(sec as ReportsSectionTab)
+      } else if (mod === 'Administración') {
+        navigateToAdminSection(sec as AdminSectionTab)
+      } else if (mod === 'Configuración') {
+        navigateToSettingSection(sec)
+      }
+    }
+
+    // 1. Vistas principales y subsecciones (Módulos)
+    list.push({
+      id: 'nav:inicio',
+      entityType: 'module',
+      groupLabel: 'Módulos y vistas',
+      title: 'Inicio · Tablero ejecutivo',
+      subtitle: 'Resumen general, ingresos mensuales, entregas y accesos rápidos',
+      meta: 'Inicio',
+      keywords: 'modulo inicio dashboard home resumen ejecutivo kpis alertas',
+      iconKind: 'home',
+      priorityBoost: 95,
+      onSelect: () => {
+        setMenuOpen(false)
+        navigateTo('Inicio')
+      },
+    })
+
+    list.push({
+      id: 'nav:help-center',
+      entityType: 'module',
+      groupLabel: 'Módulos y vistas',
+      title: 'Centro de ayuda',
+      subtitle: 'Guías paso a paso, flujos del sistema, FAQ, glosario y soporte',
+      meta: 'Ayuda',
+      keywords: 'modulo documentacion faq preguntas frecuentes soporte tickets manual',
+      iconKind: 'help',
+      priorityBoost: 60,
+      onSelect: () => {
+        setMenuOpen(false)
+        navigateTo('Centro de ayuda')
+      },
+    })
+
+    ;(Object.entries(SYSTEM_MODULE_SECTIONS) as Array<[string, readonly string[]]>).forEach(
+      ([modName, subSections]) => {
+        const accessibleSubs = subSections.filter((sec) => canViewSec(modName, sec))
+        if (accessibleSubs.length === 0) return
+
+        list.push({
+          id: `nav:mod:${modName}`,
+          entityType: 'module',
+          groupLabel: 'Módulos y vistas',
+          title: modName,
+          subtitle: `Módulo ${modName} · ${accessibleSubs.slice(0, 4).join(', ')}`,
+          meta: 'Módulo',
+          keywords: `modulo ${modName} ${accessibleSubs.join(' ')}`,
+          iconKind: moduleIconMap[modName] || 'home',
+          priorityBoost: 85,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateTo(modName)
+          },
+        })
+
+        accessibleSubs.forEach((sec) => {
+          const extraModuleKeywords =
+            sec === 'Estado de Resultados'
+              ? 'resultados pnl pyl margen bruto operativo neto punto equilibrio utilidad'
+              : sec === 'Presupuestos y alertas'
+              ? 'presupuesto alertas 80 95 limite umbral gasto'
+              : sec === 'Pagos Bancarios'
+              ? 'ebp dispersion layout clabe banco transferencia'
+              : sec === 'Roles y permisos'
+              ? 'rbac seguridad permisos accesos usuarios'
+              : ''
+          list.push({
+            id: `nav:sec:${modName}:${sec}`,
+            entityType: 'module',
+            groupLabel: 'Módulos y vistas',
+            title: `${modName} · ${sec}`,
+            subtitle: `Abrir sección ${sec} dentro de ${modName}`,
+            meta: modName,
+            keywords: `modulo ${modName} ${sec} vista pestaña seccion ${extraModuleKeywords}`,
+            iconKind: moduleIconMap[modName] || 'home',
+            priorityBoost:
+              sec === 'Estado de Resultados' || sec === 'Presupuestos y alertas' ? 88 : 72,
+            onSelect: () => goModuleSection(modName, sec),
+          })
+        })
+      }
+    )
+
+    // 2. Acciones rápidas
+    if (canCreateSec('CRM', 'Clientes')) {
+      list.push({
+        id: 'action:new-client',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nuevo cliente',
+        subtitle: 'Abrir formulario de alta rápida de cliente y direcciones',
+        meta: 'Crear',
+        keywords: 'alta crear registrar nuevo cliente crm',
+        iconKind: 'action',
+        priorityBoost: 78,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('client')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Proveedores')) {
+      list.push({
+        id: 'action:new-supplier',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nuevo proveedor',
+        subtitle: 'Registrar proveedor con RFC, CLABE y cuentas bancarias',
+        meta: 'Crear',
+        keywords: 'alta crear registrar nuevo proveedor clabe banco',
+        iconKind: 'action',
+        priorityBoost: 74,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('supplier')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Oportunidades')) {
+      list.push({
+        id: 'action:new-opportunity',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nueva oportunidad comercial',
+        subtitle: 'Añadir trato o prospecto al pipeline de ventas',
+        meta: 'Crear',
+        keywords: 'alta crear nuevo pipeline trato prospecto venta oportunidad',
+        iconKind: 'action',
+        priorityBoost: 70,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('opportunity')
+        },
+      })
+    }
+    if (canCreateSec('CRM', 'Actividades')) {
+      list.push({
+        id: 'action:new-activity',
+        entityType: 'module',
+        groupLabel: 'Acciones rápidas',
+        title: 'Nueva actividad CRM',
+        subtitle: 'Programar llamada, envío o seguimiento con cliente',
+        meta: 'Crear',
+        keywords: 'alta crear nuevo agenda llamada seguimiento tarea actividad',
+        iconKind: 'action',
+        priorityBoost: 68,
+        onSelect: () => {
+          setMenuOpen(false)
+          openCreate('activity')
+        },
+      })
+    }
+    list.push({
+      id: 'action:workspace-checklist',
+      entityType: 'module',
+      groupLabel: 'Acciones rápidas',
+      title: 'Checklist: Tu espacio está listo',
+      subtitle: `Progreso de implementación: ${completedSetupCount} de ${totalSetupCount} pasos completados`,
+      meta: `${setupProgressPercent}%`,
+      keywords: 'configuracion inicial onboarding checklist espacio listo',
+      iconKind: 'action',
+      priorityBoost: 66,
+      onSelect: () => {
+        setMenuOpen(false)
+        setIsSetupChecklistOpen(true)
+      },
+    })
+    list.push({
+      id: 'action:toggle-theme',
+      entityType: 'module',
+      groupLabel: 'Acciones rápidas',
+      title: darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro',
+      subtitle: 'Alternar apariencia visual de todo el espacio de trabajo',
+      meta: 'Tema',
+      keywords: 'dark mode light mode oscuro claro apariencia tema',
+      iconKind: 'settings',
+      priorityBoost: 55,
+      onSelect: () => {
+        setDarkMode((prev) => {
+          const next = !prev
+          window.localStorage.setItem('aes-nexus-dark-mode', String(next))
+          return next
+        })
+      },
+    })
+
+    // 3. CRM: Clientes y Proveedores (filtros propios) + Equipo
+    if (canViewSec('CRM', 'Clientes')) {
+      clientRecords.forEach((c, idx) => {
+        list.push({
+          id: `crm:client:${c.clientCode || idx}-${c.company}`,
+          entityType: 'client',
+          groupLabel: 'Clientes',
+          title: c.company,
+          subtitle: `${c.name} · ${c.email}${c.city ? ` · ${c.city}` : ''} · ${c.status}`,
+          meta: c.clientCode || c.status,
+          keywords: `${c.rfc || ''} ${c.phone} ${c.status} ${c.paymentTerms || ''} ${c.city || ''} cliente clientes crm`,
+          iconKind: 'crm',
+          priorityBoost: 45,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Clientes')
+            setDetailDirectory({ kind: 'client', record: c })
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Proveedores')) {
+      supplierRecords.forEach((s, idx) => {
+        const hasClabe = Boolean(s.clabe || s.bankAccounts?.some((ba) => ba.clabe))
+        list.push({
+          id: `crm:supplier:${s.supplierCode || idx}-${s.company}`,
+          entityType: 'supplier',
+          groupLabel: 'Proveedores',
+          title: s.company,
+          subtitle: `${s.name} · ${s.email}${s.bankName ? ` · ${s.bankName}` : ''} · ${s.status}`,
+          meta: s.supplierCode || s.status,
+          keywords: `${s.rfc || ''} ${s.clabe || ''} ${s.bankName || ''} ${hasClabe ? 'clabe cuenta bancaria' : ''} ${s.phone} ${s.status} proveedor proveedores crm`,
+          iconKind: 'crm',
+          priorityBoost: 44,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Proveedores')
+            setDetailDirectory({ kind: 'supplier', record: s })
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Empleados')) {
+      employees.forEach((emp) => {
+        list.push({
+          id: `crm:emp:${emp.id}`,
+          entityType: 'operations',
+          groupLabel: 'Empleados',
+          title: emp.fullName,
+          subtitle: `${emp.roleTitle} · ${emp.departmentName} · ${emp.email}`,
+          meta: emp.employeeCode,
+          keywords: `${emp.rfc || ''} ${emp.status} empleado colaborador rrhh`,
+          iconKind: 'crm',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Empleados')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Nómina')) {
+      payrollRuns.forEach((run) => {
+        list.push({
+          id: `crm:payroll:${run.id}`,
+          entityType: 'operations',
+          groupLabel: 'Nómina',
+          title: `${run.folio} · ${run.periodLabel}`,
+          subtitle: `${run.frequency} · ${run.employeesCount} empleados · ${run.status}`,
+          meta: money(run.totalNet),
+          keywords: `${run.paymentDate} nomina dispersion`,
+          iconKind: 'crm',
+          priorityBoost: 32,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Nómina')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Oportunidades')) {
+      opportunityRecords.forEach((opp, idx) => {
+        list.push({
+          id: `crm:opp:${idx}-${opp.company}`,
+          entityType: 'operations',
+          groupLabel: 'Oportunidades',
+          title: opp.company,
+          subtitle: `${opp.person} · Etapa: ${opp.stage} · ${opp.date}`,
+          meta: money(opp.value),
+          keywords: `oportunidad pipeline ${opp.stage}`,
+          iconKind: 'crm',
+          priorityBoost: 35,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Oportunidades')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('CRM', 'Actividades')) {
+      activityRecords.forEach((act, idx) => {
+        list.push({
+          id: `crm:act:${idx}-${act.title}`,
+          entityType: 'operations',
+          groupLabel: 'Actividades CRM',
+          title: act.title,
+          subtitle: `${act.company} · ${act.time}`,
+          meta: 'Actividad',
+          keywords: `${act.company} agenda seguimiento`,
+          iconKind: 'crm',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToCrmSection('Actividades')
+          },
+        })
+      })
+    }
+
+    // 4. Facturas (CxC y CxP)
+    if (canViewSec('Ventas', 'Facturas') || canViewSec('Finanzas', 'Cobros')) {
+      receivables.forEach((inv) => {
+        list.push({
+          id: `fin:cxc:${inv.id}`,
+          entityType: 'invoice',
+          groupLabel: 'Facturas de venta (CxC)',
+          title: `${inv.folio} · ${inv.clientCompany}`,
+          subtitle: `${inv.clientName} · ${inv.status} · Saldo ${money(inv.balance)} · Vence ${inv.dueDate}`,
+          meta: money(inv.total),
+          keywords: `${inv.folio} ${inv.orderFolio} ${inv.clientRfc || ''} ${inv.status} factura cxc cobro cfdi cliente`,
+          iconKind: 'invoice',
+          priorityBoost: 52,
+          onSelect: () => {
+            setMenuOpen(false)
+            if (canViewSec('Ventas', 'Facturas')) {
+              setPresetInvoiceIdToView(inv.id)
+              navigateToSalesSection('Facturas')
+            } else {
+              navigateToFinanceSection('Cobros')
+            }
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Pagos') || canViewSec('Compras', 'Facturas')) {
+      payables.forEach((bill) => {
+        list.push({
+          id: `fin:cxp:${bill.id}`,
+          entityType: 'invoice',
+          groupLabel: 'Facturas de proveedor (CxP)',
+          title: `${bill.folio} · ${bill.supplierCompany}`,
+          subtitle: `${bill.status} · Saldo ${money(bill.balance)} · Vence ${bill.dueDate}`,
+          meta: money(bill.total),
+          keywords: `${bill.folio} ${bill.purchaseOrderFolio || ''} ${bill.status} factura cxp pagar proveedor`,
+          iconKind: 'invoice',
+          priorityBoost: 48,
+          onSelect: () => {
+            setMenuOpen(false)
+            if (canViewSec('Finanzas', 'Pagos')) {
+              navigateToFinanceSection('Pagos')
+            } else {
+              navigateToPurchasesSection('Facturas')
+            }
+          },
+        })
+      })
+    }
+
+    // 5. Ventas, compras, inventario, finanzas operativas y gastos
+    if (canViewSec('Ventas', 'Catálogo')) {
+      initialProductsAndServices.forEach((prod) => {
+        list.push({
+          id: `comm:prod:${prod.id}`,
+          entityType: 'operations',
+          groupLabel: 'Catálogo de productos y servicios',
+          title: prod.name,
+          subtitle: `${prod.category} · ${money(prod.unitPrice)} / ${prod.unitOfMeasure} · ${prod.status}`,
+          meta: prod.sku,
+          keywords: `${prod.description} ${prod.type} sku producto servicio`,
+          iconKind: 'product',
+          priorityBoost: 42,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Catálogo')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Cotizaciones')) {
+      quotes.forEach((q) => {
+        list.push({
+          id: `comm:quote:${q.id}`,
+          entityType: 'operations',
+          groupLabel: 'Cotizaciones',
+          title: `${q.folio} · ${q.clientCompany}`,
+          subtitle: `${q.clientName} · ${q.status} · Vence ${q.expiryDate}`,
+          meta: money(q.total),
+          keywords: `${q.date} cotizacion presupuesto venta`,
+          iconKind: 'sales',
+          priorityBoost: 46,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Cotizaciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Pedidos')) {
+      orders.forEach((ord) => {
+        list.push({
+          id: `comm:order:${ord.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pedidos de venta',
+          title: `${ord.folio} · ${ord.clientCompany}`,
+          subtitle: `${ord.clientName} · ${ord.status} · ${ord.date}`,
+          meta: money(ord.total),
+          keywords: `${ord.quoteFolio || ''} pedido orden venta`,
+          iconKind: 'order',
+          priorityBoost: 48,
+          onSelect: () => {
+            setMenuOpen(false)
+            setPresetOrderFolioToView(ord.folio)
+            navigateToSalesSection('Pedidos')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Ventas', 'Devoluciones')) {
+      customerReturns.forEach((ret) => {
+        list.push({
+          id: `comm:rma-cli:${ret.id}`,
+          entityType: 'operations',
+          groupLabel: 'Devoluciones de cliente (RMA)',
+          title: `${ret.folio} · ${ret.clientCompany}`,
+          subtitle: `Pedido ${ret.orderFolio} · ${ret.resolution} · ${ret.status}`,
+          meta: money(ret.total),
+          keywords: `${ret.reason} rma devolucion cliente`,
+          iconKind: 'sales',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSalesSection('Devoluciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Requisiciones')) {
+      requisitions.forEach((req) => {
+        list.push({
+          id: `comm:req:${req.id}`,
+          entityType: 'operations',
+          groupLabel: 'Requisiciones de compra',
+          title: `${req.folio} · ${req.department}`,
+          subtitle: `Solicita ${req.requestedBy} · ${req.warehouseName} · ${req.status}`,
+          meta: money(req.estimatedTotal),
+          keywords: `${req.priority} requisicion compra`,
+          iconKind: 'purchases',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Requisiciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Órdenes de compra')) {
+      purchaseOrders.forEach((po) => {
+        list.push({
+          id: `comm:po:${po.id}`,
+          entityType: 'operations',
+          groupLabel: 'Órdenes de compra',
+          title: `${po.folio} · ${po.supplierCompany}`,
+          subtitle: `${po.warehouseName} · ${po.status} · Entrega ${po.expectedDeliveryDate}`,
+          meta: money(po.total),
+          keywords: `${po.supplierContact} oc orden compra proveedor`,
+          iconKind: 'purchases',
+          priorityBoost: 46,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Órdenes de compra')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Compras', 'Devoluciones')) {
+      supplierReturns.forEach((sret) => {
+        list.push({
+          id: `comm:rma-sup:${sret.id}`,
+          entityType: 'operations',
+          groupLabel: 'Devoluciones a proveedor',
+          title: `${sret.folio} · ${sret.supplierCompany}`,
+          subtitle: `OC ${sret.purchaseOrderFolio} · ${sret.resolution} · ${sret.status}`,
+          meta: money(sret.total),
+          keywords: `${sret.reason} rma devolucion proveedor`,
+          iconKind: 'purchases',
+          priorityBoost: 32,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToPurchasesSection('Devoluciones')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Operaciones', 'Inventario')) {
+      inventory.forEach((invItem) => {
+        list.push({
+          id: `comm:inv:${invItem.id}`,
+          entityType: 'operations',
+          groupLabel: 'Inventario por almacén',
+          title: `${invItem.name} (${invItem.warehouseName})`,
+          subtitle: `Stock: ${invItem.stock} ${invItem.unitOfMeasure} · Bin ${invItem.locationBin}`,
+          meta: invItem.sku,
+          keywords: `${invItem.category || ''} inventario almacen stock minimo existencia`,
+          iconKind: 'operations',
+          priorityBoost: 38,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToOperationsSection('Inventario')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Operaciones', 'Entregas')) {
+      shipments.forEach((ship) => {
+        list.push({
+          id: `comm:ship:${ship.id}`,
+          entityType: 'operations',
+          groupLabel: 'Entregas y logística',
+          title: `${ship.folio} · ${ship.clientCompany}`,
+          subtitle: `Pedido ${ship.orderFolio} · ${ship.carrier} (${ship.trackingNumber}) · ${ship.status}`,
+          meta: ship.status,
+          keywords: `${ship.address} guia envio entrega paqueteria`,
+          iconKind: 'operations',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToOperationsSection('Entregas')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Pagos Bancarios')) {
+      ebpBatches.forEach((batch) => {
+        list.push({
+          id: `fin:ebp:${batch.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pagos Bancarios (EBP)',
+          title: `${batch.folio} · ${batch.packName}`,
+          subtitle: `${batch.batchType} · ${batch.bankAccountName} · ${batch.operationsCount} ops · ${batch.status}`,
+          meta: money(batch.totalAmount),
+          keywords: `${batch.sourceFolio} ${batch.generatedFilename} layout ebp dispersion bancaria`,
+          iconKind: 'bank',
+          priorityBoost: 40,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection('Pagos Bancarios')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Cuentas contables')) {
+      chartAccounts.forEach((acc) => {
+        list.push({
+          id: `fin:acct:${acc.id}`,
+          entityType: 'operations',
+          groupLabel: 'Catálogo de cuentas contables',
+          title: `${acc.code} · ${acc.name}`,
+          subtitle: `${acc.type} · Naturaleza ${acc.nature} · ${acc.status}`,
+          meta: money(acc.balance),
+          keywords: `${acc.description || ''} poliza contabilidad cuenta`,
+          iconKind: 'finance',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection('Cuentas contables')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Finanzas', 'Resumen') || canViewSec('Finanzas', 'Cobros')) {
+      bankAccounts.forEach((bank) => {
+        list.push({
+          id: `fin:bank:${bank.id}`,
+          entityType: 'operations',
+          groupLabel: 'Cuentas bancarias y tesorería',
+          title: `${bank.bankName} (${bank.accountNumber})`,
+          subtitle: `${bank.type} · CLABE ${bank.clabe}`,
+          meta: money(bank.balance),
+          keywords: `${bank.currency} banco tesoreria clabe`,
+          iconKind: 'bank',
+          priorityBoost: 38,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToFinanceSection(
+              canViewSec('Finanzas', 'Resumen') ? 'Resumen' : 'Cobros'
+            )
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Gastos', 'Registro y pólizas')) {
+      expenses.forEach((exp) => {
+        list.push({
+          id: `exp:rec:${exp.id}`,
+          entityType: 'operations',
+          groupLabel: 'Pólizas de gasto',
+          title: `${exp.folio} · ${exp.beneficiary}`,
+          subtitle: `${exp.description} · ${exp.category} · ${exp.status || 'Pagado'}`,
+          meta: money(exp.total),
+          keywords: `${exp.accountCode || ''} ${exp.departmentName || ''} gasto poliza`,
+          iconKind: 'expenses',
+          priorityBoost: 42,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToExpensesSection('Registro y pólizas')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Gastos', 'Presupuestos y alertas')) {
+      expenseBudgets.forEach((b) => {
+        list.push({
+          id: `exp:budget:${b.id}`,
+          entityType: 'operations',
+          groupLabel: 'Presupuestos de gasto',
+          title: `${b.category || b.nature} (${b.nature})`,
+          subtitle: `Presupuesto mensual · Alertas al ${b.warningThresholdPct}% / ${b.criticalThresholdPct ?? 95}%`,
+          meta: money(b.monthlyLimit),
+          keywords: `${b.departmentName || ''} presupuesto limite umbral 80 95`,
+          iconKind: 'expenses',
+          priorityBoost: 34,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToExpensesSection('Presupuestos y alertas')
+          },
+        })
+      })
+    }
+
+    // 6. Estructura organizacional y Centro de ayuda
+    if (canViewSec('Administración', 'Subsidiarias')) {
+      subsidiaries.forEach((sub) => {
+        list.push({
+          id: `struct:sub:${sub.id}`,
+          entityType: 'help',
+          groupLabel: 'Subsidiarias y razones sociales',
+          title: sub.name,
+          subtitle: `${sub.legalName} · RFC ${sub.taxId} · ${sub.country}`,
+          meta: sub.code,
+          keywords: `${sub.currency} subsidiaria empresa razon social`,
+          iconKind: 'admin',
+          priorityBoost: 36,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToSubsidiaryDetail(sub.id)
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Administración', 'Departamentos')) {
+      departments.forEach((dep) => {
+        list.push({
+          id: `struct:dept:${dep.id}`,
+          entityType: 'help',
+          groupLabel: 'Departamentos',
+          title: dep.name,
+          subtitle: `Líder: ${dep.leader}${dep.costCenter ? ` · CC ${dep.costCenter}` : ''}`,
+          meta: dep.code,
+          keywords: `${dep.description || ''} departamento area`,
+          iconKind: 'admin',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToAdminSection('Departamentos')
+          },
+        })
+      })
+    }
+
+    if (canViewSec('Administración', 'Ubicaciones')) {
+      locations.forEach((loc) => {
+        list.push({
+          id: `struct:loc:${loc.id}`,
+          entityType: 'help',
+          groupLabel: 'Ubicaciones y almacenes',
+          title: loc.name,
+          subtitle: `${loc.type} · ${loc.city}, ${loc.state}`,
+          meta: loc.code,
+          keywords: `${loc.address} sucursal bodega almacen`,
+          iconKind: 'operations',
+          priorityBoost: 28,
+          onSelect: () => {
+            setMenuOpen(false)
+            navigateToAdminSection('Ubicaciones')
+          },
+        })
+      })
+    }
+
+    HELP_ARTICLES.forEach((art) => {
+      list.push({
+        id: `help:art:${art.id}`,
+        entityType: 'help',
+        groupLabel: 'Guías del Centro de ayuda',
+        title: art.title,
+        subtitle: art.summary,
+        meta: `${art.readTimeMin} min`,
+        keywords: `${art.targetLabel} guia manual ayuda tutorial`,
+        iconKind: 'help',
+        priorityBoost: 24,
+        onSelect: () => {
+          setMenuOpen(false)
+          navigateTo('Centro de ayuda')
+        },
+      })
+    })
+
+    HELP_FAQS.forEach((faq) => {
+      list.push({
+        id: `help:faq:${faq.id}`,
+        entityType: 'help',
+        groupLabel: 'Preguntas frecuentes (FAQ)',
+        title: faq.question,
+        subtitle: `${faq.moduleTag} · Nivel ${faq.complexity} · ${faq.visualCategory}`,
+        meta: faq.moduleTag,
+        keywords: `${faq.tags.join(' ')} ${faq.answer}`,
+        iconKind: 'help',
+        priorityBoost: 20,
+        onSelect: () => {
+          setMenuOpen(false)
+          navigateTo('Centro de ayuda')
+        },
+      })
+    })
+
+    return list
+  }, [
+    activeCapabilities,
+    activeSectionAccess,
+    activeSessionProfile.isActive,
+    activityRecords,
+    bankAccounts,
+    chartAccounts,
+    clientRecords,
+    completedSetupCount,
+    customerReturns,
+    darkMode,
+    departments,
+    ebpBatches,
+    employees,
+    expenseBudgets,
+    expenses,
+    inventory,
+    isFullAdmin,
+    locations,
+    opportunityRecords,
+    orders,
+    payables,
+    payrollRuns,
+    purchaseOrders,
+    quotes,
+    receivables,
+    requisitions,
+    setupProgressPercent,
+    shipments,
+    subsidiaries,
+    supplierRecords,
+    supplierReturns,
+    totalSetupCount,
+  ])
 
   const handleCreate = () => {
     openCreate('opportunity')
@@ -2437,7 +6225,8 @@ function AppContent() {
               'Configuración',
               activeCapabilities,
               isFullAdmin,
-              activeSessionProfile.isActive
+              activeSessionProfile.isActive,
+              activeSectionAccess
             )
             if (!firstSetting) {
               notifyAccessDenied('Configuración')
@@ -2449,7 +6238,8 @@ function AppContent() {
                 'General',
                 activeCapabilities,
                 isFullAdmin,
-                activeSessionProfile.isActive
+                activeSessionProfile.isActive,
+                activeSectionAccess
               )
                 ? 'General'
                 : firstSetting
@@ -2486,12 +6276,30 @@ function AppContent() {
           <ChevronDown size={15} />
         </button>
 
-        <label className="search-box"><Search size={15} /><input aria-label={t('nav.searchPlaceholder')} placeholder={t('nav.searchPlaceholder')} /><kbd>⌘ K</kbd></label>
+        <button
+          type="button"
+          className="search-box search-box-trigger"
+          aria-label={t('nav.searchPlaceholder')}
+          onClick={() => {
+            setIsGlobalSearchOpen(true)
+            setMenuOpen(false)
+          }}
+        >
+          <Search size={15} />
+          <span className="search-box-placeholder">{t('nav.searchPlaceholder')}</span>
+          <kbd>⌘ K</kbd>
+        </button>
 
         <nav className="side-nav" aria-label="Navegación principal">
           {sections.map((section) => {
             const visibleItems = section.items.filter(({ name }) =>
-              canAccessModule(name, activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+              canAccessModule(
+                name,
+                activeCapabilities,
+                isFullAdmin,
+                activeSessionProfile.isActive,
+                activeSectionAccess
+              )
             )
             if (visibleItems.length === 0) return null
             return (
@@ -2519,14 +6327,64 @@ function AppContent() {
         </nav>
 
         <div className="sidebar-spacer" />
-        <div className="progress-card">
-          <div className="progress-heading"><Sparkles size={15} /><span>{t('nav.progressTitle')}</span></div>
-          <p>{t('nav.progressBody')}</p>
-          <div className="progress-track"><span /></div>
-          <small>{t('nav.progressSteps')}</small>
-        </div>
-        <button className="nav-item quiet"><CircleHelp size={17} /><span>{t('nav.help')}</span></button>
-        {canAccessModule('Configuración', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+        <button
+          type="button"
+          className={`progress-card ${isAllSetupComplete ? 'is-complete' : ''}`}
+          onClick={() => setIsSetupChecklistOpen(true)}
+          aria-label={`${isAllSetupComplete ? t('nav.progressTitleComplete') : t('nav.progressTitle')}: ${t('nav.progressStepsDynamic', { completed: completedSetupCount, total: totalSetupCount })}`}
+        >
+          <div className="progress-heading">
+            <span className="progress-heading-label">
+              {isAllSetupComplete ? <CheckCircle2 size={15} /> : <Sparkles size={15} />}
+              <span>{isAllSetupComplete ? t('nav.progressTitleComplete') : t('nav.progressTitle')}</span>
+            </span>
+            <strong className="progress-pct">{setupProgressPercent}%</strong>
+          </div>
+          <p>
+            {isAllSetupComplete
+              ? t('nav.progressBodyComplete')
+              : completedSetupCount >= 3
+              ? t(
+                  remainingSetupCount === 1
+                    ? 'nav.progressBodyAlmost'
+                    : 'nav.progressBodyAlmostPlural',
+                  { remaining: remainingSetupCount }
+                )
+              : t('nav.progressBody')}
+          </p>
+          <div className="progress-track">
+            <span style={{ width: `${setupProgressPercent}%` }} />
+          </div>
+          <small className="progress-meta-row">
+            <span>
+              {t('nav.progressStepsDynamic', {
+                completed: completedSetupCount,
+                total: totalSetupCount,
+              })}
+            </span>
+            <span className="progress-checklist-link">{t('nav.progressViewChecklist')}</span>
+          </small>
+        </button>
+        <button
+          type="button"
+          className={`nav-item quiet ${activePage === 'Centro de ayuda' ? 'active' : ''}`}
+          aria-current={activePage === 'Centro de ayuda' ? 'page' : undefined}
+          onClick={() => {
+            navigateTo('Centro de ayuda')
+            setNotice('')
+            setMenuOpen(false)
+          }}
+        >
+          <CircleHelp size={17} />
+          <span>{t('nav.help')}</span>
+        </button>
+        {canAccessModule(
+          'Configuración',
+          activeCapabilities,
+          isFullAdmin,
+          activeSessionProfile.isActive,
+          activeSectionAccess
+        ) && (
           <button
             className={`nav-item quiet ${activePage === 'Configuración' ? 'active' : ''}`}
             aria-current={activePage === 'Configuración' ? 'page' : undefined}
@@ -2626,41 +6484,52 @@ function AppContent() {
               </div>
 
               <div className="profile-switcher-group">
-                <span className="profile-switcher-group-title">Colaboradores (CRM · Multi-rol)</span>
-                {employees.map((emp) => {
-                  const key = `emp:${emp.id}`
-                  const isCurrent = activeSessionProfile.key === key
-                  const rolesText =
-                    (emp.roles || []).length > 0
-                      ? emp.roles.map(getRoleDisplayName).join(', ')
-                      : 'Sin rol asignado'
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={isCurrent}
-                      className={`profile-switcher-item ${isCurrent ? 'active' : ''}`}
-                      onClick={() =>
-                        handleSelectSessionProfile(
-                          key,
-                          emp.fullName,
-                          emp.status === 'Inactivo' ? 'Inactivo' : rolesText
-                        )
-                      }
-                    >
-                      <span className="profile-switcher-avatar">{emp.initials}</span>
-                      <div className="profile-switcher-copy">
-                        <strong>{emp.fullName}</strong>
-                        <small>
-                          {rolesText}
-                          {emp.status === 'Inactivo' ? ' · Inactivo' : ''}
-                        </small>
+                <span className="profile-switcher-group-title">Empleados con acceso (CRM · Usuarios)</span>
+                {(() => {
+                  const validIds = new Set(roleDefinitions.map((r) => r.id))
+                  const userEmployees = employees.filter((emp) => isEmployeeSystemUser(emp, validIds))
+                  if (userEmployees.length === 0) {
+                    return (
+                      <div className="profile-switcher-empty">
+                        Ningún empleado tiene rol de acceso asignado.
                       </div>
-                      {isCurrent && <Check size={14} className="profile-switcher-check" />}
-                    </button>
-                  )
-                })}
+                    )
+                  }
+                  return userEmployees.map((emp) => {
+                    const key = `emp:${emp.id}`
+                    const isCurrent = activeSessionProfile.key === key
+                    const rolesText = emp.roles
+                      .filter((id) => validIds.has(id))
+                      .map(getRoleDisplayName)
+                      .join(', ')
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isCurrent}
+                        className={`profile-switcher-item ${isCurrent ? 'active' : ''}`}
+                        onClick={() =>
+                          handleSelectSessionProfile(
+                            key,
+                            emp.fullName,
+                            emp.status === 'Inactivo' ? 'Inactivo' : rolesText
+                          )
+                        }
+                      >
+                        <span className="profile-switcher-avatar">{emp.initials}</span>
+                        <div className="profile-switcher-copy">
+                          <strong>{emp.fullName}</strong>
+                          <small>
+                            {rolesText}
+                            {emp.status === 'Inactivo' ? ' · Inactivo' : ''}
+                          </small>
+                        </div>
+                        {isCurrent && <Check size={14} className="profile-switcher-check" />}
+                      </button>
+                    )
+                  })
+                })()}
               </div>
             </div>
           )}
@@ -2688,7 +6557,7 @@ function AppContent() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button mobile-menu" aria-label="Abrir menú" onClick={() => setMenuOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Gastos' ? t('tabs.fin.expenses') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> </> : null}</div>
+          <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Gastos' ? t('nav.expenses') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage === 'Centro de ayuda' ? t('nav.help') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Gastos' ? <> <span className="crumb-slash">/</span> <span>{expensesSection === 'Registro y pólizas' ? t('tabs.expenses.ledger') : expensesSection === 'Presupuestos y alertas' ? t('tabs.expenses.budgets') : expensesSection === 'Gastos recurrentes' ? t('tabs.expenses.recurring') : t('tabs.expenses.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
 
@@ -2904,6 +6773,8 @@ function AppContent() {
                               : Package
                             : notice.targetModule === 'Finanzas'
                             ? Receipt
+                            : notice.targetModule === 'Reportes'
+                            ? BarChart3
                             : FileText
                         const handleOpenNoticeTarget = () => {
                           markSystemNotifRead(notice.id, notice.fingerprint, true)
@@ -2917,8 +6788,21 @@ function AppContent() {
                               notice.targetSection as 'Inventario' | 'Traslados' | 'Compras' | 'Entregas' | 'Resumen'
                             )
                           } else if (notice.targetModule === 'Finanzas') {
-                            navigateToFinanceSection(
-                              notice.targetSection as 'Cobros' | 'Pagos' | 'Pagos Bancarios' | 'Gastos' | 'Cuentas contables' | 'Resumen'
+                            if (notice.targetSection === 'Gastos') {
+                              navigateToExpensesSection('Registro y pólizas')
+                            } else {
+                              navigateToFinanceSection(
+                                notice.targetSection as
+                                  | 'Cobros'
+                                  | 'Pagos'
+                                  | 'Pagos Bancarios'
+                                  | 'Cuentas contables'
+                                  | 'Resumen'
+                              )
+                            }
+                          } else if (notice.targetModule === 'Reportes') {
+                            navigateToReportsSection(
+                              (notice.targetSection as ReportsSectionTab) || 'Estado de Resultados'
                             )
                           } else {
                             navigateToSalesSection(
@@ -3144,17 +7028,23 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Gastos'
+                ? expensesSection
+                : activePage === 'Reportes'
+                ? reportsSection
                 : activePage === 'Administración'
                 ? adminSection
                 : 'Inicio'
             const isSectionAllowed =
               activePage === 'Inicio' ||
+              activePage === 'Centro de ayuda' ||
               canAccessSection(
                 activePage,
                 activeSectionName,
                 activeCapabilities,
                 isFullAdmin,
-                activeSessionProfile.isActive
+                activeSessionProfile.isActive,
+                activeSectionAccess
               )
             if (!isSectionAllowed) {
               const requiredCaps = getRequiredCapabilities(activePage, activeSectionName)
@@ -3207,6 +7097,7 @@ function AppContent() {
           })()}
           {!(
             activePage === 'Inicio' ||
+            activePage === 'Centro de ayuda' ||
             canAccessSection(
               activePage,
               activePage === 'Configuración'
@@ -3219,12 +7110,17 @@ function AppContent() {
                 ? operationsSection
                 : activePage === 'Finanzas'
                 ? financeSection
+                : activePage === 'Gastos'
+                ? expensesSection
+                : activePage === 'Reportes'
+                ? reportsSection
                 : activePage === 'Administración'
                 ? adminSection
                 : 'Inicio',
               activeCapabilities,
               isFullAdmin,
-              activeSessionProfile.isActive
+              activeSessionProfile.isActive,
+              activeSectionAccess
             )
           ) ? null : activePage === 'Configuración' ? (
             <SettingsSection
@@ -3236,7 +7132,8 @@ function AppContent() {
                     setting,
                     activeCapabilities,
                     isFullAdmin,
-                    activeSessionProfile.isActive
+                    activeSessionProfile.isActive,
+                    activeSectionAccess
                   )
                 ) {
                   notifyAccessDenied(`Settings · ${setting}`)
@@ -3266,33 +7163,41 @@ function AppContent() {
               onWorkspaceMetaChange={setWorkspaceMeta}
               receivablesCount={receivables.length}
               activeCapabilities={activeCapabilities}
+              activeSectionAccess={activeSectionAccess}
               isFullAdmin={isFullAdmin}
               isAccountActive={activeSessionProfile.isActive}
+              inventory={inventory}
+              products={initialProductsAndServices}
+              onUpdateInventory={setInventory}
+              categoryThresholds={categoryStockThresholds}
+              onUpdateCategoryThresholds={handleUpdateCategoryThresholds}
+              currentUserName={activeSessionProfile.name}
+              currentUserId={activeActorUserId}
             />
           ) : activePage === 'CRM' ? (
             <section className="crm-page" aria-labelledby="crm-title">
               <div className="crm-heading"><div><div className="eyebrow"><span className="eyebrow-line" /> AES NEXUS · H2 PILOTO COMERCIAL</div><h1 id="crm-title">{t('module.crm.title')}</h1><p>{t('module.crm.subtitle')}</p></div></div>
               {notice && <div className="notice" role="status">{notice}<button aria-label={t('common.close')} onClick={() => setNotice('')}><X size={15} /></button></div>}
               <nav className="crm-tabs" aria-label="Secciones de CRM">
-                {canAccessSection('CRM', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Resumen' ? 'active' : ''} onClick={() => navigateToCrmSection('Resumen')}>{t('tabs.crm.summary')}</button>
                 )}
-                {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Clientes' ? 'active' : ''} onClick={() => navigateToCrmSection('Clientes')}>{t('tabs.crm.clients')} <span>{clientRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Proveedores' ? 'active' : ''} onClick={() => navigateToCrmSection('Proveedores')}>{t('tabs.crm.suppliers')} <span>{supplierRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Empleados' ? 'active' : ''} onClick={() => navigateToCrmSection('Empleados')}>{t('tabs.crm.employees')} <span>{employees.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Nómina' ? 'active' : ''} onClick={() => navigateToCrmSection('Nómina')}>{t('tabs.crm.payroll')} <span>{payrollRuns.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Oportunidades' ? 'active' : ''} onClick={() => navigateToCrmSection('Oportunidades')}>{t('tabs.crm.opportunities')} <span>{opportunityRecords.length}</span></button>
                 )}
-                {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button className={crmSection === 'Actividades' ? 'active' : ''} onClick={() => navigateToCrmSection('Actividades')}>{t('tabs.crm.activities')} <span>{activityRecords.length}</span></button>
                 )}
               </nav>
@@ -3307,7 +7212,11 @@ function AppContent() {
                     appendAuditLog({
                       category: 'users',
                       action: 'Alta de empleado',
-                      detail: `${emp.fullName} (${emp.employeeCode}) · Roles: ${(emp.roles || []).join(', ') || 'Sin rol'}`,
+                      detail: `${emp.fullName} (${emp.employeeCode}) · ${
+                        isEmployeeSystemUser(emp)
+                          ? `Usuario del sistema · Roles: ${(emp.roles || []).join(', ')}`
+                          : 'Solo empleado (sin acceso)'
+                      }`,
                       user: activeSessionProfile.name,
                     })
                   }}
@@ -3315,18 +7224,50 @@ function AppContent() {
                     setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)))
                     appendAuditLog({
                       category: 'users',
-                      action: 'Actualización de empleado y roles',
-                      detail: `${updated.fullName} (${updated.employeeCode}) · Roles asignados: ${(updated.roles || []).join(', ') || 'Sin rol'}`,
+                      action: 'Actualización de empleado y acceso',
+                      detail: `${updated.fullName} (${updated.employeeCode}) · ${
+                        isEmployeeSystemUser(updated)
+                          ? `Usuario del sistema · Roles: ${(updated.roles || []).join(', ')}`
+                          : 'Solo empleado (sin acceso)'
+                      }`,
                       user: activeSessionProfile.name,
                     })
                   }}
+                  onDeleteEmployee={
+                    canDeleteInSection(
+                      'CRM',
+                      'Empleados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (employeeId) => {
+                          const target = employees.find((e) => e.id === employeeId)
+                          setEmployees((prev) => prev.filter((e) => e.id !== employeeId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'users',
+                              action: 'Eliminación de empleado',
+                              detail: `${target.fullName} (${target.employeeCode})`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Empleado “${target.fullName}” eliminado del directorio.`)
+                            toast.info(
+                              `Empleado “${target.fullName}” eliminado del directorio.`,
+                              'Empleado eliminado'
+                            )
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateSettingsRoles={
                     canAccessSection(
                       'Configuración',
                       'Roles y permisos',
                       activeCapabilities,
                       isFullAdmin,
-                      activeSessionProfile.isActive
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
                     )
                       ? () => navigateToSettingSection('Roles y permisos')
                       : undefined
@@ -3341,18 +7282,92 @@ function AppContent() {
                   onUpdatePayrollRun={(updated) =>
                     setPayrollRuns((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
                   }
+                  onDeletePayrollRun={
+                    canDeleteInSection(
+                      'CRM',
+                      'Nómina',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (runId) => {
+                          const target = payrollRuns.find((r) => r.id === runId)
+                          setPayrollRuns((prev) => prev.filter((r) => r.id !== runId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de periodo de nómina',
+                              detail: `${target.folio} · ${target.periodLabel}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Periodo de nómina ${target.folio} eliminado.`)
+                            toast.info(
+                              `Periodo de nómina ${target.folio} eliminado.`,
+                              'Nómina eliminada'
+                            )
+                          }
+                        }
+                      : undefined
+                  }
                   onPayPayrollRun={handlePayPayrollRun}
                   onOpenEbpWizard={openEbpWizardForPayrollRun}
                 />
               ) : crmSection === 'Oportunidades' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="crm-section-heading"><div><div className="panel-kicker">SEGUIMIENTO COMERCIAL</div><h2>Oportunidades</h2><p>Da seguimiento a las conversaciones que pueden convertirse en negocio.</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-primary" onClick={() => openCreate('opportunity')}><Plus size={15} /> Nueva oportunidad</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="opportunity-summary"><article><span className="kpi-icon"><Target size={17} /></span><div><strong>{opportunityRecords.length}</strong><small>Abiertas</small></div></article><article><span className="kpi-icon icon-sand"><BriefcaseBusiness size={17} /></span><div><strong>{money(opportunityRecords.reduce((total, opportunity) => total + opportunity.value, 0))}</strong><small>Valor del pipeline</small></div></article><article><span className="kpi-icon icon-green"><ArrowUpRight size={17} /></span><div><strong>32%</strong><small>Tasa de conversión</small></div></article></div>
-                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3><button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button></div><div className="opportunities-list">{opportunityRecords.map((opportunity) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span><button className="row-more" aria-label={`Opciones para ${opportunity.company}`} onClick={() => { setNotice(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`); toast.info(`Las acciones para ${opportunity.company} estarán disponibles al conectar el CRM.`, 'Oportunidad') }}><MoreHorizontal size={17} /></button></article>)}</div></div>
-              </> : crmSection === 'Actividades' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">AGENDA COMERCIAL</div><h2>Actividades</h2><p>Reúne llamadas, seguimientos y tareas para que ninguna conversación se quede atrás.</p></div><div className="crm-section-heading-actions"><button className="button button-primary" onClick={() => openCreate('activity')}><Plus size={15} /> Nueva actividad</button><span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="activities-layout"><div className="activities-card"><div className="activities-card-heading"><div><h3>Hoy · 06 de noviembre</h3><p>Tu agenda de seguimiento</p></div><button className="button button-secondary" onClick={() => openCreate('activity')}><Plus size={14} /> Nueva actividad</button></div><div className="activities-list">{activityRecords.map((activity) => <article className="activity-item" key={`${activity.title}-${activity.time}`}><div className={`activity-icon tone-${activity.tone}`}>{activity.icon === 'send' ? <ArrowRight size={15} /> : activity.icon === 'phone' ? <Clock3 size={15} /> : <Users size={15} />}</div><div className="activity-item-copy"><strong>{activity.title}</strong><span>{activity.company}</span></div><time>{activity.time}</time><button className="row-more" aria-label={`Completar ${activity.title}`} onClick={() => { setNotice(`La actividad “${activity.title}” se marcará al conectar el CRM.`); toast.info(`La actividad “${activity.title}” se marcará al conectar el CRM.`, 'Actividad') }}><Check size={15} /></button></article>)}</div></div><aside className="activities-side"><span className="kpi-icon"><CalendarDays size={17} /></span><strong>{activityRecords.length + 5} actividades</strong><p>programadas esta semana</p><button className="text-link" onClick={() => { setNotice('La agenda completa estará disponible en la siguiente iteración.'); toast.info('La agenda completa estará disponible en la siguiente iteración.', 'Agenda') }}>Ver calendario <ArrowRight size={13} /></button></aside></div>
-              </> : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
-                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
+                <div className="opportunities-board"><div className="opportunities-board-heading"><h3>Pipeline reciente</h3>{canCreateInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button button-secondary" onClick={() => openCreate('opportunity')}><Plus size={14} /> Nueva oportunidad</button>}</div><div className="opportunities-list">{opportunityRecords.map((opportunity, oppIdx) => <article className="opportunity-row" key={`${opportunity.company}-${opportunity.date}-${oppIdx}`}><div className={`company-avatar ${opportunity.color}`}>{opportunity.initials}</div><div className="opportunity-main"><strong>{opportunity.company}</strong><span>{opportunity.person}</span></div><span className={`stage-badge stage-${opportunity.stageTone}`}><i />{opportunity.stage}</span><strong className="opportunity-value">{money(opportunity.value)}</strong><span className="date-cell">{opportunity.date}</span>{canEditInSection('CRM', 'Oportunidades', activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && <button className="button-icon-action" aria-label={`Editar oportunidad ${opportunity.company}`} title="Editar o eliminar oportunidad" onClick={() => { setConfirmDeleteOpp(false); setEditingOpportunity({ index: oppIdx, company: opportunity.company, person: opportunity.person, value: String(opportunity.value), stage: opportunity.stage, date: opportunity.date }) }}><Edit3 size={12} /> Editar</button>}</article>)}</div></div>
+              </> : crmSection === 'Actividades' ? (
+                <CrmActivitiesSection
+                  activities={activityRecords}
+                  canCreate={canCreateInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onOpenCreate={(presetDate) => openCreate('activity', presetDate)}
+                  onOpenEdit={(actIdx, activity) => {
+                    setConfirmDeleteAct(false)
+                    setEditingActivity({
+                      index: actIdx,
+                      title: activity.title,
+                      company: activity.company,
+                      date: activity.date || CRM_TODAY_ISO,
+                      time: activity.time,
+                      icon: activity.icon,
+                      tone: (activity.tone as 'blue' | 'amber' | 'green') || 'green',
+                      status: activity.status || 'Pendiente',
+                      notes: activity.notes || '',
+                    })
+                  }}
+                  onToggleComplete={(actIdx) => {
+                    const target = activityRecords[actIdx]
+                    if (!target) return
+                    const nextStatus: CrmActivityStatus =
+                      target.status === 'Completada' ? 'Pendiente' : 'Completada'
+                    setActivityRecords((prev) =>
+                      prev.map((item, idx) =>
+                        idx === actIdx ? { ...item, status: nextStatus } : item
+                      )
+                    )
+                    toast.success(
+                      nextStatus === 'Completada'
+                        ? `Actividad “${target.title}” marcada como completada.`
+                        : `Actividad “${target.title}” reabierta como pendiente.`,
+                      nextStatus === 'Completada' ? 'Actividad completada' : 'Actividad reabierta'
+                    )
+                  }}
+                />
+              ) : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
+                <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', crmSection, activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && (crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>)}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
                 <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
                 <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
                 <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th style={{ textAlign: 'right' }}>ACCIONES</th></tr></thead><tbody>{filteredDirectory.map((client) => {
@@ -3423,32 +7438,56 @@ function AppContent() {
           >
             <Eye size={12} /> Ficha
           </button>
-          {crmSection === 'Proveedores' ? (
-            <button
-              type="button"
-              className="button-icon-action"
-              onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
-              title="Configurar datos bancarios y packs EBP del proveedor"
-            >
-              <Landmark size={12} /> Datos bancarios
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="button-icon-action"
-              onClick={() =>
-                setEditingDirectory({
-                  kind: 'client',
-                  originalEmail: client.email,
-                  originalCompany: client.company,
-                  record: JSON.parse(JSON.stringify(client)),
-                })
-              }
-              title="Editar datos del cliente"
-            >
-              <Edit3 size={12} /> Editar
-            </button>
-          )}
+          {canEditInSection(
+            'CRM',
+            crmSection,
+            activeSectionAccess,
+            isFullAdmin,
+            activeSessionProfile.isActive
+          ) &&
+            (crmSection === 'Proveedores' ? (
+              <>
+                <button
+                  type="button"
+                  className="button-icon-action"
+                  onClick={() =>
+                    setEditingDirectory({
+                      kind: 'supplier',
+                      originalEmail: client.email,
+                      originalCompany: client.company,
+                      record: JSON.parse(JSON.stringify(client)),
+                    })
+                  }
+                  title="Editar datos del proveedor"
+                >
+                  <Edit3 size={12} /> Editar
+                </button>
+                <button
+                  type="button"
+                  className="button-icon-action"
+                  onClick={() => setEditingSupplierBank(JSON.parse(JSON.stringify(client)))}
+                  title="Configurar datos bancarios y packs EBP del proveedor"
+                >
+                  <Landmark size={12} /> Datos bancarios
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="button-icon-action"
+                onClick={() =>
+                  setEditingDirectory({
+                    kind: 'client',
+                    originalEmail: client.email,
+                    originalCompany: client.company,
+                    record: JSON.parse(JSON.stringify(client)),
+                  })
+                }
+                title="Editar datos del cliente"
+              >
+                <Edit3 size={12} /> Editar
+              </button>
+            ))}
         </div>
       </td>
     </tr>
@@ -3456,7 +7495,7 @@ function AppContent() {
 })}</tbody></table>{filteredDirectory.length === 0 && <div className="clients-empty"><Users size={20} /><strong>No encontramos {crmSection.toLowerCase()}</strong><span>Prueba con otro nombre, empresa o estado.</span></div>}</div>
               </> : (
                 <div className="crm-overview-grid">
-                  {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Clientes', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card crm-overview-highlight">
                       <span className="kpi-icon"><Users size={17} /></span>
                       <div>
@@ -3471,7 +7510,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Proveedores', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-blue"><BriefcaseBusiness size={17} /></span>
                       <div>
@@ -3486,7 +7525,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Empleados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-green"><Users size={17} /></span>
                       <div>
@@ -3499,7 +7538,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Nómina', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-amber"><WalletCards size={17} /></span>
                       <div>
@@ -3514,7 +7553,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Oportunidades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-lilac"><Target size={17} /></span>
                       <div>
@@ -3529,7 +7568,7 @@ function AppContent() {
                     </article>
                   )}
 
-                  {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                  {canAccessSection('CRM', 'Actividades', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                     <article className="crm-overview-card">
                       <span className="kpi-icon icon-sand"><Clock3 size={17} /></span>
                       <div>
@@ -3555,7 +7594,7 @@ function AppContent() {
               </div>
               {notice && <div className="notice" role="status">{notice}<button aria-label={t('common.close')} onClick={() => setNotice('')}><X size={15} /></button></div>}
               <nav className="crm-tabs" aria-label="Secciones de Ventas">
-                {canAccessSection('Ventas', 'Catálogo', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Catálogo', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Catálogo' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Catálogo')}
@@ -3563,7 +7602,7 @@ function AppContent() {
                     {t('tabs.sales.catalog')}
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Cotizaciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Cotizaciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Cotizaciones' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Cotizaciones')}
@@ -3571,7 +7610,7 @@ function AppContent() {
                     {t('tabs.sales.quotes')} <span>{quotes.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Pedidos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Pedidos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Pedidos' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Pedidos')}
@@ -3579,7 +7618,7 @@ function AppContent() {
                     {t('tabs.sales.orders')} <span>{orders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Facturas' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Facturas')}
@@ -3587,7 +7626,15 @@ function AppContent() {
                     {t('tabs.sales.invoices')} <span>{receivables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Ventas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Ventas', 'Devoluciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
+                  <button
+                    className={salesSection === 'Devoluciones' ? 'active' : ''}
+                    onClick={() => navigateToSalesSection('Devoluciones')}
+                  >
+                    {t('tabs.sales.returns')} <span>{customerReturns.length}</span>
+                  </button>
+                )}
+                {canAccessSection('Ventas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={salesSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToSalesSection('Resumen')}
@@ -3598,12 +7645,53 @@ function AppContent() {
               </nav>
 
               {salesSection === 'Catálogo' ? (
-                <ProductsAndServices />
+                <ProductsAndServices
+                  canDelete={canDeleteInSection(
+                    'Ventas',
+                    'Catálogo',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onItemDeleted={(item) => {
+                    appendAuditLog({
+                      category: 'sales',
+                      action: 'Eliminación de artículo del catálogo',
+                      detail: `${item.sku} · ${item.name}`,
+                      user: activeSessionProfile.name,
+                    })
+                    setNotice(`Artículo “${item.name}” eliminado del catálogo.`)
+                  }}
+                />
               ) : salesSection === 'Cotizaciones' ? (
                 <QuotesSection
                   quotes={quotes}
                   onUpdateQuotes={setQuotes}
                   onConvertToOrder={handleConvertToOrder}
+                  onDeleteQuote={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Cotizaciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (quoteId) => {
+                          const target = quotes.find((q) => q.id === quoteId)
+                          setQuotes((prev) => prev.filter((q) => q.id !== quoteId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de cotización',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cotización ${target.folio} eliminada.`)
+                            toast.info(`La cotización ${target.folio} fue eliminada.`, 'Cotización eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   clientNames={clientRecords.map((c, idx) => ({
                     id: `cli_${idx}_${c.company.toLowerCase().replace(/[^a-z0-9]/g, '_')}`,
                     name: c.name,
@@ -3618,6 +7706,30 @@ function AppContent() {
                 <OrdersSection
                   orders={orders}
                   onUpdateOrders={setOrders}
+                  onDeleteOrder={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Pedidos',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (orderId) => {
+                          const target = orders.find((o) => o.id === orderId)
+                          setOrders((prev) => prev.filter((o) => o.id !== orderId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de pedido de venta',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Pedido ${target.folio} eliminado.`)
+                            toast.info(`El pedido ${target.folio} fue eliminado.`, 'Pedido eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   receivables={receivables}
                   onInvoiceOrder={(ord) => {
                     setPresetOrderToInvoice(ord)
@@ -3656,11 +7768,106 @@ function AppContent() {
                   presetInvoiceIdToView={presetInvoiceIdToView}
                   onClearPresetInvoiceView={() => setPresetInvoiceIdToView(null)}
                   onCreateInvoice={handleCreateSalesInvoice}
+                  onDeleteInvoice={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Facturas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (invoiceId) => {
+                          const target = receivables.find((r) => r.id === invoiceId)
+                          setReceivables((prev) => prev.filter((r) => r.id !== invoiceId))
+                          if (target) {
+                            setOrders((prevOrders) =>
+                              prevOrders.map((ord) => ({
+                                ...ord,
+                                invoiceIds: ord.invoiceIds?.filter((id) => id !== target.id),
+                                invoiceFolios: ord.invoiceFolios?.filter((f) => f !== target.folio),
+                              }))
+                            )
+                            appendAuditLog({
+                              category: 'sales',
+                              action: 'Eliminación de factura de venta',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura ${target.folio} eliminada.`)
+                            toast.info(`Factura ${target.folio} eliminada.`, 'Factura eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToFinanceReceivables={() => navigateToFinanceSection('Cobros')}
                   onNavigateToOrder={(orderFolio) => {
                     setPresetOrderFolioToView(orderFolio)
                     navigateToSalesSection('Pedidos')
                   }}
+                />
+              ) : salesSection === 'Devoluciones' ? (
+                <SalesReturnsSection
+                  returns={customerReturns}
+                  orders={orders}
+                  receivables={receivables}
+                  warehouses={warehouses}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    price: p.unitPrice ?? 0,
+                    taxRate: p.taxRate,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  currentUserName={activeSessionProfile.name}
+                  userRoleIds={activeSessionProfile.roles}
+                  isFullAdmin={isFullAdmin}
+                  workflowConfig={returnWorkflows.customer}
+                  canCreate={canCreateInSection(
+                    'Ventas',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'Ventas',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onCreateReturn={handleCreateCustomerReturn}
+                  onAdvanceReturnStatus={handleAdvanceCustomerReturn}
+                  onRequestApproval={handleRequestCustomerReturnApproval}
+                  onApproveTransition={handleApproveCustomerReturnTransition}
+                  onRejectApproval={handleRejectCustomerReturnApproval}
+                  onUpdateReturnNotes={handleUpdateCustomerReturnDetails}
+                  onDeleteReturn={
+                    canDeleteInSection(
+                      'Ventas',
+                      'Devoluciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? handleDeleteCustomerReturn
+                      : undefined
+                  }
+                  onNavigateFinanceReceivables={() => navigateToFinanceSection('Cobros')}
+                  onNavigateOperationsInventory={() => navigateToOperationsSection('Inventario')}
+                  onConfigureWorkflow={
+                    canAccessSection(
+                      'Administración',
+                      'Flujos de devoluciones',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToAdminSection('Flujos de devoluciones')
+                      : undefined
+                  }
                 />
               ) : (
                 <SalesOverview
@@ -3686,9 +7893,9 @@ function AppContent() {
 
               <section className="purchases-top-kpi-strip" aria-label="Indicadores clave de compras">
                 {(() => {
-                  const canGoOrders = canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
-                  const canGoInvoices = canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
-                  const canGoReceptions = canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive)
+                  const canGoOrders = canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
+                  const canGoInvoices = canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
+                  const canGoReceptions = canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess)
 
                   const OrderWrap = canGoOrders ? 'button' : 'div'
                   const InvoiceWrap = canGoInvoices ? 'button' : 'div'
@@ -3783,7 +7990,7 @@ function AppContent() {
               </section>
 
               <nav className="crm-tabs" aria-label="Secciones de Compras">
-                {canAccessSection('Compras', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Resumen')}
@@ -3791,7 +7998,7 @@ function AppContent() {
                     {t('tabs.purchases.summary')}
                   </button>
                 )}
-                {canAccessSection('Compras', 'Requisiciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Requisiciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Requisiciones' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Requisiciones')}
@@ -3799,7 +8006,7 @@ function AppContent() {
                     {t('tabs.purchases.requisitions')} <span>{requisitions.length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Órdenes de compra', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Órdenes de compra' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Órdenes de compra')}
@@ -3807,7 +8014,7 @@ function AppContent() {
                     {t('tabs.purchases.orders')} <span>{purchaseOrders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Recepciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Recepciones' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Recepciones')}
@@ -3815,12 +8022,20 @@ function AppContent() {
                     {t('tabs.purchases.receptions')} <span>{purchaseOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length}</span>
                   </button>
                 )}
-                {canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Compras', 'Facturas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={purchasesSection === 'Facturas' ? 'active' : ''}
                     onClick={() => navigateToPurchasesSection('Facturas')}
                   >
                     {t('tabs.purchases.invoices')} <span>{payables.length}</span>
+                  </button>
+                )}
+                {canAccessSection('Compras', 'Devoluciones', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
+                  <button
+                    className={purchasesSection === 'Devoluciones' ? 'active' : ''}
+                    onClick={() => navigateToPurchasesSection('Devoluciones')}
+                  >
+                    {t('tabs.purchases.returns')} <span>{supplierReturns.length}</span>
                   </button>
                 )}
               </nav>
@@ -3829,7 +8044,7 @@ function AppContent() {
                 <PurchasesRequisitions
                   requisitions={requisitions}
                   warehouses={warehouses}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   catalogProducts={initialProductsAndServices.map((p) => ({
                     id: p.id,
                     sku: p.sku,
@@ -3844,10 +8059,44 @@ function AppContent() {
                   }))}
                   departments={departments.map((d) => d.name)}
                   currentUserName={activeSessionProfile.name}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Compras',
+                        'Requisiciones',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                   onCreateRequisition={handleCreateRequisition}
                   onUpdateRequisitionStatus={handleUpdateRequisitionStatus}
                   onConvertToPurchaseOrder={handleConvertRequisitionToPo}
+                  onDeleteRequisition={
+                    canDeleteInSection(
+                      'Compras',
+                      'Requisiciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (reqId) => {
+                          const target = requisitions.find((r) => r.id === reqId)
+                          setRequisitions((prev) => prev.filter((r) => r.id !== reqId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de requisición de compra',
+                              detail: `${target.folio} · ${target.department}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Requisición ${target.folio} eliminada.`)
+                            toast.info(`Requisición ${target.folio} eliminada.`, 'Requisición eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToOrder={() => navigateToPurchasesSection('Órdenes de compra')}
                 />
               ) : purchasesSection === 'Órdenes de compra' ? (
@@ -3873,14 +8122,58 @@ function AppContent() {
                   movementsCount={movements.length}
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  onDeletePurchaseOrder={
+                    canDeleteInSection(
+                      'Compras',
+                      'Órdenes de compra',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (poId) => {
+                          const target = purchaseOrders.find((po) => po.id === poId)
+                          setPurchaseOrders((prev) => prev.filter((po) => po.id !== poId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de orden de compra',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Orden de compra ${target.folio} eliminada.`)
+                            toast.info(`Orden de compra ${target.folio} eliminada.`, 'Orden eliminada')
+                          }
+                        }
+                      : undefined
+                  }
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Compras',
+                        'Órdenes de compra',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                 />
               ) : purchasesSection === 'Recepciones' ? (
                 <PurchasesReceptions
                   purchaseOrders={purchaseOrders}
                   inventory={inventory}
                   movements={movements}
-                  canReceiveGoods={isFullAdmin || activeCapabilities.has('receiveGoods')}
+                  canReceiveGoods={
+                    isFullAdmin ||
+                    (activeCapabilities.has('receiveGoods') &&
+                      canEditInSection(
+                        'Compras',
+                        'Recepciones',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                   onUpdatePurchaseOrders={setPurchaseOrders}
                   onUpdateInventory={setInventory}
                   onAddMovement={handleAddMovement}
@@ -3895,13 +8188,101 @@ function AppContent() {
                     email: s.email,
                   }))}
                   onCreateSupplierBill={handleCreateSupplierBill}
+                  onDeleteSupplierBill={
+                    canDeleteInSection(
+                      'Compras',
+                      'Facturas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (billId) => {
+                          const target = payables.find((b) => b.id === billId)
+                          setPayables((prev) => prev.filter((b) => b.id !== billId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de factura de proveedor (CxP)',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura de proveedor ${target.folio} eliminada.`)
+                            toast.info(`Factura ${target.folio} eliminada.`, 'Factura eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                   onNavigateToFinancePayables={() => navigateToFinanceSection('Pagos')}
+                  onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
+                />
+              ) : purchasesSection === 'Devoluciones' ? (
+                <PurchasesReturnsSection
+                  returns={supplierReturns}
+                  purchaseOrders={purchaseOrders}
+                  payables={payables}
+                  warehouses={warehouses}
+                  catalogProducts={initialProductsAndServices.map((p) => ({
+                    id: p.id,
+                    sku: p.sku,
+                    name: p.name,
+                    cost: p.cost ?? 0,
+                    unitOfMeasure: p.unitOfMeasure,
+                  }))}
+                  currentUserName={activeSessionProfile.name}
+                  userRoleIds={activeSessionProfile.roles}
+                  isFullAdmin={isFullAdmin}
+                  workflowConfig={returnWorkflows.supplier}
+                  canCreate={canCreateInSection(
+                    'Compras',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  canEdit={canEditInSection(
+                    'Compras',
+                    'Devoluciones',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )}
+                  onCreateReturn={handleCreateSupplierReturn}
+                  onAdvanceReturnStatus={handleAdvanceSupplierReturn}
+                  onRequestApproval={handleRequestSupplierReturnApproval}
+                  onApproveTransition={handleApproveSupplierReturnTransition}
+                  onRejectApproval={handleRejectSupplierReturnApproval}
+                  onUpdateReturnDetails={handleUpdateSupplierReturnDetails}
+                  onDeleteReturn={
+                    canDeleteInSection(
+                      'Compras',
+                      'Devoluciones',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? handleDeleteSupplierReturn
+                      : undefined
+                  }
+                  onNavigateFinancePayables={() => navigateToFinanceSection('Pagos')}
+                  onNavigatePurchaseOrders={() => navigateToPurchasesSection('Órdenes de compra')}
+                  onConfigureWorkflow={
+                    canAccessSection(
+                      'Administración',
+                      'Flujos de devoluciones',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToAdminSection('Flujos de devoluciones')
+                      : undefined
+                  }
                 />
               ) : (
                 <PurchasesOverview
                   requisitions={requisitions}
                   purchaseOrders={purchaseOrders}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   payables={payables}
                   departments={departments.filter((d) => d.active).map((d) => d.name)}
                   onNavigateSection={(sec) => navigateToPurchasesSection(sec)}
@@ -3921,7 +8302,7 @@ function AppContent() {
               </div>
 
               <nav className="crm-tabs" aria-label="Secciones de Operaciones">
-                {canAccessSection('Operaciones', 'Inventario', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Inventario', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Inventario' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Inventario')}
@@ -3929,7 +8310,7 @@ function AppContent() {
                     {t('tabs.ops.inventory')} <span>{inventory.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Traslados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Traslados', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Traslados' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Traslados')}
@@ -3937,7 +8318,7 @@ function AppContent() {
                     {t('tabs.ops.transfers')} <span>{transfers.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Compras', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Compras', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Compras' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Compras')}
@@ -3945,7 +8326,7 @@ function AppContent() {
                     {t('tabs.ops.purchases')} <span>{purchaseOrders.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Entregas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Entregas', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Entregas' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Entregas')}
@@ -3953,7 +8334,7 @@ function AppContent() {
                     {t('tabs.ops.deliveries')} <span>{shipments.length}</span>
                   </button>
                 )}
-                {canAccessSection('Operaciones', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Operaciones', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={operationsSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToOperationsSection('Resumen')}
@@ -3969,9 +8350,71 @@ function AppContent() {
                   inventory={inventory}
                   transfers={transfers}
                   movements={movements}
+                  categoryThresholds={categoryStockThresholds}
+                  productCategoryMap={productCategoryMap}
+                  onOpenCategoryThresholds={
+                    canAccessSection(
+                      'Configuración',
+                      'Umbrales de stock',
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                      ? () => navigateToSettingSection('Umbrales de stock')
+                      : undefined
+                  }
                   onUpdateInventory={setInventory}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
+                  onDeleteInventoryItem={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Inventario',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (itemId) => {
+                          const target = inventory.find((it) => it.id === itemId)
+                          setInventory((prev) => prev.filter((it) => it.id !== itemId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de registro de inventario',
+                              detail: `${target.sku} · ${target.name} (${target.warehouseName})`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Registro ${target.sku} eliminado de ${target.warehouseName}.`)
+                            toast.info(`Registro ${target.sku} eliminado de ${target.warehouseName}.`, 'Inventario eliminado')
+                          }
+                        }
+                      : undefined
+                  }
+                  onDeleteTransfer={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Traslados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (transferId) => {
+                          const target = transfers.find((t) => t.id === transferId)
+                          setTransfers((prev) => prev.filter((t) => t.id !== transferId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de traslado entre almacenes',
+                              detail: `${target.folio} · ${target.sourceWarehouseName} → ${target.targetWarehouseName}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Traslado ${target.folio} eliminado.`)
+                            toast.info(`Traslado ${target.folio} eliminado.`, 'Traslado eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onStartTransfer={(item) => {
                     if (item) setPresetTransferItem(item)
                     navigateToOperationsSection('Traslados')
@@ -3988,6 +8431,30 @@ function AppContent() {
                   onUpdateInventory={setInventory}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
+                  onDeleteTransfer={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Traslados',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (transferId) => {
+                          const target = transfers.find((t) => t.id === transferId)
+                          setTransfers((prev) => prev.filter((t) => t.id !== transferId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de traslado entre almacenes',
+                              detail: `${target.folio} · ${target.sourceWarehouseName} → ${target.targetWarehouseName}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Traslado ${target.folio} eliminado.`)
+                            toast.info(`Traslado ${target.folio} eliminado.`, 'Traslado eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                 />
               ) : operationsSection === 'Compras' ? (
                 <OperationsPurchases
@@ -4013,18 +8480,76 @@ function AppContent() {
                   payables={payables}
                   onRegisterSupplierBillFromPO={handleRegisterSupplierBillFromPO}
                   onOpenFullPurchasesModule={() => navigateToPurchasesSection('Resumen')}
-                  canApprovePurchases={isFullAdmin || activeCapabilities.has('approvePurchases')}
+                  onDeletePurchaseOrder={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Compras',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (poId) => {
+                          const target = purchaseOrders.find((po) => po.id === poId)
+                          setPurchaseOrders((prev) => prev.filter((po) => po.id !== poId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de orden de compra',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Orden de compra ${target.folio} eliminada.`)
+                            toast.info(`Orden de compra ${target.folio} eliminada.`, 'Orden eliminada')
+                          }
+                        }
+                      : undefined
+                  }
+                  canApprovePurchases={
+                    isFullAdmin ||
+                    (activeCapabilities.has('approvePurchases') &&
+                      canEditInSection(
+                        'Operaciones',
+                        'Compras',
+                        activeSectionAccess,
+                        isFullAdmin,
+                        activeSessionProfile.isActive
+                      ))
+                  }
                 />
               ) : operationsSection === 'Entregas' ? (
                 <OperationsDeliveries
                   shipments={shipments}
                   onUpdateShipments={setShipments}
+                  onDeleteShipment={
+                    canDeleteInSection(
+                      'Operaciones',
+                      'Entregas',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (shipmentId) => {
+                          const target = shipments.find((s) => s.id === shipmentId)
+                          setShipments((prev) => prev.filter((s) => s.id !== shipmentId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'inventory',
+                              action: 'Eliminación de despacho y entrega',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Despacho ${target.folio} eliminado.`)
+                            toast.info(`Despacho ${target.folio} eliminado.`, 'Despacho eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   salesOrderFolios={orders.map((o) => o.folio)}
                 />
               ) : (
                 <OperationsOverview
                   warehouses={warehouses}
-                  inventory={inventory}
+                  inventory={effectiveInventory}
                   movements={movements}
                   purchaseOrders={purchaseOrders}
                   shipments={shipments}
@@ -4044,7 +8569,7 @@ function AppContent() {
               </div>
 
               <nav className="crm-tabs" aria-label="Secciones de Finanzas">
-                {canAccessSection('Finanzas', 'Cobros', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Cobros', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Cobros' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Cobros')}
@@ -4052,7 +8577,7 @@ function AppContent() {
                     {t('tabs.fin.receivables')} <span>{receivables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Pagos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Pagos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Pagos' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Pagos')}
@@ -4060,7 +8585,7 @@ function AppContent() {
                     {t('tabs.fin.payables')} <span>{payables.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Pagos Bancarios', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Pagos Bancarios', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Pagos Bancarios' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Pagos Bancarios')}
@@ -4068,15 +8593,7 @@ function AppContent() {
                     {t('tabs.fin.ebp')} <span>{ebpBatches.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Gastos', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
-                  <button
-                    className={financeSection === 'Gastos' ? 'active' : ''}
-                    onClick={() => navigateToFinanceSection('Gastos')}
-                  >
-                    {t('tabs.fin.expenses')} <span>{expenses.length}</span>
-                  </button>
-                )}
-                {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Cuentas contables', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Cuentas contables' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Cuentas contables')}
@@ -4084,7 +8601,7 @@ function AppContent() {
                     {t('tabs.fin.accounting')} <span>{chartAccounts.length}</span>
                   </button>
                 )}
-                {canAccessSection('Finanzas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive) && (
+                {canAccessSection('Finanzas', 'Resumen', activeCapabilities, isFullAdmin, activeSessionProfile.isActive, activeSectionAccess) && (
                   <button
                     className={financeSection === 'Resumen' ? 'active' : ''}
                     onClick={() => navigateToFinanceSection('Resumen')}
@@ -4105,6 +8622,37 @@ function AppContent() {
                     rfc: c.rfc,
                   }))}
                   onUpdateReceivables={setReceivables}
+                  onDeleteReceivable={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Cobros',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (invoiceId) => {
+                          const target = receivables.find((r) => r.id === invoiceId)
+                          setReceivables((prev) => prev.filter((r) => r.id !== invoiceId))
+                          if (target) {
+                            setOrders((prevOrders) =>
+                              prevOrders.map((ord) => ({
+                                ...ord,
+                                invoiceIds: ord.invoiceIds?.filter((id) => id !== target.id),
+                                invoiceFolios: ord.invoiceFolios?.filter((f) => f !== target.folio),
+                              }))
+                            )
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta por cobrar (CxC)',
+                              detail: `${target.folio} · ${target.clientCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Factura ${target.folio} eliminada de Cobros.`)
+                            toast.info(`Factura ${target.folio} eliminada de Cuentas por cobrar.`, 'Registro eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                 />
@@ -4118,6 +8666,30 @@ function AppContent() {
                     email: s.email,
                   }))}
                   onUpdatePayables={setPayables}
+                  onDeletePayable={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Pagos',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (billId) => {
+                          const target = payables.find((b) => b.id === billId)
+                          setPayables((prev) => prev.filter((b) => b.id !== billId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta por pagar (CxP)',
+                              detail: `${target.folio} · ${target.supplierCompany}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cuenta por pagar ${target.folio} eliminada.`)
+                            toast.info(`Cuenta por pagar ${target.folio} eliminada.`, 'Registro eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onAddTransaction={handleAddTransaction}
                   onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
                   onOpenEbpBatchFromBills={openEbpWizardForVendorBills}
@@ -4133,31 +8705,74 @@ function AppContent() {
                     company: s.company,
                     email: s.email,
                     rfc: s.rfc,
+                    currency: s.currency,
                     bankName: s.bankName,
                     clabe: s.clabe,
                     accountNumber: s.accountNumber,
                     defaultReference: s.defaultReference,
                     bankPackValues: s.bankPackValues,
+                    bankAccounts: s.bankAccounts,
                   }))}
                   payrollRuns={payrollRuns}
                   payables={payables}
                   onUpdatePacks={handleUpdateEbpPacks}
                   onCreateBatch={(batch) => setEbpBatches((prev) => [batch, ...prev])}
+                  onDeleteBatch={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Pagos Bancarios',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (batchId) => {
+                          const target = ebpBatches.find((b) => b.id === batchId)
+                          setEbpBatches((prev) => prev.filter((b) => b.id !== batchId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de lote de dispersión EBP',
+                              detail: `${target.folio} · ${target.generatedFilename}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Lote bancario ${target.folio} eliminado.`)
+                            toast.info(`Lote bancario ${target.folio} eliminado.`, 'Lote eliminado')
+                          }
+                        }
+                      : undefined
+                  }
                   onApplyBatchInFinance={handleApplyEbpBatchInFinance}
                   onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
-                />
-              ) : financeSection === 'Gastos' ? (
-                <FinanceExpenses
-                  expenses={expenses}
-                  bankAccounts={bankAccounts}
-                  onAddExpense={handleAddExpense}
-                  onAddTransaction={handleAddTransaction}
-                  onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
+                  onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
                 />
               ) : financeSection === 'Cuentas contables' ? (
                 <FinanceAccounting
                   accounts={chartAccounts}
                   onUpdateAccounts={setChartAccounts}
+                  onDeleteAccount={
+                    canDeleteInSection(
+                      'Finanzas',
+                      'Cuentas contables',
+                      activeSectionAccess,
+                      isFullAdmin,
+                      activeSessionProfile.isActive
+                    )
+                      ? (accountId) => {
+                          const target = chartAccounts.find((a) => a.id === accountId)
+                          setChartAccounts((prev) => prev.filter((a) => a.id !== accountId))
+                          if (target) {
+                            appendAuditLog({
+                              category: 'finance',
+                              action: 'Eliminación de cuenta contable',
+                              detail: `[${target.code}] ${target.name}`,
+                              user: activeSessionProfile.name,
+                            })
+                            setNotice(`Cuenta contable ${target.code} eliminada.`)
+                            toast.info(`Cuenta contable [${target.code}] ${target.name} eliminada.`, 'Cuenta eliminada')
+                          }
+                        }
+                      : undefined
+                  }
                 />
               ) : (
                 <FinanceOverview
@@ -4167,37 +8782,333 @@ function AppContent() {
                   expenses={expenses}
                   transactions={transactions}
                   onNavigateSection={(sec) => navigateToFinanceSection(sec)}
+                  onNavigateExpenses={() => navigateToExpensesSection('Registro y pólizas')}
                 />
               )}
             </section>
-          ) : activePage === 'Administración' ? (
-            <AdministrationSection
-              departments={departments}
-              locations={locations}
-              employees={employees}
-              onAddDepartment={handleAddDepartment}
-              onAddLocation={handleAddLocation}
-              onUpdateDepartments={setDepartments}
-              onUpdateLocations={handleUpdateLocations}
-              adminSection={adminSection}
-              onNavigateSection={navigateToAdminSection}
-              allowedSections={(['Departamentos', 'Ubicaciones', 'Resumen', 'Historial de Auditoría'] as AdminSectionTab[]).filter(
-                (sec) =>
+          ) : activePage === 'Gastos' ? (
+            <section className="sales-page" aria-labelledby="expenses-module-title">
+              <FinanceCompanyExpenses
+                mode="module"
+                activeSection={expensesSection}
+                allowedSections={([
+                  'Resumen y control',
+                  'Registro y pólizas',
+                  'Presupuestos y alertas',
+                  'Gastos recurrentes',
+                ] as ExpensesSectionTab[]).filter((sec) =>
                   canAccessSection(
-                    'Administración',
+                    'Gastos',
                     sec,
                     activeCapabilities,
                     isFullAdmin,
+                    activeSessionProfile.isActive,
+                    activeSectionAccess
+                  )
+                )}
+                onSelectSection={navigateToExpensesSection}
+                expenses={expenses}
+                bankAccounts={bankAccounts}
+                departments={departments}
+                locations={locations}
+                chartAccounts={chartAccounts}
+                budgets={expenseBudgets}
+                recurringTemplates={recurringExpenses}
+                activeUserName={activeSessionProfile.name}
+                canCreate={canCreateInSection(
+                  'Gastos',
+                  expensesSection,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )}
+                canEdit={canEditInSection(
+                  'Gastos',
+                  expensesSection,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )}
+                onAddExpense={handleAddExpense}
+                onUpdateExpense={handleUpdateExpense}
+                onUpdateExpenseStatus={handleUpdateExpenseStatus}
+                onDeleteExpense={
+                  canDeleteInSection(
+                    'Gastos',
+                    expensesSection,
+                    activeSectionAccess,
+                    isFullAdmin,
                     activeSessionProfile.isActive
                   )
+                    ? (expenseId) => {
+                        const target = expenses.find((ex) => ex.id === expenseId)
+                        setExpenses((prev) => prev.filter((ex) => ex.id !== expenseId))
+                        if (target) {
+                          appendAuditLog({
+                            category: 'finance',
+                            action: 'Eliminación de gasto',
+                            detail: `${target.folio} · ${target.description}`,
+                            user: activeSessionProfile.name,
+                          })
+                          setNotice(`Gasto ${target.folio} eliminado.`)
+                          toast.info(`Gasto ${target.folio} eliminado.`, 'Gasto eliminado')
+                        }
+                      }
+                    : undefined
+                }
+                onAddTransaction={handleAddTransaction}
+                onUpdateBankAccountBalance={handleUpdateBankAccountBalance}
+                onSaveBudget={handleSaveExpenseBudget}
+                onToggleBudget={handleToggleExpenseBudget}
+                onAddRecurringTemplate={handleAddRecurringExpense}
+                onUpdateRecurringTemplate={handleUpdateRecurringExpense}
+                onDeleteRecurringTemplate={handleDeleteRecurringExpense}
+                onToggleRecurringTemplate={handleToggleRecurringExpense}
+                onGenerateRecurringExpense={handleGenerateRecurringExpense}
+                onGenerateRecurringBatch={handleGenerateRecurringBatch}
+                onExportAudit={(reportName, rowCount) => {
+                  appendAuditLog({
+                    category: 'finance',
+                    action: 'Exportación de histórico de gastos',
+                    detail: `${reportName} · ${rowCount} registros`,
+                    user: activeSessionProfile.name,
+                  })
+                }}
+              />
+            </section>
+          ) : activePage === 'Reportes' ? (
+            <ReportsSection
+              activeTab={reportsSection}
+              allowedTabs={([
+                'Resumen ejecutivo',
+                'Estado de Resultados',
+                'Finanzas y Tesorería',
+                'CxP y Pagos EBP',
+                'Ventas y CxC',
+                'Compras e Inventario',
+                'Nómina y RRHH',
+              ] as ReportsSectionTab[]).filter((sec) =>
+                canAccessSection(
+                  'Reportes',
+                  sec,
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
+                )
+              )}
+              onSelectTab={navigateToReportsSection}
+              bankAccounts={bankAccounts}
+              receivables={receivables}
+              payables={payables}
+              expenses={expenses}
+              transactions={transactions}
+              chartAccounts={chartAccounts}
+              ebpBatches={ebpBatches}
+              quotes={quotes}
+              orders={orders}
+              purchaseOrders={purchaseOrders}
+              requisitions={requisitions}
+              inventory={inventory}
+              movements={movements}
+              warehouses={warehouses}
+              locations={locations}
+              employees={employees}
+              payrollRuns={payrollRuns}
+              departments={departments}
+              suppliers={supplierRecords.map((s) => ({
+                company: s.company,
+                rfc: s.rfc,
+                currency: s.currency,
+                bankName: s.bankName,
+                clabe: s.clabe,
+                accountNumber: s.accountNumber,
+                defaultReference: s.defaultReference,
+                bankPackValues: s.bankPackValues,
+                bankAccounts: s.bankAccounts,
+              }))}
+              clientsCount={clientRecords.length}
+              onNavigateModule={navigateTo}
+              onExportAudit={(reportName, rowCount) =>
+                appendAuditLog({
+                  category: 'finance',
+                  action: 'Exportación de reporte CSV',
+                  detail: `Reporte “${reportName}” exportado con ${rowCount} registro(s).`,
+                  user: activeSessionProfile.name,
+                })
+              }
+            />
+          ) : activePage === 'Administración' ? (
+            <AdministrationSection
+              subsidiaries={subsidiaries}
+              departments={departments}
+              locations={locations}
+              employees={employees}
+              warehouses={warehouses}
+              purchaseOrders={purchaseOrders}
+              requisitions={requisitions}
+              payables={payables}
+              returnWorkflows={returnWorkflows}
+              customerReturns={customerReturns}
+              supplierReturns={supplierReturns}
+              onUpdateReturnWorkflows={handleUpdateReturnWorkflows}
+              onNavigateReturns={(kind) =>
+                kind === 'customer'
+                  ? navigateToSalesSection('Devoluciones')
+                  : navigateToPurchasesSection('Devoluciones')
+              }
+              onAddSubsidiary={handleAddSubsidiary}
+              onUpdateSubsidiaries={handleUpdateSubsidiaries}
+              onDeleteSubsidiary={handleDeleteSubsidiary}
+              onAddDepartment={handleAddDepartment}
+              onAddLocation={handleAddLocation}
+              onUpdateDepartments={handleUpdateDepartments}
+              onDeleteDepartment={handleDeleteDepartment}
+              onUpdateLocations={handleUpdateLocations}
+              onDeleteLocation={handleDeleteAdminLocation}
+              adminSection={adminSection}
+              onNavigateSection={navigateToAdminSection}
+              selectedSubsidiaryId={selectedSubsidiaryId}
+              onSelectSubsidiary={navigateToSubsidiaryDetail}
+              allowedSections={(
+                [
+                  'Subsidiarias',
+                  'Departamentos',
+                  'Ubicaciones',
+                  'Flujos de devoluciones',
+                  'Resumen',
+                  'Historial de Auditoría',
+                ] as AdminSectionTab[]
+              ).filter((sec) =>
+                canAccessSection(
+                  'Administración',
+                  sec,
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
+                )
               )}
               currentUserName={activeSessionProfile.name}
+              canCreateInTab={(tab) =>
+                canCreateInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
+              canEditInTab={(tab) =>
+                canEditInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
+              canDeleteInTab={(tab) =>
+                canDeleteInSection(
+                  'Administración',
+                  tab,
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                )
+              }
+            />
+          ) : activePage === 'Centro de ayuda' ? (
+            <HelpCenterSection
+              activeUserName={activeSessionProfile.name}
+              activeUserSubtitle={activeSessionProfile.subtitle}
+              onAuditTicket={(action, detail) => {
+                appendAuditLog({
+                  category: 'settings',
+                  crudOperation: 'CREATE',
+                  entityType: 'Ticket Centro de ayuda',
+                  action,
+                  detail,
+                  user: activeSessionProfile.name,
+                  userId: activeActorUserId,
+                })
+              }}
+              onNavigateTarget={(target: HelpModuleTarget) => {
+                if (target.page === 'Inicio') {
+                  navigateTo('Inicio')
+                  return
+                }
+                if (target.page === 'CRM') {
+                  if (
+                    target.section &&
+                    !canAccessSection(
+                      'CRM',
+                      target.section,
+                      activeCapabilities,
+                      isFullAdmin,
+                      activeSessionProfile.isActive,
+                      activeSectionAccess
+                    )
+                  ) {
+                    notifyAccessDenied(`CRM · ${target.section}`)
+                    return
+                  }
+                  navigateTo('CRM')
+                  if (target.section) setCrmSection(target.section)
+                  return
+                }
+                if (target.page === 'Ventas') {
+                  navigateToSalesSection(target.section)
+                  return
+                }
+                if (target.page === 'Compras') {
+                  navigateToPurchasesSection(target.section)
+                  return
+                }
+                if (target.page === 'Operaciones') {
+                  navigateToOperationsSection(target.section)
+                  return
+                }
+                if (target.page === 'Finanzas') {
+                  navigateToFinanceSection(target.section)
+                  return
+                }
+                if (target.page === 'Gastos') {
+                  navigateToExpensesSection(target.section)
+                  return
+                }
+                if (target.page === 'Reportes') {
+                  navigateToReportsSection(target.section)
+                  return
+                }
+                if (target.page === 'Administración') {
+                  navigateToAdminSection(target.section)
+                  return
+                }
+                if (target.page === 'Configuración') {
+                  navigateToSettingSection(target.section)
+                }
+              }}
             />
           ) : activePage === 'Inicio' ? (
             <ExecutiveDashboard
               orders={orders}
               quotes={quotes}
               inventory={inventory}
+              categoryThresholds={categoryStockThresholds}
+              productCategoryMap={productCategoryMap}
+              onOpenCategoryThresholds={
+                canAccessSection(
+                  'Configuración',
+                  'Umbrales de stock',
+                  activeCapabilities,
+                  isFullAdmin,
+                  activeSessionProfile.isActive,
+                  activeSectionAccess
+                )
+                  ? () => navigateToSettingSection('Umbrales de stock')
+                  : undefined
+              }
               purchaseOrders={purchaseOrders}
               requisitions={requisitions}
               shipments={shipments}
@@ -4221,6 +9132,7 @@ function AppContent() {
               onNavigatePurchases={navigateToPurchasesSection}
               onNavigateOperations={navigateToOperationsSection}
               onNavigateFinance={navigateToFinanceSection}
+              onNavigateExpenses={navigateToExpensesSection}
               onNavigateCrm={(sec) => {
                 navigateTo('CRM')
                 if (sec) setCrmSection(sec)
@@ -4795,7 +9707,79 @@ function AppContent() {
               </>
             )}
             {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado (MXN)</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
-            {createKind === 'activity' && <><label className="form-field"><span>Actividad</span><input required autoFocus value={createForm.title} onChange={(event) => setCreateForm({ ...createForm, title: event.target.value })} placeholder="Ej. Confirmar reunión" /></label><div className="form-grid"><label className="form-field"><span>Empresa</span><input value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Empresa relacionada" /></label><label className="form-field"><span>Hora</span><input type="time" required value={createForm.time} onChange={(event) => setCreateForm({ ...createForm, time: event.target.value })} /></label></div></>}
+            {createKind === 'activity' && (
+              <>
+                <label className="form-field">
+                  <span>Actividad *</span>
+                  <input
+                    required
+                    autoFocus
+                    value={createForm.title}
+                    onChange={(event) => setCreateForm({ ...createForm, title: event.target.value })}
+                    placeholder="Ej. Confirmar reunión"
+                  />
+                </label>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Empresa</span>
+                    <input
+                      value={createForm.company}
+                      onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })}
+                      placeholder="Empresa relacionada"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Tipo de seguimiento</span>
+                    <select
+                      value={createForm.activityIcon}
+                      onChange={(event) =>
+                        setCreateForm({
+                          ...createForm,
+                          activityIcon: event.target.value as 'send' | 'phone' | 'check',
+                        })
+                      }
+                    >
+                      <option value="check">Revisión / Reunión</option>
+                      <option value="phone">Llamada de seguimiento</option>
+                      <option value="send">Envío de propuesta / correo</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="form-grid">
+                  <label className="form-field">
+                    <span>Fecha *</span>
+                    <input
+                      type="date"
+                      required
+                      value={createForm.activityDate}
+                      onChange={(event) =>
+                        setCreateForm({ ...createForm, activityDate: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Hora *</span>
+                    <input
+                      type="time"
+                      required
+                      value={createForm.time}
+                      onChange={(event) => setCreateForm({ ...createForm, time: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <label className="form-field">
+                  <span>Notas de seguimiento</span>
+                  <textarea
+                    rows={2}
+                    value={createForm.activityNotes}
+                    onChange={(event) =>
+                      setCreateForm({ ...createForm, activityNotes: event.target.value })
+                    }
+                    placeholder="Puntos clave a tratar o acuerdos esperados..."
+                  />
+                </label>
+              </>
+            )}
             <div className="create-modal-actions">
               <button className="button button-secondary" type="button" disabled={isSubmittingClient} onClick={closeCreate}>Cancelar</button>
               <button className="button button-primary" type="submit" disabled={isSubmittingClient}>
@@ -4806,218 +9790,145 @@ function AppContent() {
         </section>
       </div>}
 
-      {/* Modal: Configurar datos bancarios + Packs EBP del Proveedor */}
-      {editingSupplierBank && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setEditingSupplierBank(null)
-          }}
-        >
-          <section className="create-modal modal-wide" role="dialog" aria-modal="true">
-            <div className="create-modal-heading">
-              <div>
-                <div className="panel-kicker">PROVEEDOR · DISPERSIÓN BANCARIA EBP</div>
-                <h2>{editingSupplierBank.company}</h2>
-                <p>Configura CLABE, RFC y campos dinámicos exigidos por tus packs bancarios instalados.</p>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Cerrar"
-                onClick={() => setEditingSupplierBank(null)}
-              >
-                <X size={18} />
-              </button>
-            </div>
+      {/* Modal: Configurar múltiples detalles bancarios + Packs EBP del Proveedor */}
+      {editingSupplierBank && (() => {
+        const currentAccounts = normalizeSupplierBankAccounts({
+          company: editingSupplierBank.company,
+          currency: editingSupplierBank.currency || 'MXN',
+          bankName: editingSupplierBank.bankName,
+          clabe: editingSupplierBank.clabe,
+          accountNumber: editingSupplierBank.accountNumber,
+          defaultReference: editingSupplierBank.defaultReference,
+          bankPackValues: editingSupplierBank.bankPackValues,
+          bankAccounts: editingSupplierBank.bankAccounts,
+        })
+        const usedAccIds = new Set<string>()
+        ebpBatches.forEach((b) => {
+          b.lines.forEach((l) => {
+            if (l.selectedBankAccountId) usedAccIds.add(l.selectedBankAccountId)
+          })
+        })
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                setSupplierRecords((prev) =>
-                  prev.map((s) =>
-                    s.email === editingSupplierBank.email && s.company === editingSupplierBank.company
-                      ? editingSupplierBank
-                      : s
-                  )
-                )
-                toast.success(
-                  `Datos bancarios de ${editingSupplierBank.company} actualizados para lotes EBP.`,
-                  'Proveedor actualizado'
-                )
-                setEditingSupplierBank(null)
-              }}
-            >
-              <div className="form-grid-3">
-                <label className="form-field">
-                  <span>RFC</span>
-                  <input
-                    className="mono"
-                    maxLength={13}
-                    value={editingSupplierBank.rfc || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        rfc: e.target.value.toUpperCase(),
-                      })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Banco receptor</span>
-                  <input
-                    value={editingSupplierBank.bankName || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({ ...editingSupplierBank, bankName: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Referencia predeterminada</span>
-                  <input
-                    value={editingSupplierBank.defaultReference || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        defaultReference: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-              <div className="form-grid">
-                <label className="form-field">
-                  <span>CLABE interbancaria (18 dígitos)</span>
-                  <input
-                    className="mono"
-                    maxLength={18}
-                    value={editingSupplierBank.clabe || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({ ...editingSupplierBank, clabe: e.target.value })
-                    }
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Número de cuenta</span>
-                  <input
-                    className="mono"
-                    value={editingSupplierBank.accountNumber || ''}
-                    onChange={(e) =>
-                      setEditingSupplierBank({
-                        ...editingSupplierBank,
-                        accountNumber: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              {ebpPacks.filter(
-                (p) =>
-                  p.installed &&
-                  (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
-                  p.beneficiaryBankSchema.length > 0
-              ).length > 0 && (
-                <>
-                  <div className="form-section-divider">
-                    Campos específicos de Packs Bancarios EBP instalados
-                  </div>
-                  <div className="ebp-dynamic-packs-stack">
-                    {ebpPacks
-                      .filter(
-                        (p) =>
-                          p.installed &&
-                          (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
-                          p.beneficiaryBankSchema.length > 0
-                      )
-                      .map((pack) => {
-                        const vals = editingSupplierBank.bankPackValues?.[pack.id] || {}
-                        return (
-                          <div key={pack.id} className="ebp-dynamic-pack-subbox">
-                            <div className="ebp-subbox-title">
-                              <strong>{pack.name}</strong>
-                              <span className="emp-code-pill">{pack.bankName}</span>
-                            </div>
-                            <div className="form-grid">
-                              {pack.beneficiaryBankSchema.map((field) => {
-                                const val = vals[field.key] ?? field.defaultValue ?? ''
-                                const err = validateEbpFieldValue(
-                                  field,
-                                  val,
-                                  pack.embeddedCatalogs
-                                )
-                                const cat = field.catalogRef
-                                  ? pack.embeddedCatalogs[field.catalogRef]
-                                  : undefined
-                                return (
-                                  <label key={field.key} className="form-field">
-                                    <span>
-                                      {field.label} {field.validators.required ? '*' : ''}
-                                    </span>
-                                    {field.type === 'select_catalog' && cat ? (
-                                      <select
-                                        value={val}
-                                        onChange={(e) =>
-                                          setEditingSupplierBank({
-                                            ...editingSupplierBank,
-                                            bankPackValues: {
-                                              ...(editingSupplierBank.bankPackValues || {}),
-                                              [pack.id]: { ...vals, [field.key]: e.target.value },
-                                            },
-                                          })
-                                        }
-                                      >
-                                        <option value="">Selecciona opción...</option>
-                                        {cat.options.map((opt) => (
-                                          <option key={opt.code} value={opt.code}>
-                                            {opt.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <input
-                                        value={val}
-                                        placeholder={field.placeholder}
-                                        onChange={(e) =>
-                                          setEditingSupplierBank({
-                                            ...editingSupplierBank,
-                                            bankPackValues: {
-                                              ...(editingSupplierBank.bankPackValues || {}),
-                                              [pack.id]: { ...vals, [field.key]: e.target.value },
-                                            },
-                                          })
-                                        }
-                                      />
-                                    )}
-                                    {err && <small className="ebp-field-err">{err}</small>}
-                                  </label>
-                                )
-                              })}
-                            </div>
-                          </div>
-                        )
-                      })}
-                  </div>
-                </>
-              )}
-
-              <div className="create-modal-actions">
+        return (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setEditingSupplierBank(null)
+            }}
+          >
+            <section className="create-modal modal-wide" role="dialog" aria-modal="true">
+              <div className="create-modal-heading">
+                <div>
+                  <div className="panel-kicker">PROVEEDOR · DETALLES BANCARIOS EBP</div>
+                  <h2>{editingSupplierBank.company}</h2>
+                  <p>
+                    Registra una o varias cuentas bancarias (con moneda y parámetros EBP propios) para pagar facturas individuales o consolidadas.
+                  </p>
+                </div>
                 <button
                   type="button"
-                  className="button button-secondary"
+                  className="icon-button"
+                  aria-label="Cerrar"
                   onClick={() => setEditingSupplierBank(null)}
                 >
-                  Cancelar
-                </button>
-                <button type="submit" className="button button-primary">
-                  <Check size={14} /> Guardar datos bancarios
+                  <X size={18} />
                 </button>
               </div>
-            </form>
-          </section>
-        </div>
-      )}
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const primaryAcc = getPreferredSupplierBankAccount(
+                    currentAccounts,
+                    editingSupplierBank.currency || 'MXN'
+                  )
+                  const updatedSupplier: DirectoryRecord = {
+                    ...editingSupplierBank,
+                    bankAccounts: currentAccounts,
+                    bankName: primaryAcc?.bankName || undefined,
+                    clabe: primaryAcc?.clabe || undefined,
+                    accountNumber: primaryAcc?.accountNumber || undefined,
+                    defaultReference: primaryAcc?.defaultReference || undefined,
+                    bankPackValues: primaryAcc?.bankPackValues || {},
+                    lastActivity: 'Ahora',
+                  }
+                  setSupplierRecords((prev) =>
+                    prev.map((s) =>
+                      s.email === editingSupplierBank.email && s.company === editingSupplierBank.company
+                        ? updatedSupplier
+                        : s
+                    )
+                  )
+                  toast.success(
+                    `Detalles bancarios de ${editingSupplierBank.company} (${currentAccounts.length} cuenta(s)) actualizados para lotes EBP.`,
+                    'Proveedor actualizado'
+                  )
+                  setEditingSupplierBank(null)
+                }}
+              >
+                <div className="form-grid" style={{ marginBottom: 12 }}>
+                  <label className="form-field">
+                    <span>RFC / Tax ID del proveedor</span>
+                    <input
+                      className="mono"
+                      maxLength={13}
+                      value={editingSupplierBank.rfc || ''}
+                      onChange={(e) =>
+                        setEditingSupplierBank({
+                          ...editingSupplierBank,
+                          rfc: e.target.value.toUpperCase(),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Moneda comercial principal</span>
+                    <select
+                      value={editingSupplierBank.currency || 'MXN'}
+                      onChange={(e) =>
+                        setEditingSupplierBank({
+                          ...editingSupplierBank,
+                          currency: e.target.value as 'MXN' | 'USD',
+                        })
+                      }
+                    >
+                      <option value="MXN">MXN · Peso Mexicano</option>
+                      <option value="USD">USD · Dólar Americano</option>
+                    </select>
+                  </label>
+                </div>
+
+                <SupplierBankAccountsManager
+                  accounts={currentAccounts}
+                  installedPacks={ebpPacks}
+                  usedAccountIds={usedAccIds}
+                  defaultCurrency={editingSupplierBank.currency || 'MXN'}
+                  onChange={(nextAccounts) =>
+                    setEditingSupplierBank({
+                      ...editingSupplierBank,
+                      bankAccounts: nextAccounts,
+                    })
+                  }
+                />
+
+                <div className="create-modal-actions" style={{ marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingSupplierBank(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <Check size={14} /> Guardar detalles bancarios
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )
+      })()}
 
       {/* Ficha de Cliente / Proveedor (mismo diseño que Ficha de Empleados) */}
       {detailDirectory && (() => {
@@ -5090,6 +10001,50 @@ function AppContent() {
           record={editingDirectory.record}
           installedPacks={ebpPacks}
           onClose={() => setEditingDirectory(null)}
+          onDelete={
+            canDeleteInSection(
+              'CRM',
+              editingDirectory.kind === 'supplier' ? 'Proveedores' : 'Clientes',
+              activeSectionAccess,
+              isFullAdmin,
+              activeSessionProfile.isActive
+            )
+              ? () => {
+                  const targetName = editingDirectory.originalCompany
+                  const isSup = editingDirectory.kind === 'supplier'
+                  if (isSup) {
+                    setSupplierRecords((prev) =>
+                      prev.filter(
+                        (s) =>
+                          !(
+                            s.email === editingDirectory.originalEmail &&
+                            s.company === editingDirectory.originalCompany
+                          )
+                      )
+                    )
+                  } else {
+                    setClientRecords((prev) =>
+                      prev.filter(
+                        (c) =>
+                          !(
+                            c.email === editingDirectory.originalEmail &&
+                            c.company === editingDirectory.originalCompany
+                          )
+                      )
+                    )
+                  }
+                  setEditingDirectory(null)
+                  setDetailDirectory(null)
+                  setNotice(
+                    `${isSup ? 'Proveedor' : 'Cliente'} “${targetName}” eliminado del directorio.`
+                  )
+                  toast.info(
+                    `${isSup ? 'Proveedor' : 'Cliente'} “${targetName}” eliminado del directorio.`,
+                    isSup ? 'Proveedor eliminado' : 'Cliente eliminado'
+                  )
+                }
+              : undefined
+          }
           onSave={(updated) => {
             if (editingDirectory.kind === 'supplier') {
               setSupplierRecords((prev) =>
@@ -5119,19 +10074,480 @@ function AppContent() {
         />
       )}
 
-      {/* Global EBP Batch Wizard Modal (launched from CRM Payroll or Finance Payables) */}
+      {/* Modal: Editar ficha de Oportunidad */}
+      {editingOpportunity && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingOpportunity(null)
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="edit-opp-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">CRM · OPORTUNIDAD COMERCIAL</div>
+                <h2 id="edit-opp-title">Editar ficha de oportunidad</h2>
+                <p>Actualiza la etapa comercial, valor estimado, contacto o elimina esta oportunidad.</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                aria-label="Cerrar"
+                onClick={() => setEditingOpportunity(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const cleanCompany = editingOpportunity.company.trim()
+                if (!cleanCompany) return
+                const cleanValue = Math.max(0, Number(editingOpportunity.value) || 0)
+                const stageTone: 'blue' | 'amber' | 'green' =
+                  editingOpportunity.stage === 'Negociación'
+                    ? 'amber'
+                    : editingOpportunity.stage === 'Calificada' || editingOpportunity.stage === 'Ganada'
+                    ? 'green'
+                    : 'blue'
+                const initials =
+                  cleanCompany
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((p) => p[0]?.toUpperCase() || '')
+                    .join('') || 'OP'
+                setOpportunityRecords((prev) =>
+                  prev.map((item, idx) =>
+                    idx === editingOpportunity.index
+                      ? {
+                          ...item,
+                          company: cleanCompany,
+                          person: editingOpportunity.person.trim() || 'Sin contacto',
+                          initials,
+                          value: cleanValue,
+                          stage: editingOpportunity.stage,
+                          stageTone,
+                          date: editingOpportunity.date.trim() || item.date,
+                        }
+                      : item
+                  )
+                )
+                toast.success(
+                  `Oportunidad de “${cleanCompany}” actualizada correctamente.`,
+                  'Oportunidad actualizada'
+                )
+                setEditingOpportunity(null)
+              }}
+            >
+              <label className="form-field">
+                <span>Empresa *</span>
+                <input
+                  required
+                  autoFocus
+                  value={editingOpportunity.company}
+                  onChange={(e) =>
+                    setEditingOpportunity({ ...editingOpportunity, company: e.target.value })
+                  }
+                />
+              </label>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Contacto</span>
+                  <input
+                    value={editingOpportunity.person}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, person: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Valor estimado (MXN)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editingOpportunity.value}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, value: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Etapa</span>
+                  <select
+                    value={editingOpportunity.stage}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, stage: e.target.value })
+                    }
+                  >
+                    <option value="Calificada">Calificada</option>
+                    <option value="Propuesta">Propuesta</option>
+                    <option value="Negociación">Negociación</option>
+                    <option value="Ganada">Ganada</option>
+                    <option value="Perdida">Perdida</option>
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Fecha / Seguimiento</span>
+                  <input
+                    value={editingOpportunity.date}
+                    onChange={(e) =>
+                      setEditingOpportunity({ ...editingOpportunity, date: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div
+                className={`create-modal-actions ${
+                  canDeleteInSection(
+                    'CRM',
+                    'Oportunidades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+                    ? 'has-delete-action'
+                    : ''
+                }`}
+              >
+                {canDeleteInSection(
+                  'CRM',
+                  'Oportunidades',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                ) && (
+                  <div className="modal-delete-slot">
+                    {!confirmDeleteOpp ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmDeleteOpp(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar oportunidad
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar a <strong>{editingOpportunity.company}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetName = editingOpportunity.company
+                            const targetIdx = editingOpportunity.index
+                            setOpportunityRecords((prev) =>
+                              prev.filter((_, idx) => idx !== targetIdx)
+                            )
+                            setEditingOpportunity(null)
+                            setConfirmDeleteOpp(false)
+                            setNotice(`Oportunidad de “${targetName}” eliminada del pipeline.`)
+                            toast.info(
+                              `Oportunidad de “${targetName}” eliminada del pipeline.`,
+                              'Oportunidad eliminada'
+                            )
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmDeleteOpp(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingOpportunity(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <BadgeCheck size={14} /> Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Editar ficha de Actividad */}
+      {editingActivity && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditingActivity(null)
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="edit-act-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">CRM · AGENDA COMERCIAL</div>
+                <h2 id="edit-act-title">Editar ficha de actividad</h2>
+                <p>Modifica el título, empresa, horario, tipo de seguimiento o elimina esta actividad.</p>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                aria-label="Cerrar"
+                onClick={() => setEditingActivity(null)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const cleanTitle = editingActivity.title.trim()
+                if (!cleanTitle) return
+                setActivityRecords((prev) =>
+                  prev.map((item, idx) =>
+                    idx === editingActivity.index
+                      ? {
+                          ...item,
+                          title: cleanTitle,
+                          company: editingActivity.company.trim() || 'Sin empresa',
+                          date: editingActivity.date || CRM_TODAY_ISO,
+                          time: editingActivity.time,
+                          icon: editingActivity.icon,
+                          tone: editingActivity.tone,
+                          status: editingActivity.status,
+                          notes: editingActivity.notes.trim() || undefined,
+                        }
+                      : item
+                  )
+                )
+                toast.success(
+                  `Actividad “${cleanTitle}” actualizada correctamente.`,
+                  'Actividad actualizada'
+                )
+                setEditingActivity(null)
+              }}
+            >
+              <label className="form-field">
+                <span>Actividad *</span>
+                <input
+                  required
+                  autoFocus
+                  value={editingActivity.title}
+                  onChange={(e) =>
+                    setEditingActivity({ ...editingActivity, title: e.target.value })
+                  }
+                />
+              </label>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Empresa relacionada</span>
+                  <input
+                    value={editingActivity.company}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, company: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Estado</span>
+                  <select
+                    value={editingActivity.status}
+                    onChange={(e) =>
+                      setEditingActivity({
+                        ...editingActivity,
+                        status: e.target.value as CrmActivityStatus,
+                      })
+                    }
+                  >
+                    <option value="Pendiente">Pendiente</option>
+                    <option value="Completada">Completada</option>
+                    <option value="Reprogramada">Reprogramada</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-grid-2">
+                <label className="form-field">
+                  <span>Fecha *</span>
+                  <input
+                    type="date"
+                    required
+                    value={editingActivity.date}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, date: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Hora *</span>
+                  <input
+                    type="time"
+                    required
+                    value={editingActivity.time}
+                    onChange={(e) =>
+                      setEditingActivity({ ...editingActivity, time: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <label className="form-field">
+                <span>Tipo de seguimiento</span>
+                <select
+                  value={editingActivity.icon}
+                  onChange={(e) => {
+                    const nextIcon = e.target.value
+                    const nextTone: 'blue' | 'amber' | 'green' =
+                      nextIcon === 'send' ? 'blue' : nextIcon === 'phone' ? 'amber' : 'green'
+                    setEditingActivity({ ...editingActivity, icon: nextIcon, tone: nextTone })
+                  }}
+                >
+                  <option value="send">Envío de propuesta / correo</option>
+                  <option value="phone">Llamada de seguimiento</option>
+                  <option value="check">Revisión / Tarea interna</option>
+                </select>
+              </label>
+
+              <label className="form-field">
+                <span>Notas de seguimiento</span>
+                <textarea
+                  rows={2}
+                  value={editingActivity.notes}
+                  onChange={(e) =>
+                    setEditingActivity({ ...editingActivity, notes: e.target.value })
+                  }
+                  placeholder="Acuerdos, contexto o siguiente paso..."
+                />
+              </label>
+
+              <div
+                className={`create-modal-actions ${
+                  canDeleteInSection(
+                    'CRM',
+                    'Actividades',
+                    activeSectionAccess,
+                    isFullAdmin,
+                    activeSessionProfile.isActive
+                  )
+                    ? 'has-delete-action'
+                    : ''
+                }`}
+              >
+                {canDeleteInSection(
+                  'CRM',
+                  'Actividades',
+                  activeSectionAccess,
+                  isFullAdmin,
+                  activeSessionProfile.isActive
+                ) && (
+                  <div className="modal-delete-slot">
+                    {!confirmDeleteAct ? (
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        onClick={() => setConfirmDeleteAct(true)}
+                      >
+                        <Trash2 size={14} /> Eliminar actividad
+                      </button>
+                    ) : (
+                      <div className="modal-delete-confirm">
+                        <span>
+                          ¿Eliminar <strong>{editingActivity.title}</strong>?
+                        </span>
+                        <button
+                          type="button"
+                          className="button button-danger-solid"
+                          onClick={() => {
+                            const targetTitle = editingActivity.title
+                            const targetIdx = editingActivity.index
+                            setActivityRecords((prev) =>
+                              prev.filter((_, idx) => idx !== targetIdx)
+                            )
+                            setEditingActivity(null)
+                            setConfirmDeleteAct(false)
+                            setNotice(`Actividad “${targetTitle}” eliminada de la agenda.`)
+                            toast.info(
+                              `Actividad “${targetTitle}” eliminada de la agenda.`,
+                              'Actividad eliminada'
+                            )
+                          }}
+                        >
+                          <Trash2 size={13} /> Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmDeleteAct(false)}
+                        >
+                          Conservar
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="modal-primary-actions-slot">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setEditingActivity(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="button button-primary">
+                    <BadgeCheck size={14} /> Guardar cambios
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* Global EBP Batch Wizard Modal (launched from CRM Payroll, Purchases Invoices or Finance Payables) */}
       {globalEbpWizard.isOpen && (
         <EbpBatchWizardModal
           isOpen={globalEbpWizard.isOpen}
           batchType={globalEbpWizard.batchType}
+          defaultAggregationMode={globalEbpWizard.defaultAggregationMode}
           sourceRefId={globalEbpWizard.sourceRefId}
           sourceFolio={globalEbpWizard.sourceFolio}
           candidates={globalEbpWizard.candidates}
+          suppliers={supplierRecords.map((s) => ({
+            name: s.name,
+            company: s.company,
+            email: s.email,
+            rfc: s.rfc,
+            currency: s.currency,
+            bankName: s.bankName,
+            clabe: s.clabe,
+            accountNumber: s.accountNumber,
+            defaultReference: s.defaultReference,
+            bankPackValues: s.bankPackValues,
+            bankAccounts: s.bankAccounts,
+          }))}
+          usedSupplierBankAccountIds={usedSupplierBankAccountIds}
           packs={ebpPacks}
           bankAccounts={bankAccounts}
           existingBatchesCount={ebpBatches.length}
           onClose={() => setGlobalEbpWizard((prev) => ({ ...prev, isOpen: false }))}
           onUpdateBankAccountPackValues={handleUpdateBankAccountPackValues}
+          onUpdateSupplierBankAccounts={handleUpdateSupplierBankAccounts}
           onCreateBatch={(batch) => {
             setEbpBatches((prev) => [batch, ...prev])
             navigateToFinanceSection('Pagos Bancarios')
@@ -5153,6 +10569,26 @@ function AppContent() {
           }
         />
       )}
+
+      <GlobalSearchModal
+        isOpen={isGlobalSearchOpen}
+        items={globalSearchItems}
+        onClose={() => setIsGlobalSearchOpen(false)}
+      />
+
+      <WorkspaceSetupModal
+        isOpen={isSetupChecklistOpen}
+        workspaceName={workspaceMeta.workspaceName}
+        steps={workspaceSetupSteps}
+        completedCount={completedSetupCount}
+        totalCount={totalSetupCount}
+        progressPercent={setupProgressPercent}
+        onClose={() => setIsSetupChecklistOpen(false)}
+        onToggleStep={handleToggleSetupStep}
+        onNavigateStep={handleNavigateSetupStep}
+        onCompleteAll={handleCompleteAllSetupSteps}
+        onResetProgress={handleResetSetupProgress}
+      />
     </div>
   )
 }

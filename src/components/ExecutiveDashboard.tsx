@@ -43,6 +43,7 @@ import {
   Receipt,
   ClipboardList,
   ShoppingCart,
+  Layers,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -74,7 +75,12 @@ import type {
   ChartAccount,
 } from '../data/finance'
 import type { Opportunity } from '../data/dashboard'
-import type { RoleCapabilityId } from '../data/settings'
+import {
+  resolveEffectiveStockThreshold,
+  type CategoryStockThresholdRule,
+  type EffectiveThresholdSource,
+  type RoleCapabilityId,
+} from '../data/settings'
 import { canAccessModule, canAccessSection } from '../data/accessControl'
 import { RevenueTargetChart } from './RevenueTargetChart'
 import { useToast } from './Toast'
@@ -138,6 +144,9 @@ interface ExecutiveDashboardProps {
   orders: SalesOrder[]
   quotes: Quote[]
   inventory: InventoryItemLocation[]
+  categoryThresholds?: CategoryStockThresholdRule[]
+  productCategoryMap?: Map<string, string>
+  onOpenCategoryThresholds?: () => void
   purchaseOrders?: PurchaseOrder[]
   requisitions?: PurchaseRequisition[]
   shipments?: ShipmentDelivery[]
@@ -169,7 +178,10 @@ interface ExecutiveDashboardProps {
   ) => void
   onNavigateOperations: (section: 'Inventario' | 'Compras' | 'Entregas' | 'Resumen') => void
   onNavigateFinance: (
-    section: 'Cobros' | 'Pagos' | 'Gastos' | 'Cuentas contables' | 'Resumen'
+    section: 'Cobros' | 'Pagos' | 'Cuentas contables' | 'Resumen'
+  ) => void
+  onNavigateExpenses?: (
+    section?: 'Resumen y control' | 'Registro y pólizas' | 'Presupuestos y alertas' | 'Gastos recurrentes'
   ) => void
   onNavigateCrm: (section?: string) => void
   onOpenCreateOpportunity: () => void
@@ -181,6 +193,9 @@ export function ExecutiveDashboard({
   orders,
   quotes: _quotes,
   inventory,
+  categoryThresholds = [],
+  productCategoryMap,
+  onOpenCategoryThresholds,
   purchaseOrders = [],
   requisitions = [],
   shipments = [],
@@ -204,6 +219,7 @@ export function ExecutiveDashboard({
   onNavigatePurchases,
   onNavigateOperations,
   onNavigateFinance,
+  onNavigateExpenses,
   onNavigateCrm,
   onOpenCreateOpportunity,
 }: ExecutiveDashboardProps) {
@@ -350,24 +366,57 @@ export function ExecutiveDashboard({
   const [lastTestSentAt, setLastTestSentAt] = useState<string | null>(null)
   const [showPreviewTemplate, setShowPreviewTemplate] = useState(false)
 
+  const { effectiveInventory, thresholdMetaById } = useMemo(() => {
+    const meta = new Map<
+      string,
+      { source: EffectiveThresholdSource; category: string; ruleMinStock?: number }
+    >()
+    const resolvedList = inventory.map((item) => {
+      if (categoryThresholds.length === 0) {
+        meta.set(item.id, {
+          source: 'sku',
+          category: item.category || productCategoryMap?.get(item.productId) || 'Hardware',
+        })
+        return item
+      }
+      const res = resolveEffectiveStockThreshold(item, categoryThresholds, productCategoryMap)
+      meta.set(item.id, {
+        source: res.source,
+        category: res.category,
+        ruleMinStock: res.categoryRule?.minStock,
+      })
+      if (res.effectiveMinStock === item.minStock && item.category === res.category) {
+        return item
+      }
+      return {
+        ...item,
+        category: res.category,
+        minStock: res.effectiveMinStock,
+      }
+    })
+    return { effectiveInventory: resolvedList, thresholdMetaById: meta }
+  }, [inventory, categoryThresholds, productCategoryMap])
+
   // Unique warehouses for filter in threshold table
   const uniqueWarehouses = useMemo(() => {
     const map = new Map<string, string>()
-    inventory.forEach((i) => {
+    effectiveInventory.forEach((i) => {
       if (!map.has(i.warehouseId)) map.set(i.warehouseId, i.warehouseName)
     })
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
-  }, [inventory])
+  }, [effectiveInventory])
 
   // Filtered items in threshold configuration table
   const filteredConfigItems = useMemo(() => {
-    return inventory.filter((item) => {
+    return effectiveInventory.filter((item) => {
       const q = thresholdSearch.toLowerCase().trim()
+      const meta = thresholdMetaById.get(item.id)
       const matchSearch =
         !q ||
         item.name.toLowerCase().includes(q) ||
         item.sku.toLowerCase().includes(q) ||
-        item.warehouseName.toLowerCase().includes(q)
+        item.warehouseName.toLowerCase().includes(q) ||
+        (meta?.category || '').toLowerCase().includes(q)
       const matchWarehouse =
         thresholdWarehouseFilter === 'all' || item.warehouseId === thresholdWarehouseFilter
       const isCritical = item.stock <= item.minStock
@@ -379,20 +428,28 @@ export function ExecutiveDashboard({
           : !isCritical
       return matchSearch && matchWarehouse && matchStatus
     })
-  }, [inventory, thresholdSearch, thresholdWarehouseFilter, thresholdFilter])
+  }, [effectiveInventory, thresholdMetaById, thresholdSearch, thresholdWarehouseFilter, thresholdFilter])
 
   // Handlers for Stock Threshold updates
   const handleUpdateItemThreshold = (itemId: string, newMinStock: number) => {
     const safeMin = Math.max(0, newMinStock)
+    const meta = thresholdMetaById.get(itemId)
     const updated = inventory.map((item) =>
-      item.id === itemId ? { ...item, minStock: safeMin } : item
+      item.id === itemId
+        ? { ...item, minStock: safeMin, thresholdSource: 'sku' as const }
+        : item
     )
     if (onUpdateInventory) {
       onUpdateInventory(updated)
     }
     const item = updated.find((i) => i.id === itemId)
     if (item) {
-      if (item.stock <= safeMin) {
+      if (meta?.source === 'category_override') {
+        toast.info(
+          `El ajuste individual de ${item.sku} se guardó como ${safeMin} ${item.unitOfMeasure}, pero la categoría "${meta.category}" tiene una regla maestra forzada activa.`,
+          'Regla maestra activa en categoría'
+        )
+      } else if (item.stock <= safeMin) {
         toast.warning(
           `Umbral para ${item.sku} (${item.name}) establecido en ${safeMin} ${item.unitOfMeasure}. Stock actual (${item.stock}) bajo umbral mínimo.`,
           'Umbral actualizado · Alerta activa'
@@ -407,14 +464,18 @@ export function ExecutiveDashboard({
   }
 
   const handleStepItemThreshold = (itemId: string, delta: number) => {
-    const item = inventory.find((i) => i.id === itemId)
+    const item = effectiveInventory.find((i) => i.id === itemId) || inventory.find((i) => i.id === itemId)
     if (!item) return
     handleUpdateItemThreshold(itemId, item.minStock + delta)
   }
 
   const handleBatchSetThreshold = () => {
     const safeVal = Math.max(0, batchThresholdVal)
-    const updated = inventory.map((item) => ({ ...item, minStock: safeVal }))
+    const updated = inventory.map((item) => ({
+      ...item,
+      minStock: safeVal,
+      thresholdSource: 'sku' as const,
+    }))
     if (onUpdateInventory) {
       onUpdateInventory(updated)
     }
@@ -641,7 +702,8 @@ export function ExecutiveDashboard({
     canAccessSection('Finanzas', 'Pagos', capabilities, isFullAdmin, isAccountActive)
   const canViewExpenses =
     hasActiveAccess &&
-    canAccessSection('Finanzas', 'Gastos', capabilities, isFullAdmin, isAccountActive)
+    (canAccessSection('Gastos', 'Resumen y control', capabilities, isFullAdmin, isAccountActive) ||
+      canAccessSection('Gastos', 'Registro y pólizas', capabilities, isFullAdmin, isAccountActive))
   const canViewChartAccounts =
     hasActiveAccess &&
     canAccessSection('Finanzas', 'Cuentas contables', capabilities, isFullAdmin, isAccountActive)
@@ -759,8 +821,8 @@ export function ExecutiveDashboard({
   }, [inventory])
 
   const lowStockItems = useMemo(() => {
-    return inventory.filter((item) => item.stock <= item.minStock)
-  }, [inventory])
+    return effectiveInventory.filter((item) => item.stock <= item.minStock)
+  }, [effectiveInventory])
 
   const activeShipments = useMemo(() => {
     return shipments.filter((s) => s.status === 'Preparando' || s.status === 'En ruta')
@@ -889,7 +951,7 @@ export function ExecutiveDashboard({
         value: number
       }
     >()
-    for (const item of inventory) {
+    for (const item of effectiveInventory) {
       const current = map.get(item.warehouseName) || {
         warehouseName: item.warehouseName,
         skus: 0,
@@ -904,10 +966,10 @@ export function ExecutiveDashboard({
       map.set(item.warehouseName, current)
     }
     return Array.from(map.values())
-  }, [inventory])
+  }, [effectiveInventory])
 
   const inventoryChartData = useMemo(() => {
-    return [...inventory]
+    return [...effectiveInventory]
       .sort((a, b) => (a.stock - a.minStock) - (b.stock - b.minStock))
       .slice(0, 7)
       .map((item) => ({
@@ -916,7 +978,7 @@ export function ExecutiveDashboard({
         stock: item.stock,
         minStock: item.minStock,
       }))
-  }, [inventory])
+  }, [effectiveInventory])
 
   const overdueInvoices = useMemo(() => {
     return receivables.filter((r) => r.status === 'Vencida' && r.balance > 0)
@@ -1310,7 +1372,9 @@ export function ExecutiveDashboard({
                 <button
                   type="button"
                   className="quick-action-item"
-                  onClick={() => onNavigateFinance('Gastos')}
+                  onClick={() =>
+                    onNavigateExpenses ? onNavigateExpenses('Registro y pólizas') : onNavigateFinance('Pagos')
+                  }
                 >
                   <Scale size={13} /> {t('dashboard.quickExpense')}
                 </button>
@@ -1917,8 +1981,13 @@ export function ExecutiveDashboard({
                     className="kpi-card kpi-card-clickable"
                     role="button"
                     tabIndex={0}
-                    onClick={() => onNavigateFinance('Gastos')}
-                    onKeyDown={(e) => e.key === 'Enter' && onNavigateFinance('Gastos')}
+                    onClick={() =>
+                      onNavigateExpenses ? onNavigateExpenses('Resumen y control') : onNavigateFinance('Resumen')
+                    }
+                    onKeyDown={(e) =>
+                      e.key === 'Enter' &&
+                      (onNavigateExpenses ? onNavigateExpenses('Resumen y control') : onNavigateFinance('Resumen'))
+                    }
                     title="Ver control de gastos"
                   >
                     <div className="kpi-top">
@@ -3027,14 +3096,29 @@ export function ExecutiveDashboard({
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setShowStockConfigModal(false)}
-                aria-label="Cerrar panel de control"
-              >
-                <X size={18} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {onOpenCategoryThresholds && (
+                  <button
+                    type="button"
+                    className="button button-secondary button-sm"
+                    onClick={() => {
+                      setShowStockConfigModal(false)
+                      onOpenCategoryThresholds()
+                    }}
+                    title="Abrir configuración de umbrales por categoría de producto"
+                  >
+                    <Layers size={13} /> Por categoría &rarr;
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setShowStockConfigModal(false)}
+                  aria-label="Cerrar panel de control"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {/* Pestañas de Navegación del Panel */}
@@ -3238,12 +3322,24 @@ export function ExecutiveDashboard({
                         ) : (
                           filteredConfigItems.map((item) => {
                             const isCritical = item.stock <= item.minStock
+                            const meta = thresholdMetaById.get(item.id)
+                            const sourceLabel =
+                              meta?.source === 'category_override'
+                                ? `Categoría (${meta.category} · Maestra)`
+                                : meta?.source === 'category_inherit'
+                                ? `Categoría (${meta.category})`
+                                : 'Personalizado por SKU'
                             return (
                               <tr key={item.id} className={isCritical ? 'row-critical' : ''}>
                                 <td>
                                   <div className="table-product-cell">
                                     <span className="sku-badge"><code>{item.sku}</code></span>
                                     <strong className="product-name">{item.name}</strong>
+                                    {meta?.category && (
+                                      <small style={{ color: '#747875', fontSize: '10px' }}>
+                                        {meta.category}
+                                      </small>
+                                    )}
                                   </div>
                                 </td>
                                 <td>
@@ -3282,6 +3378,9 @@ export function ExecutiveDashboard({
                                     >
                                       <Plus size={12} />
                                     </button>
+                                  </div>
+                                  <div style={{ fontSize: '10px', color: '#747875', marginTop: '3px' }}>
+                                    {sourceLabel}
                                   </div>
                                 </td>
                                 <td>

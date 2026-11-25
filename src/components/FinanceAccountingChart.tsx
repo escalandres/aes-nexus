@@ -51,6 +51,7 @@ const SUBTYPE_COLORS: Record<AccountType, string> = {
   'Ingresos': '#2f855a',
   'Costos': '#b85d38',
   'Gastos de operación': '#ba4836',
+  'Gastos financieros': '#b45309',
   'Otros ingresos': '#2c7a7b',
 }
 
@@ -135,8 +136,9 @@ export function FinanceAccountingChart({ accounts, onSelectType }: FinanceAccoun
         id: 'Gasto',
         name: 'Gasto y Costos',
         nature: 'Naturaleza Deudora',
-        description: 'Costos directos de mercancías y gastos operativos (arrendamiento, nómina, servicios).',
-        match: (type: AccountType) => type === 'Costos' || type === 'Gastos de operación',
+        description: 'Costos directos de mercancías, gastos operativos y financieros.',
+        match: (type: AccountType) =>
+          type === 'Costos' || type === 'Gastos de operación' || type === 'Gastos financieros',
       },
     ]
 
@@ -169,6 +171,7 @@ export function FinanceAccountingChart({ accounts, onSelectType }: FinanceAccoun
       'Ingresos',
       'Costos',
       'Gastos de operación',
+      'Gastos financieros',
       'Otros ingresos',
     ]
 
@@ -179,7 +182,10 @@ export function FinanceAccountingChart({ accounts, onSelectType }: FinanceAccoun
         const matchingAccounts = accounts.filter((a) => a.type === st)
         const totalBalance = matchingAccounts.reduce((sum, a) => sum + a.balance, 0)
         const nature =
-          st.startsWith('Activo') || st === 'Costos' || st === 'Gastos de operación'
+          st.startsWith('Activo') ||
+          st === 'Costos' ||
+          st === 'Gastos de operación' ||
+          st === 'Gastos financieros'
             ? 'Naturaleza Deudora'
             : 'Naturaleza Acreedora'
 

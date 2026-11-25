@@ -29,10 +29,13 @@ import type { EmployeeRecord } from '../data/employees'
 import type { PayrollRunRecord } from '../data/payroll'
 import {
   downloadEncodedEbpFile,
+  getPreferredSupplierBankAccount,
   makeValidClabe,
+  normalizeSupplierBankAccounts,
   renderEbpTemplate,
   validateEbpFieldValue,
   type BankFormatPack,
+  type EbpAggregationMode,
   type EbpCurrency,
   type EbpDynamicFieldSchema,
   type EbpEncoding,
@@ -41,21 +44,13 @@ import {
   type EbpOperationType,
   type EbpRenderContext,
   type ElectronicPaymentBatch,
+  type SupplierBankAccount,
+  type SupplierBankProfile,
 } from '../data/ebp'
 import { EbpBatchWizardModal, type EbpWizardCandidateLine } from './EbpBatchWizardModal'
 import { useToast } from './Toast'
 
-export interface SupplierBankProfile {
-  name: string
-  company: string
-  email: string
-  rfc?: string
-  bankName?: string
-  clabe?: string
-  accountNumber?: string
-  defaultReference?: string
-  bankPackValues?: Record<string, Record<string, string>>
-}
+export type { SupplierBankProfile }
 
 interface FinanceEbpProps {
   packs: BankFormatPack[]
@@ -67,11 +62,16 @@ interface FinanceEbpProps {
   payables: BillPayable[]
   onUpdatePacks: (next: BankFormatPack[]) => void
   onCreateBatch: (batch: ElectronicPaymentBatch) => void
+  onDeleteBatch?: (batchId: string) => void
   onApplyBatchInFinance: (batch: ElectronicPaymentBatch) => void
   onUpdateBankAccountPackValues: (
     accountId: string,
     packId: string,
     values: Record<string, string>
+  ) => void
+  onUpdateSupplierBankAccounts?: (
+    supplierCompany: string,
+    nextAccounts: SupplierBankAccount[]
   ) => void
 }
 
@@ -105,8 +105,10 @@ export function FinanceEbp({
   payables,
   onUpdatePacks,
   onCreateBatch,
+  onDeleteBatch,
   onApplyBatchInFinance,
   onUpdateBankAccountPackValues,
+  onUpdateSupplierBankAccounts,
 }: FinanceEbpProps) {
   const toast = useToast()
   const jsonInputRef = useRef<HTMLInputElement>(null)
@@ -125,11 +127,13 @@ export function FinanceEbp({
 
   // Batch preview modal
   const [previewBatch, setPreviewBatch] = useState<ElectronicPaymentBatch | null>(null)
+  const [confirmingDeleteBatch, setConfirmingDeleteBatch] = useState(false)
 
   // Quick Launch Wizard state inside Finanzas > EBP
   const [wizardState, setWizardState] = useState<{
     isOpen: boolean
     batchType: 'Nómina' | 'Proveedores'
+    defaultAggregationMode?: EbpAggregationMode
     sourceRefId: string
     sourceFolio: string
     candidates: EbpWizardCandidateLine[]
@@ -155,6 +159,16 @@ export function FinanceEbp({
   >('template')
 
   // KPIs
+  const usedSupplierBankAccountIds = useMemo(() => {
+    const ids = new Set<string>()
+    batches.forEach((b) => {
+      b.lines.forEach((l) => {
+        if (l.selectedBankAccountId) ids.add(l.selectedBankAccountId)
+      })
+    })
+    return ids
+  }, [batches])
+
   const installedPacks = useMemo(() => packs.filter((p) => p.installed), [packs])
   const pendingBatches = useMemo(
     () => batches.filter((b) => b.status === 'Archivo generado' || b.status === 'Validado'),
@@ -222,8 +236,11 @@ export function FinanceEbp({
     })
   }
 
-  // Open wizard for selected vendor bills
-  const launchVendorWizard = (selectedBills: BillPayable[]) => {
+  // Open wizard for selected vendor bills (individual or consolidated)
+  const launchVendorWizard = (
+    selectedBills: BillPayable[],
+    preferredMode?: EbpAggregationMode
+  ) => {
     if (selectedBills.length === 0) {
       toast.warning('Selecciona al menos una factura pendiente para armar el lote.', 'Sin selección')
       return
@@ -231,24 +248,55 @@ export function FinanceEbp({
     const supMap = new Map(suppliers.map((s) => [s.company.toLowerCase(), s]))
     const candidates: EbpWizardCandidateLine[] = selectedBills.map((bill) => {
       const sup = supMap.get(bill.supplierCompany.toLowerCase())
+      const accounts = sup
+        ? normalizeSupplierBankAccounts({
+            company: sup.company,
+            currency: sup.currency || bill.currency || 'MXN',
+            bankName: sup.bankName,
+            clabe: sup.clabe,
+            accountNumber: sup.accountNumber,
+            defaultReference: sup.defaultReference,
+            bankPackValues: sup.bankPackValues,
+            bankAccounts: sup.bankAccounts,
+          })
+        : []
+      const preferredAcc = getPreferredSupplierBankAccount(
+        accounts,
+        bill.currency || 'MXN'
+      )
+
       return {
         sourceLineId: bill.id,
+        supplierKey: bill.supplierCompany.toLowerCase(),
+        billId: bill.id,
+        billFolio: bill.folio,
+        purchaseOrderFolio: bill.purchaseOrderFolio,
+        dueDate: bill.dueDate,
+        currency: bill.currency || 'MXN',
         beneficiaryName: bill.supplierCompany,
         beneficiaryCode: bill.folio,
         rfc: sup?.rfc,
-        bankName: sup?.bankName || '',
-        clabe: sup?.clabe || '',
-        accountNumber: sup?.accountNumber,
+        bankName: preferredAcc?.bankName || sup?.bankName || '',
+        clabe: preferredAcc?.clabe || sup?.clabe || '',
+        accountNumber: preferredAcc?.accountNumber ?? sup?.accountNumber,
         amount: bill.balance,
-        reference: sup?.defaultReference || bill.folio.replace(/\D/g, '').slice(-7) || '100001',
+        reference:
+          preferredAcc?.defaultReference ||
+          sup?.defaultReference ||
+          bill.folio.replace(/\D/g, '').slice(-7) ||
+          '100001',
         concept: `PAGO ${bill.folio}`,
-        bankPackValues: sup?.bankPackValues,
+        bankPackValues: preferredAcc?.bankPackValues || sup?.bankPackValues,
+        availableBankAccounts: accounts,
+        selectedBankAccountId: preferredAcc?.id,
       }
     })
     setSourcePickerType(null)
     setWizardState({
       isOpen: true,
       batchType: 'Proveedores',
+      defaultAggregationMode:
+        preferredMode || (selectedBills.length > 1 ? 'consolidated' : 'individual'),
       sourceRefId: selectedBills.map((b) => b.id).join(','),
       sourceFolio:
         selectedBills.length === 1
@@ -684,19 +732,35 @@ export function FinanceEbp({
                   </td>
                 </tr>
               ) : (
-                batches.map((b) => (
+                batches.map((b) => {
+                  const totalBillsCovered = b.lines.reduce(
+                    (sum, l) => sum + (l.billAllocations?.length || 1),
+                    0
+                  )
+                  return (
                   <tr key={b.id}>
                     <td>
                       <div className="payroll-folio-cell">
                         <strong className="mono">{b.folio}</strong>
-                        <span className="emp-code-pill">{b.batchType}</span>
+                        <span className="emp-code-pill">
+                          {b.batchType}
+                          {b.batchType === 'Proveedores' && b.aggregationMode
+                            ? b.aggregationMode === 'consolidated'
+                              ? ' · Consolidado'
+                              : ' · Individual'
+                            : ''}
+                        </span>
                       </div>
                     </td>
                     <td>
                       <div className="supplier-cell">
                         <strong>{b.sourceFolio}</strong>
                         <small>
-                          {b.operationsCount} pagos · Ejecución {b.executionDate}
+                          {b.operationsCount} pago(s)
+                          {b.batchType === 'Proveedores' && totalBillsCovered > b.operationsCount
+                            ? ` (${totalBillsCovered} facturas)`
+                            : ''}{' '}
+                          · Ejecución {b.executionDate}
                         </small>
                       </div>
                     </td>
@@ -731,7 +795,10 @@ export function FinanceEbp({
                         <button
                           type="button"
                           className="button-icon-action"
-                          onClick={() => setPreviewBatch(b)}
+                          onClick={() => {
+                            setConfirmingDeleteBatch(false)
+                            setPreviewBatch(b)
+                          }}
                           title="Ver contenido del archivo y re-descargar"
                         >
                           <Eye size={12} /> Archivo
@@ -749,7 +816,8 @@ export function FinanceEbp({
                       </div>
                     </td>
                   </tr>
-                ))
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -1583,7 +1651,10 @@ export function FinanceEbp({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setPreviewBatch(null)
+            if (e.target === e.currentTarget) {
+              setPreviewBatch(null)
+              setConfirmingDeleteBatch(false)
+            }
           }}
         >
           <section className="create-modal modal-wide ebp-wizard-modal" role="dialog" aria-modal="true">
@@ -1599,7 +1670,10 @@ export function FinanceEbp({
                 type="button"
                 className="icon-button"
                 aria-label="Cerrar"
-                onClick={() => setPreviewBatch(null)}
+                onClick={() => {
+                  setPreviewBatch(null)
+                  setConfirmingDeleteBatch(false)
+                }}
               >
                 <X size={18} />
               </button>
@@ -1615,28 +1689,115 @@ export function FinanceEbp({
               ))}
             </div>
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setPreviewBatch(null)}
-              >
-                Cerrar
-              </button>
-              <button
-                type="button"
-                className="button button-primary"
-                onClick={() => {
-                  downloadEncodedEbpFile(
-                    previewBatch.generatedContent,
-                    previewBatch.generatedFilename,
-                    previewBatch.encoding
-                  )
-                  toast.success(`Archivo ${previewBatch.generatedFilename} descargado.`, 'Descarga')
-                }}
-              >
-                <Download size={14} /> Descargar archivo ({previewBatch.encoding})
-              </button>
+            {previewBatch.lines.length > 0 && (
+              <div className="ebp-batch-lines-detail">
+                <div className="ebp-box-head" style={{ marginBottom: 8 }}>
+                  <strong>
+                    Detalle de dispersiones incluidas ({previewBatch.lines.length} instrucción(es))
+                  </strong>
+                  {previewBatch.batchType === 'Proveedores' && (
+                    <span className="emp-code-pill">
+                      Modo:{' '}
+                      {previewBatch.aggregationMode === 'consolidated'
+                        ? 'Consolidado por proveedor'
+                        : 'Individual por factura'}
+                    </span>
+                  )}
+                </div>
+                <div className="ebp-batch-lines-stack">
+                  {previewBatch.lines.map((line) => (
+                    <div key={line.id} className="ebp-batch-line-row">
+                      <div>
+                        <strong>{line.beneficiaryName}</strong>
+                        <small>
+                          {line.selectedBankAlias ? `${line.selectedBankAlias} · ` : ''}
+                          {line.bankName} · <span className="mono">{line.clabe}</span>
+                        </small>
+                        {line.paymentReason && (
+                          <small className="ebp-reason-line">
+                            Motivo: <strong>{line.paymentReason}</strong>
+                          </small>
+                        )}
+                        {line.billAllocations && line.billAllocations.length > 0 && (
+                          <small className="mono">
+                            Facturas:{' '}
+                            {line.billAllocations
+                              .map((a) => `${a.billFolio} (${money(a.amountToPay, a.currency)})`)
+                              .join(' · ')}
+                          </small>
+                        )}
+                      </div>
+                      <strong className="mono">{money(line.amount, previewBatch.currency)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className={`create-modal-actions ${onDeleteBatch ? 'has-delete-action' : ''}`}>
+              {onDeleteBatch && (
+                <div className="modal-delete-slot">
+                  {!confirmingDeleteBatch ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDeleteBatch(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar lote
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{previewBatch.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteBatch(previewBatch.id)
+                          setPreviewBatch(null)
+                          setConfirmingDeleteBatch(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDeleteBatch(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => {
+                    setPreviewBatch(null)
+                    setConfirmingDeleteBatch(false)
+                  }}
+                >
+                  Cerrar
+                </button>
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={() => {
+                    downloadEncodedEbpFile(
+                      previewBatch.generatedContent,
+                      previewBatch.generatedFilename,
+                      previewBatch.encoding
+                    )
+                    toast.success(`Archivo ${previewBatch.generatedFilename} descargado.`, 'Descarga')
+                  }}
+                >
+                  <Download size={14} /> Descargar archivo ({previewBatch.encoding})
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -1662,8 +1823,8 @@ export function FinanceEbp({
                 </h2>
                 <p>
                   {sourcePickerType === 'Nómina'
-                    ? 'Elige el periodo de nómina cuyos recibos deseas dispersar al banco.'
-                    : 'Marca una o varias cuentas por pagar pendientes para agruparlas en un solo archivo bancario.'}
+                    ? 'Únicamente Nóminas y Facturas de Proveedor pueden dispersarse por EBP. Elige el periodo de nómina a dispersar.'
+                    : 'Únicamente Facturas de Proveedor abiertas y Nóminas pueden dispersarse por EBP. Marca facturas para pagarlas individualmente o consolidarlas por proveedor.'}
                 </p>
               </div>
               <button
@@ -1722,11 +1883,11 @@ export function FinanceEbp({
                             <strong className="mono">{bill.folio}</strong> ·{' '}
                             <strong>{bill.supplierCompany}</strong>
                             <small>
-                              Vence: {bill.dueDate} · Estado: {bill.status}
+                              Vence: {bill.dueDate} · Moneda: {bill.currency} · Estado: {bill.status}
                             </small>
                           </div>
                         </div>
-                        <strong className="mono">{money(bill.balance)}</strong>
+                        <strong className="mono">{money(bill.balance, bill.currency)}</strong>
                       </label>
                     ))
                   )}
@@ -1741,14 +1902,27 @@ export function FinanceEbp({
                   </button>
                   <button
                     type="button"
-                    className="button button-primary"
+                    className="button button-secondary"
                     onClick={() =>
                       launchVendorWizard(
-                        pendingVendorBills.filter((b) => pickedBillIds[b.id])
+                        pendingVendorBills.filter((b) => pickedBillIds[b.id]),
+                        'individual'
                       )
                     }
                   >
-                    Continuar al asistente EBP
+                    Pago individual por factura
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() =>
+                      launchVendorWizard(
+                        pendingVendorBills.filter((b) => pickedBillIds[b.id]),
+                        'consolidated'
+                      )
+                    }
+                  >
+                    Consolidar por proveedor en EBP
                   </button>
                 </div>
               </div>
@@ -1762,14 +1936,18 @@ export function FinanceEbp({
         <EbpBatchWizardModal
           isOpen={wizardState.isOpen}
           batchType={wizardState.batchType}
+          defaultAggregationMode={wizardState.defaultAggregationMode}
           sourceRefId={wizardState.sourceRefId}
           sourceFolio={wizardState.sourceFolio}
           candidates={wizardState.candidates}
+          suppliers={suppliers}
+          usedSupplierBankAccountIds={usedSupplierBankAccountIds}
           packs={packs}
           bankAccounts={bankAccounts}
           existingBatchesCount={batches.length}
           onClose={() => setWizardState((prev) => ({ ...prev, isOpen: false }))}
           onUpdateBankAccountPackValues={onUpdateBankAccountPackValues}
+          onUpdateSupplierBankAccounts={onUpdateSupplierBankAccounts}
           onCreateBatch={(batch) => {
             onCreateBatch(batch)
             setActiveTab('batches')

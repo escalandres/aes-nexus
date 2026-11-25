@@ -53,6 +53,7 @@ interface PurchasesRequisitionsProps {
     supplierCompany: string,
     expectedDate: string
   ) => void
+  onDeleteRequisition?: (reqId: string) => void
   onNavigateToOrder?: () => void
 }
 
@@ -75,6 +76,7 @@ export function PurchasesRequisitions({
   onCreateRequisition,
   onUpdateRequisitionStatus,
   onConvertToPurchaseOrder,
+  onDeleteRequisition,
   onNavigateToOrder,
 }: PurchasesRequisitionsProps) {
   const toast = useToast()
@@ -84,6 +86,7 @@ export function PurchasesRequisitions({
   // Modals
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
   const [detailReq, setDetailReq] = useState<PurchaseRequisition | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [convertReq, setConvertReq] = useState<PurchaseRequisition | null>(null)
 
   // Convert to PO modal form
@@ -448,7 +451,10 @@ export function PurchasesRequisitions({
                       <button
                         type="button"
                         className="button-icon-action"
-                        onClick={() => setDetailReq(req)}
+                        onClick={() => {
+                          setConfirmingDelete(false)
+                          setDetailReq(req)
+                        }}
                         title="Ver partidas de la requisición"
                       >
                         <Eye size={13} /> Ver
@@ -757,7 +763,10 @@ export function PurchasesRequisitions({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setDetailReq(null)
+            if (e.target === e.currentTarget) {
+              setDetailReq(null)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
@@ -772,7 +781,10 @@ export function PurchasesRequisitions({
               <button
                 type="button"
                 className="icon-button"
-                onClick={() => setDetailReq(null)}
+                onClick={() => {
+                  setDetailReq(null)
+                  setConfirmingDelete(false)
+                }}
                 aria-label="Cerrar modal"
               >
                 <X size={18} />
@@ -849,27 +861,70 @@ export function PurchasesRequisitions({
               </div>
             )}
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setDetailReq(null)}
-              >
-                Cerrar
-              </button>
-              {detailReq.status === 'Aprobada' && (
+            <div className={`create-modal-actions ${onDeleteRequisition ? 'has-delete-action' : ''}`}>
+              {onDeleteRequisition && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar requisición
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{detailReq.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeleteRequisition(detailReq.id)
+                          setDetailReq(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
-                  className="button button-primary"
+                  className="button button-secondary"
                   onClick={() => {
-                    const target = detailReq
                     setDetailReq(null)
-                    handleOpenConvertModal(target)
+                    setConfirmingDelete(false)
                   }}
                 >
-                  <ArrowRightCircle size={14} /> Convertir a Orden de Compra
+                  Cerrar
                 </button>
-              )}
+                {detailReq.status === 'Aprobada' && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      const target = detailReq
+                      setDetailReq(null)
+                      setConfirmingDelete(false)
+                      handleOpenConvertModal(target)
+                    }}
+                  >
+                    <ArrowRightCircle size={14} /> Convertir a Orden de Compra
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         </div>

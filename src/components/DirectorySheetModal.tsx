@@ -10,6 +10,7 @@ import {
   Mail,
   MapPin,
   Phone,
+  Trash2,
   Wallet,
   X,
 } from 'lucide-react'
@@ -17,7 +18,14 @@ import type { ClientAddress } from '../services/clientService'
 import { countries, findCountry } from './CountryDropdown'
 import CountryDropdown from './CountryDropdown'
 import { CountryFlag } from './CountryFlag'
-import { validateClabeMod10, validateEbpFieldValue, type BankFormatPack } from '../data/ebp'
+import {
+  getPreferredSupplierBankAccount,
+  normalizeSupplierBankAccounts,
+  validateClabeMod10,
+  type BankFormatPack,
+  type SupplierBankAccount,
+} from '../data/ebp'
+import { SupplierBankAccountsManager } from './SupplierBankAccountsManager'
 
 export interface DirectoryProfile {
   clientCode?: string
@@ -44,6 +52,7 @@ export interface DirectoryProfile {
   accountNumber?: string
   defaultReference?: string
   bankPackValues?: Record<string, Record<string, string>>
+  bankAccounts?: SupplierBankAccount[]
 }
 
 const formatMoney = (value: number, currency: 'MXN' | 'USD' = 'MXN') =>
@@ -103,7 +112,18 @@ export function DirectorySheetModal({
     return 'status-inactivo'
   }
 
-  const clabeCheck = isSupplier && record.clabe ? validateClabeMod10(record.clabe) : null
+  const supplierAccounts = isSupplier
+    ? normalizeSupplierBankAccounts({
+        company: record.company,
+        currency: record.currency || 'MXN',
+        bankName: record.bankName,
+        clabe: record.clabe,
+        accountNumber: record.accountNumber,
+        defaultReference: record.defaultReference,
+        bankPackValues: record.bankPackValues,
+        bankAccounts: record.bankAccounts,
+      })
+    : []
 
   return (
     <div
@@ -325,72 +345,94 @@ export function DirectorySheetModal({
             )}
           </div>
 
-          {/* Section 4 (Proveedores): Datos Bancarios y Dispersión EBP */}
+          {/* Section 4 (Proveedores): Datos Bancarios y Dispersión EBP (Multi-banco) */}
           {isSupplier && (
             <div className="emp-sheet-section">
               <div className="emp-sheet-section-title">
-                <Wallet size={13} /> Datos bancarios para pagos (EBP)
+                <Wallet size={13} /> Detalles bancarios para pagos EBP ({supplierAccounts.length})
               </div>
-              <div className="emp-sheet-fields-grid cols-3">
+              {supplierAccounts.length === 0 ? (
                 <div className="emp-sheet-field">
-                  <span className="emp-field-label">Institución bancaria</span>
                   <strong className="emp-field-val">
-                    {record.bankName || 'No registrada'}
+                    Sin cuentas bancarias registradas. Haz clic en «Datos bancarios EBP» para capturarlas.
                   </strong>
                 </div>
-                <div className="emp-sheet-field">
-                  <span className="emp-field-label">CLABE interbancaria</span>
-                  <strong className="emp-field-val mono wrap-anywhere">
-                    {record.clabe || 'No registrada'}
-                  </strong>
-                  {clabeCheck && (
-                    <small
-                      className={
-                        clabeCheck.valid ? 'ebp-field-hint' : 'ebp-field-err'
-                      }
-                    >
-                      {clabeCheck.valid
-                        ? `Banxico Mod-10 válida${clabeCheck.bankLabel ? ` (${clabeCheck.bankLabel})` : ''}`
-                        : clabeCheck.reason}
-                    </small>
-                  )}
-                </div>
-                <div className="emp-sheet-field">
-                  <span className="emp-field-label">Cuenta / Referencia</span>
-                  <strong className="emp-field-val mono">
-                    {record.accountNumber || '—'}
-                    {record.defaultReference
-                      ? ` · Ref. ${record.defaultReference}`
-                      : ''}
-                  </strong>
-                </div>
-              </div>
-
-              {vendorPacks.length > 0 && (
-                <div className="ebp-sheet-packs-row">
-                  {vendorPacks.map((pack) => {
-                    const vals = record.bankPackValues?.[pack.id] || {}
+              ) : (
+                <div className="ebp-sheet-accounts-stack">
+                  {supplierAccounts.map((acc) => {
+                    const check = acc.clabe ? validateClabeMod10(acc.clabe) : null
                     return (
-                      <div key={pack.id} className="ebp-sheet-pack-pill">
-                        <span className="emp-field-label">
-                          {pack.bankName} (EBP)
-                        </span>
-                        <div className="ebp-mini-kv-list">
-                          {pack.beneficiaryBankSchema.map((f) => {
-                            const raw = vals[f.key] ?? f.defaultValue ?? '—'
-                            const catLabel =
-                              f.catalogRef && pack.embeddedCatalogs[f.catalogRef]
-                                ? pack.embeddedCatalogs[f.catalogRef].options.find(
-                                    (o) => o.code === raw
-                                  )?.label || raw
-                                : raw
-                            return (
-                              <span key={f.key} className="ebp-mini-kv">
-                                {f.label}: <strong>{catLabel}</strong>
-                              </span>
-                            )
-                          })}
+                      <div
+                        key={acc.id}
+                        className={`ebp-sheet-account-card ${!acc.active ? 'inactive' : ''}`}
+                      >
+                        <div className="ebp-sheet-account-head">
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <strong>{acc.alias}</strong>
+                            <span className="emp-code-pill mono">{acc.currency}</span>
+                            {acc.isDefault && (
+                              <span className="ebp-mini-status default">Predeterminada</span>
+                            )}
+                            {!acc.active && (
+                              <span className="ebp-mini-status muted">Inactiva</span>
+                            )}
+                          </div>
+                          {check && (
+                            <span className={check.valid ? 'ebp-field-hint' : 'ebp-field-err'}>
+                              {check.valid
+                                ? `Mod-10 válida${check.bankLabel ? ` (${check.bankLabel})` : ''}`
+                                : check.reason}
+                            </span>
+                          )}
                         </div>
+                        <div className="emp-sheet-fields-grid cols-3" style={{ marginTop: 8 }}>
+                          <div className="emp-sheet-field">
+                            <span className="emp-field-label">Institución bancaria</span>
+                            <strong className="emp-field-val">{acc.bankName || 'No registrada'}</strong>
+                          </div>
+                          <div className="emp-sheet-field">
+                            <span className="emp-field-label">CLABE interbancaria</span>
+                            <strong className="emp-field-val mono wrap-anywhere">
+                              {acc.clabe || 'No registrada'}
+                            </strong>
+                          </div>
+                          <div className="emp-sheet-field">
+                            <span className="emp-field-label">Cuenta / Referencia</span>
+                            <strong className="emp-field-val mono">
+                              {acc.accountNumber || '—'}
+                              {acc.defaultReference ? ` · Ref. ${acc.defaultReference}` : ''}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {vendorPacks.length > 0 && (
+                          <div className="ebp-sheet-packs-row">
+                            {vendorPacks.map((pack) => {
+                              const vals = acc.bankPackValues?.[pack.id] || {}
+                              return (
+                                <div key={pack.id} className="ebp-sheet-pack-pill">
+                                  <span className="emp-field-label">{pack.bankName} (EBP)</span>
+                                  <div className="ebp-mini-kv-list">
+                                    {pack.beneficiaryBankSchema.map((f) => {
+                                      const raw = vals[f.key] ?? f.defaultValue ?? '—'
+                                      const catLabel =
+                                        f.catalogRef && pack.embeddedCatalogs[f.catalogRef]
+                                          ? pack.embeddedCatalogs[f.catalogRef].options.find(
+                                              (o) => o.code === raw
+                                            )?.label || raw
+                                          : raw
+                                      return (
+                                        <span key={f.key} className="ebp-mini-kv">
+                                          {f.label}: <strong>{catLabel}</strong>
+                                        </span>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -463,6 +505,7 @@ interface DirectoryEditModalProps {
   installedPacks?: BankFormatPack[]
   onClose: () => void
   onSave: (updated: DirectoryProfile) => void
+  onDelete?: () => void
 }
 
 export function DirectoryEditModal({
@@ -471,8 +514,10 @@ export function DirectoryEditModal({
   installedPacks = [],
   onClose,
   onSave,
+  onDelete,
 }: DirectoryEditModalProps) {
   const isSupplier = kind === 'supplier'
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [clientCode, setClientCode] = useState(record.clientCode || '')
   const [supplierCode, setSupplierCode] = useState(record.supplierCode || '')
   const [name, setName] = useState(record.name)
@@ -496,24 +541,20 @@ export function DirectoryEditModal({
     record.state || record.addresses?.[0]?.state || ''
   )
   const [notes, setNotes] = useState(record.notes || '')
-  const [bankName, setBankName] = useState(record.bankName || '')
-  const [clabe, setClabe] = useState(record.clabe || '')
-  const [accountNumber, setAccountNumber] = useState(record.accountNumber || '')
-  const [defaultReference, setDefaultReference] = useState(
-    record.defaultReference || ''
+  const [bankAccounts, setBankAccounts] = useState<SupplierBankAccount[]>(() =>
+    isSupplier
+      ? normalizeSupplierBankAccounts({
+          company: record.company,
+          currency: record.currency || 'MXN',
+          bankName: record.bankName,
+          clabe: record.clabe,
+          accountNumber: record.accountNumber,
+          defaultReference: record.defaultReference,
+          bankPackValues: record.bankPackValues,
+          bankAccounts: record.bankAccounts,
+        })
+      : []
   )
-  const [bankPackValues, setBankPackValues] = useState<
-    Record<string, Record<string, string>>
-  >(record.bankPackValues ? JSON.parse(JSON.stringify(record.bankPackValues)) : {})
-
-  const vendorPacks = isSupplier
-    ? installedPacks.filter(
-        (p) =>
-          p.installed &&
-          (p.operationType === 'vendor_payment' || p.operationType === 'both') &&
-          p.beneficiaryBankSchema.length > 0
-      )
-    : []
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -525,6 +566,10 @@ export function DirectoryEditModal({
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() || '')
       .join('')
+
+    const primaryAcc = isSupplier
+      ? getPreferredSupplierBankAccount(bankAccounts, currency)
+      : undefined
 
     onSave({
       ...record,
@@ -547,11 +592,12 @@ export function DirectoryEditModal({
       lastActivity: 'Ahora',
       ...(isSupplier
         ? {
-            bankName: bankName.trim() || undefined,
-            clabe: clabe.trim() || undefined,
-            accountNumber: accountNumber.trim() || undefined,
-            defaultReference: defaultReference.trim() || undefined,
-            bankPackValues,
+            bankAccounts,
+            bankName: primaryAcc?.bankName || undefined,
+            clabe: primaryAcc?.clabe || undefined,
+            accountNumber: primaryAcc?.accountNumber || undefined,
+            defaultReference: primaryAcc?.defaultReference || undefined,
+            bankPackValues: primaryAcc?.bankPackValues || {},
           }
         : {}),
     })
@@ -723,113 +769,14 @@ export function DirectoryEditModal({
           {isSupplier && (
             <>
               <div className="form-section-divider">
-                Datos bancarios para pagos electrónicos (EBP)
+                Detalles bancarios del proveedor para pagos electrónicos (EBP)
               </div>
-              <div className="form-grid-4">
-                <label className="form-field">
-                  <span>Banco receptor</span>
-                  <input
-                    value={bankName}
-                    onChange={(e) => setBankName(e.target.value)}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>CLABE (18 dígitos)</span>
-                  <input
-                    className="mono"
-                    maxLength={18}
-                    value={clabe}
-                    onChange={(e) => setClabe(e.target.value)}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Cuenta</span>
-                  <input
-                    className="mono"
-                    value={accountNumber}
-                    onChange={(e) => setAccountNumber(e.target.value)}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Referencia default</span>
-                  <input
-                    value={defaultReference}
-                    onChange={(e) => setDefaultReference(e.target.value)}
-                  />
-                </label>
-              </div>
-
-              {vendorPacks.length > 0 && (
-                <div className="ebp-dynamic-packs-stack">
-                  {vendorPacks.map((pack) => {
-                    const vals = bankPackValues[pack.id] || {}
-                    return (
-                      <div key={pack.id} className="ebp-dynamic-pack-subbox">
-                        <div className="ebp-subbox-title">
-                          <strong>{pack.name}</strong>
-                          <span className="emp-code-pill">{pack.bankName}</span>
-                        </div>
-                        <div className="form-grid">
-                          {pack.beneficiaryBankSchema.map((field) => {
-                            const val = vals[field.key] ?? field.defaultValue ?? ''
-                            const err = validateEbpFieldValue(
-                              field,
-                              val,
-                              pack.embeddedCatalogs
-                            )
-                            const cat = field.catalogRef
-                              ? pack.embeddedCatalogs[field.catalogRef]
-                              : undefined
-                            return (
-                              <label key={field.key} className="form-field">
-                                <span>
-                                  {field.label} {field.validators.required ? '*' : ''}
-                                </span>
-                                {field.type === 'select_catalog' && cat ? (
-                                  <select
-                                    value={val}
-                                    onChange={(e) =>
-                                      setBankPackValues((prev) => ({
-                                        ...prev,
-                                        [pack.id]: {
-                                          ...(prev[pack.id] || {}),
-                                          [field.key]: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                  >
-                                    <option value="">Selecciona opción...</option>
-                                    {cat.options.map((opt) => (
-                                      <option key={opt.code} value={opt.code}>
-                                        {opt.label}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : (
-                                  <input
-                                    value={val}
-                                    placeholder={field.placeholder}
-                                    onChange={(e) =>
-                                      setBankPackValues((prev) => ({
-                                        ...prev,
-                                        [pack.id]: {
-                                          ...(prev[pack.id] || {}),
-                                          [field.key]: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                  />
-                                )}
-                                {err && <small className="ebp-field-err">{err}</small>}
-                              </label>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+              <SupplierBankAccountsManager
+                accounts={bankAccounts}
+                installedPacks={installedPacks}
+                defaultCurrency={currency}
+                onChange={setBankAccounts}
+              />
             </>
           )}
 
@@ -842,17 +789,52 @@ export function DirectoryEditModal({
             />
           </label>
 
-          <div className="create-modal-actions">
-            <button
-              type="button"
-              className="button button-secondary"
-              onClick={onClose}
-            >
-              Cancelar
-            </button>
-            <button type="submit" className="button button-primary">
-              <BadgeCheck size={14} /> Guardar cambios
-            </button>
+          <div className={`create-modal-actions ${onDelete ? 'has-delete-action' : ''}`}>
+            {onDelete && (
+              <div className="modal-delete-slot">
+                {!confirmingDelete ? (
+                  <button
+                    type="button"
+                    className="button button-danger-outline"
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2 size={14} /> Eliminar {isSupplier ? 'proveedor' : 'cliente'}
+                  </button>
+                ) : (
+                  <div className="modal-delete-confirm">
+                    <span>
+                      ¿Eliminar a <strong>{company.trim() || record.company}</strong>?
+                    </span>
+                    <button
+                      type="button"
+                      className="button button-danger-solid"
+                      onClick={onDelete}
+                    >
+                      <Trash2 size={13} /> Confirmar
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => setConfirmingDelete(false)}
+                    >
+                      Conservar
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="modal-primary-actions-slot">
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={onClose}
+              >
+                Cancelar
+              </button>
+              <button type="submit" className="button button-primary">
+                <BadgeCheck size={14} /> Guardar cambios
+              </button>
+            </div>
           </div>
         </form>
       </section>

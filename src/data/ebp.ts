@@ -66,6 +66,45 @@ export interface BankFormatPack {
   isCustomPack?: boolean
 }
 
+export type EbpAggregationMode = 'individual' | 'consolidated'
+
+export interface SupplierBankAccount {
+  id: string
+  alias: string
+  bankName: string
+  clabe: string
+  accountNumber?: string
+  currency: EbpCurrency
+  defaultReference?: string
+  isDefault: boolean
+  active: boolean
+  bankPackValues?: Record<string, Record<string, string>>
+}
+
+export interface SupplierBankProfile {
+  name: string
+  company: string
+  email: string
+  rfc?: string
+  currency?: 'MXN' | 'USD'
+  bankName?: string
+  clabe?: string
+  accountNumber?: string
+  defaultReference?: string
+  bankPackValues?: Record<string, Record<string, string>>
+  bankAccounts?: SupplierBankAccount[]
+}
+
+export interface EbpBillAllocation {
+  billId: string
+  billFolio: string
+  purchaseOrderFolio?: string
+  dueDate?: string
+  currency: EbpCurrency
+  originalBalance: number
+  amountToPay: number
+}
+
 export interface ElectronicPaymentBatchLine {
   id: string
   sourceLineId: string
@@ -82,6 +121,11 @@ export interface ElectronicPaymentBatchLine {
   customValues: Record<string, string>
   validationErrors: string[]
   included: boolean
+  aggregationMode?: EbpAggregationMode
+  selectedBankAccountId?: string
+  selectedBankAlias?: string
+  paymentReason?: string
+  billAllocations?: EbpBillAllocation[]
 }
 
 export type EbpBatchStatus =
@@ -94,6 +138,7 @@ export interface ElectronicPaymentBatch {
   id: string
   folio: string
   batchType: 'Nómina' | 'Proveedores'
+  aggregationMode?: EbpAggregationMode
   packId: string
   packName: string
   packVersion: string
@@ -112,6 +157,84 @@ export interface ElectronicPaymentBatch {
   createdAt: string
   appliedAt?: string
   lines: ElectronicPaymentBatchLine[]
+}
+
+export function normalizeSupplierBankAccounts(supplier: {
+  company?: string
+  currency?: EbpCurrency
+  bankName?: string
+  clabe?: string
+  accountNumber?: string
+  defaultReference?: string
+  bankPackValues?: Record<string, Record<string, string>>
+  bankAccounts?: SupplierBankAccount[]
+}): SupplierBankAccount[] {
+  if (supplier.bankAccounts && supplier.bankAccounts.length > 0) {
+    const normalized = supplier.bankAccounts.map((acc, idx) => ({
+      ...acc,
+      id: acc.id || `sba_${idx + 1}`,
+      alias: acc.alias?.trim() || acc.bankName?.trim() || `Cuenta ${idx + 1}`,
+      bankName: acc.bankName || '',
+      clabe: acc.clabe || '',
+      currency: acc.currency || supplier.currency || 'MXN',
+      isDefault: Boolean(acc.isDefault),
+      active: acc.active !== false,
+    }))
+    const hasDefault = normalized.some((a) => a.active && a.isDefault)
+    if (!hasDefault) {
+      const firstActive = normalized.find((a) => a.active) || normalized[0]
+      if (firstActive) firstActive.isDefault = true
+    }
+    return normalized
+  }
+
+  if (
+    supplier.bankName ||
+    supplier.clabe ||
+    supplier.accountNumber ||
+    (supplier.bankPackValues && Object.keys(supplier.bankPackValues).length > 0)
+  ) {
+    const slug = (supplier.company || 'prov')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .slice(0, 18)
+    return [
+      {
+        id: `sba_primary_${slug}`,
+        alias: supplier.bankName ? `${supplier.bankName} Principal` : 'Cuenta Principal',
+        bankName: supplier.bankName || '',
+        clabe: supplier.clabe || '',
+        accountNumber: supplier.accountNumber || '',
+        currency: supplier.currency || 'MXN',
+        defaultReference: supplier.defaultReference || '',
+        isDefault: true,
+        active: true,
+        bankPackValues: supplier.bankPackValues
+          ? JSON.parse(JSON.stringify(supplier.bankPackValues))
+          : {},
+      },
+    ]
+  }
+
+  return []
+}
+
+export function getPreferredSupplierBankAccount(
+  accounts: SupplierBankAccount[],
+  currency?: EbpCurrency
+): SupplierBankAccount | undefined {
+  const activeAccounts = accounts.filter((a) => a.active !== false)
+  if (currency) {
+    const matchingCurrency = activeAccounts.filter((a) => a.currency === currency)
+    return (
+      matchingCurrency.find((a) => a.isDefault) ||
+      matchingCurrency[0] ||
+      activeAccounts.find((a) => a.isDefault) ||
+      activeAccounts[0] ||
+      accounts[0]
+    )
+  }
+  return activeAccounts.find((a) => a.isDefault) || activeAccounts[0] || accounts[0]
 }
 
 // ---------------------------------------------------------------------------

@@ -59,6 +59,7 @@ interface OperationsPurchasesProps {
   payables?: BillPayable[]
   onRegisterSupplierBillFromPO?: (po: PurchaseOrder) => void
   onOpenFullPurchasesModule?: () => void
+  onDeletePurchaseOrder?: (poId: string) => void
   canApprovePurchases?: boolean
 }
 
@@ -143,6 +144,7 @@ export function OperationsPurchases({
   payables = [],
   onRegisterSupplierBillFromPO,
   onOpenFullPurchasesModule,
+  onDeletePurchaseOrder,
   canApprovePurchases = true,
 }: OperationsPurchasesProps) {
   const toast = useToast()
@@ -159,6 +161,7 @@ export function OperationsPurchases({
   const [isReceiveModalOpen, setIsReceiveModalOpen] = useState(false)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrder | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   // New PO form state
   const [newSupplierCompany, setNewSupplierCompany] = useState('')
@@ -1134,6 +1137,7 @@ export function OperationsPurchases({
                           className="button-icon-action"
                           title="Ver detalle de la orden"
                           onClick={() => {
+                            setConfirmingDelete(false)
                             setSelectedOrder(po)
                             setIsDetailModalOpen(true)
                           }}
@@ -1554,7 +1558,10 @@ export function OperationsPurchases({
           className="modal-backdrop"
           role="presentation"
           onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setIsDetailModalOpen(false)
+            if (e.target === e.currentTarget) {
+              setIsDetailModalOpen(false)
+              setConfirmingDelete(false)
+            }
           }}
         >
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
@@ -1644,26 +1651,70 @@ export function OperationsPurchases({
               </div>
             )}
 
-            <div className="create-modal-actions">
-              <button
-                type="button"
-                className="button button-secondary"
-                onClick={() => setIsDetailModalOpen(false)}
-              >
-                Cerrar
-              </button>
-              {(selectedOrder.status === 'Emitida' || selectedOrder.status === 'Recepción parcial') && (
+            <div className={`create-modal-actions ${onDeletePurchaseOrder ? 'has-delete-action' : ''}`}>
+              {onDeletePurchaseOrder && (
+                <div className="modal-delete-slot">
+                  {!confirmingDelete ? (
+                    <button
+                      type="button"
+                      className="button button-danger-outline"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 size={14} /> Eliminar orden
+                    </button>
+                  ) : (
+                    <div className="modal-delete-confirm">
+                      <span>
+                        ¿Eliminar <strong>{selectedOrder.folio}</strong>?
+                      </span>
+                      <button
+                        type="button"
+                        className="button button-danger-solid"
+                        onClick={() => {
+                          onDeletePurchaseOrder(selectedOrder.id)
+                          setIsDetailModalOpen(false)
+                          setSelectedOrder(null)
+                          setConfirmingDelete(false)
+                        }}
+                      >
+                        <Trash2 size={13} /> Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => setConfirmingDelete(false)}
+                      >
+                        Conservar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="modal-primary-actions-slot">
                 <button
                   type="button"
-                  className="button button-primary"
+                  className="button button-secondary"
                   onClick={() => {
                     setIsDetailModalOpen(false)
-                    handleOpenReception(selectedOrder)
+                    setConfirmingDelete(false)
                   }}
                 >
-                  <FileCheck2 size={14} /> Proceder a recepcionar
+                  Cerrar
                 </button>
-              )}
+                {(selectedOrder.status === 'Emitida' || selectedOrder.status === 'Recepción parcial') && (
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    onClick={() => {
+                      setIsDetailModalOpen(false)
+                      setConfirmingDelete(false)
+                      handleOpenReception(selectedOrder)
+                    }}
+                  >
+                    <FileCheck2 size={14} /> Proceder a recepcionar
+                  </button>
+                )}
+              </div>
             </div>
           </section>
         </div>
