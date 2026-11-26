@@ -61,6 +61,12 @@ import {
   type MarginAlertSettings,
 } from '../data/marginAlerts'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
+import {
+  convertCurrency,
+  getCurrencySymbol,
+  normalizeCurrencyCode,
+} from '../services/currencyService'
 
 export type PnlSourceMode = 'consolidated' | 'accounting'
 
@@ -169,18 +175,27 @@ const MIRRORED_FINEX_ACCOUNT_BASE: Record<string, number> = {
   acc_19: 9706, // 7001-001 Comisiones e intereses (exp_6 + exp_7)
 }
 
+function formatShortCurrency(val: number, symbol: string = '$'): string {
+  const abs = Math.abs(val)
+  const sign = val < 0 ? '-' : ''
+  if (abs >= 1_000_000) return `${sign}${symbol}${(abs / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${sign}${symbol}${Math.round(abs / 1_000)}k`
+  return `${sign}${symbol}${Math.round(abs)}`
+}
+
 function buildBreakEvenCurvePoints(params: {
   revenue: number
   fixedCosts: number
   variableCosts: number
   breakEvenSales: number
+  currencySymbol?: string
 }): Array<{
   volumeLabel: string
   sales: number
   totalCosts: number
   fixedCosts: number
 }> {
-  const { revenue, fixedCosts, variableCosts, breakEvenSales } = params
+  const { revenue, fixedCosts, variableCosts, breakEvenSales, currencySymbol = '$' } = params
   const maxSalesAxis = Math.max(revenue * 1.35, breakEvenSales * 1.35, 100000)
   const varRate = revenue > 0 ? Math.max(0, variableCosts / revenue) : 0.45
   const rawPoints = [
@@ -198,7 +213,7 @@ function buildBreakEvenCurvePoints(params: {
   }
   const uniqueSorted = Array.from(new Set(rawPoints)).sort((a, b) => a - b)
   return uniqueSorted.map((salesAtPoint) => ({
-    volumeLabel: shortMoney(salesAtPoint),
+    volumeLabel: formatShortCurrency(salesAtPoint, currencySymbol),
     sales: salesAtPoint,
     totalCosts: Math.round(fixedCosts + salesAtPoint * varRate),
     fixedCosts: Math.round(fixedCosts),
@@ -304,6 +319,7 @@ function buildSixMonthMarginTrend(params: {
   scopedOrders: SalesOrder[]
   skuCostMap: Map<string, number>
   currencyFilter: 'Todas' | 'MXN' | 'USD'
+  displayCurrency: string
   sourceMode: PnlSourceMode
   taxRate: number
   totalRevenue: number
@@ -324,6 +340,7 @@ function buildSixMonthMarginTrend(params: {
     scopedOrders,
     skuCostMap,
     currencyFilter,
+    displayCurrency,
     sourceMode,
     taxRate,
     totalRevenue,
@@ -385,7 +402,7 @@ function buildSixMonthMarginTrend(params: {
   scopedReceivables.forEach((rec) => {
     if (currencyFilter !== 'Todas' && rec.currency !== currencyFilter) return
     const key = parsePnlDateToMonthKey(rec.issueDate)
-    if (key) ensureBucket(key).rev += rec.subtotal
+    if (key) ensureBucket(key).rev += convertCurrency(rec.subtotal, rec.currency || 'MXN', displayCurrency)
   })
 
   scopedOrders.forEach((ord) => {
@@ -397,7 +414,7 @@ function buildSixMonthMarginTrend(params: {
       const unitCost = skuCostMap.get(li.sku) ?? li.unitPrice * 0.42
       return sum + unitCost * li.quantity
     }, 0)
-    ensureBucket(key).cogs += ordCogs
+    ensureBucket(key).cogs += convertCurrency(ordCogs, ord.currency || 'MXN', displayCurrency)
   })
 
   scopedExpenses.forEach((exp) => {
@@ -407,10 +424,11 @@ function buildSixMonthMarginTrend(params: {
     if (!key) return
     const b = ensureBucket(key)
     const nature = resolveExpenseNature(exp)
-    if (nature === 'Costo de venta') b.cogs += exp.total
-    else if (nature === 'Financiero') b.fin += exp.total
-    else if (nature === 'Impuestos') b.directTax += exp.total
-    else b.opex += exp.total
+    const expTotalCvt = convertCurrency(exp.total, 'MXN', displayCurrency)
+    if (nature === 'Costo de venta') b.cogs += expTotalCvt
+    else if (nature === 'Financiero') b.fin += expTotalCvt
+    else if (nature === 'Impuestos') b.directTax += expTotalCvt
+    else b.opex += expTotalCvt
   })
 
   // Seasonal & cost-efficiency progression factors for the 5 preceding months when direct ledger history is absent
@@ -559,6 +577,7 @@ export function computeIncomeStatementData(params: {
   sourceMode: PnlSourceMode
   taxRate: number
   currencyFilter: 'Todas' | 'MXN' | 'USD'
+  displayCurrency?: string
   hasScopedDateOrOrgFilter: boolean
   searchQuery?: string
 }): ComputedIncomeStatement {
@@ -573,8 +592,13 @@ export function computeIncomeStatementData(params: {
     sourceMode,
     taxRate,
     currencyFilter,
+    displayCurrency = 'MXN',
     hasScopedDateOrOrgFilter,
   } = params
+
+  const targetCurrency = normalizeCurrencyCode(displayCurrency)
+  const cvt = (val: number, fromCurrency: string = 'MXN') =>
+    convertCurrency(val, fromCurrency, targetCurrency)
 
   const activeAccounts = chartAccounts.filter((acc) => acc.status === 'Activa')
 
@@ -595,7 +619,7 @@ export function computeIncomeStatementData(params: {
   )
 
   const sumAccounts = (list: ChartAccount[]) =>
-    list.reduce((sum, a) => sum + (Number(a.balance) || 0), 0)
+    list.reduce((sum, a) => sum + cvt(Number(a.balance) || 0, 'MXN'), 0)
 
   const chartRevenue = sumAccounts(revenueAccounts)
   const chartCogs = sumAccounts(cogsAccounts)
@@ -604,12 +628,12 @@ export function computeIncomeStatementData(params: {
   const chartOtherIncome = sumAccounts(otherIncomeAccounts)
 
   // Scale factor for chart ledger balances when filtering by branch / dept / date / currency
-  const allReceivablesTotal = allReceivables.reduce((s, r) => s + r.subtotal, 0)
+  const allReceivablesTotal = allReceivables.reduce((s, r) => s + cvt(r.subtotal, r.currency || 'MXN'), 0)
   const scopedReceivablesMatchingCurrency = scopedReceivables.filter(
     (r) => currencyFilter === 'Todas' || r.currency === currencyFilter
   )
   const scopedReceivablesTotal = scopedReceivablesMatchingCurrency.reduce(
-    (s, r) => s + r.subtotal,
+    (s, r) => s + cvt(r.subtotal, r.currency || 'MXN'),
     0
   )
 
@@ -627,11 +651,11 @@ export function computeIncomeStatementData(params: {
   const validAllExpenses = allExpenses.filter((e) => e.status !== 'Cancelado')
   const validScopedExpenses = scopedExpenses.filter((e) => e.status !== 'Cancelado')
 
-  const allExpensesTotal = validAllExpenses.reduce((s, e) => s + e.total, 0)
+  const allExpensesTotal = validAllExpenses.reduce((s, e) => s + cvt(e.total, 'MXN'), 0)
   const scopedExpensesMatchingCurrency = validScopedExpenses.filter(
     () => currencyFilter === 'Todas' || currencyFilter === 'MXN'
   )
-  const scopedExpensesTotal = scopedExpensesMatchingCurrency.reduce((s, e) => s + e.total, 0)
+  const scopedExpensesTotal = scopedExpensesMatchingCurrency.reduce((s, e) => s + cvt(e.total, 'MXN'), 0)
   const expenseScopeRatio =
     currencyFilter === 'USD'
       ? 0
@@ -657,34 +681,35 @@ export function computeIncomeStatementData(params: {
 
   scopedExpensesMatchingCurrency.forEach((exp) => {
     const nature = resolveExpenseNature(exp)
+    const expTotalCvt = cvt(exp.total, 'MXN')
     if (nature === 'Administrativo') {
-      adminExpenses += exp.total
+      adminExpenses += expTotalCvt
       adminCount += 1
     } else if (nature === 'Operativo') {
-      operatingExpenses += exp.total
+      operatingExpenses += expTotalCvt
       operatingCount += 1
     } else if (nature === 'Costo de venta') {
-      cogsCompanyExpenses += exp.total
+      cogsCompanyExpenses += expTotalCvt
       cogsCompanyCount += 1
     } else if (nature === 'Impuestos') {
-      directExpenseTaxes += exp.total
+      directExpenseTaxes += expTotalCvt
       directExpenseTaxesCount += 1
     } else {
-      finCompanyExpenses += exp.total
+      finCompanyExpenses += expTotalCvt
       finCount += 1
     }
 
     if (exp.costBehavior === 'Variable') {
-      variableCompanyExpenses += exp.total
+      variableCompanyExpenses += expTotalCvt
     } else {
-      fixedCompanyExpenses += exp.total
+      fixedCompanyExpenses += expTotalCvt
     }
   })
 
   // Incremental new receivables / COGS added during session beyond initial seeded ledger
   const incrementalReceivables = scopedReceivablesMatchingCurrency
     .filter((r) => !INITIAL_RECEIVABLE_IDS.has(r.id))
-    .reduce((s, r) => s + r.subtotal, 0)
+    .reduce((s, r) => s + cvt(r.subtotal, r.currency || 'MXN'), 0)
 
   const skuCostMap = new Map<string, number>()
   inventory.forEach((it) => {
@@ -702,24 +727,24 @@ export function computeIncomeStatementData(params: {
         const unitCost = skuCostMap.get(li.sku) ?? li.unitPrice * 0.42
         return itemSum + unitCost * li.quantity
       }, 0)
-      return sum + orderCogs
+      return sum + cvt(orderCogs, ord.currency || 'MXN')
     }, 0)
 
   // Non-overlapping 6xxx & 7xxx ledger accounts (e.g. 6002-001 payroll, custom accounts, and any edits to mirrored accounts)
   const nonOverlappingChartOpEx = opExAccounts.reduce((sum, acc) => {
     const baseMirror = MIRRORED_OPEX_ACCOUNT_BASE[acc.id]
     if (baseMirror !== undefined) {
-      return sum + (acc.balance - baseMirror)
+      return sum + cvt(acc.balance - baseMirror, 'MXN')
     }
-    return sum + acc.balance
+    return sum + cvt(acc.balance, 'MXN')
   }, 0)
 
   const nonOverlappingChartFinEx = finExAccounts.reduce((sum, acc) => {
     const baseMirror = MIRRORED_FINEX_ACCOUNT_BASE[acc.id]
     if (baseMirror !== undefined) {
-      return sum + (acc.balance - baseMirror)
+      return sum + cvt(acc.balance - baseMirror, 'MXN')
     }
-    return sum + acc.balance
+    return sum + cvt(acc.balance, 'MXN')
   }, 0)
 
   // Compute P&L figures according to selected sourceMode
@@ -772,11 +797,11 @@ export function computeIncomeStatementData(params: {
   // Costos variables: COGS de inventario/pedidos + gastos etiquetados Variable (evitando duplicar Costo de venta si ya entró en COGS)
   const variableNonCogsCompanyExpenses = scopedExpensesMatchingCurrency
     .filter((e) => resolveExpenseNature(e) !== 'Costo de venta' && e.costBehavior === 'Variable')
-    .reduce((s, e) => s + e.total, 0)
+    .reduce((s, e) => s + cvt(e.total, 'MXN'), 0)
   const fixedAllExpensesExcludingDirectVariableCogs = scopedExpensesMatchingCurrency
     .filter((e) => !(resolveExpenseNature(e) === 'Costo de venta' && e.costBehavior === 'Variable'))
     .filter((e) => e.costBehavior !== 'Variable')
-    .reduce((s, e) => s + e.total, 0)
+    .reduce((s, e) => s + cvt(e.total, 'MXN'), 0)
 
   const variableCosts =
     sourceMode === 'accounting'
@@ -1016,6 +1041,7 @@ export function computeIncomeStatementData(params: {
     fixedCosts,
     variableCosts,
     breakEvenSales,
+    currencySymbol: getCurrencySymbol(targetCurrency),
   })
 
   const monthlyMarginTrend = buildSixMonthMarginTrend({
@@ -1024,6 +1050,7 @@ export function computeIncomeStatementData(params: {
     scopedOrders,
     skuCostMap,
     currencyFilter,
+    displayCurrency: targetCurrency,
     sourceMode,
     taxRate: normalizedTaxRate,
     totalRevenue,
@@ -1143,21 +1170,6 @@ interface IncomeStatementReportProps {
   onToggleDepartmentFilter?: (departmentId: string) => void
 }
 
-const money = (val: number) =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits: 0,
-  }).format(val)
-
-const shortMoney = (val: number) => {
-  const abs = Math.abs(val)
-  const sign = val < 0 ? '-' : ''
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`
-  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`
-  return `${sign}$${Math.round(abs)}`
-}
-
 export function IncomeStatementReport({
   data,
   compareYoY,
@@ -1176,6 +1188,9 @@ export function IncomeStatementReport({
   onToggleDepartmentFilter,
 }: IncomeStatementReportProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency, formatCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, reportingCurrency, 0)
+  const shortMoney = (val: number) => formatShortCurrency(val, getCurrencySymbol(reportingCurrency))
   const [expandOpExDetail, setExpandOpExDetail] = useState(true)
   const [costCenterTab, setCostCenterTab] = useState<'branches' | 'departments'>('branches')
   const [brand, setBrand] = useState<CompanyBrandSnapshot>(() => loadCompanyBrandSnapshot())
@@ -1874,7 +1889,7 @@ export function IncomeStatementReport({
             <strong>{brand.tradeName}</strong>
             <span>{brand.legalName}</span>
             <small>
-              RFC: {brand.rfc} · {brand.taxRegime}
+              {countryProfile.taxId.shortLabel}: {brand.rfc} · {brand.taxRegime}
             </small>
             <small>{brand.fiscalAddress}</small>
           </div>

@@ -20,6 +20,7 @@ import type {
   PaymentTransaction,
 } from '../data/finance'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface ClientOption {
   company: string
@@ -55,6 +56,9 @@ export function FinanceReceivables({
   onUpdateBankAccountBalance,
 }: FinanceReceivablesProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
 
@@ -68,7 +72,7 @@ export function FinanceReceivables({
   // Payment registration form
   const [collectAmount, setCollectAmount] = useState<number>(0)
   const [collectBankId, setCollectBankId] = useState<string>(bankAccounts[0]?.id || '')
-  const [collectMethod, setCollectMethod] = useState('Transferencia SPEI')
+  const [collectMethod, setCollectMethod] = useState(countryProfile.bank.defaultTransferMethod)
   const [collectReference, setCollectReference] = useState('')
 
   // New Invoice form
@@ -116,8 +120,8 @@ export function FinanceReceivables({
     setSelectedInvoice(inv)
     setCollectAmount(inv.balance)
     setCollectBankId(bankAccounts[0]?.id || '')
-    setCollectMethod('Transferencia SPEI')
-    setCollectReference(`SPEI-${Math.floor(100000 + Math.random() * 900000)}`)
+    setCollectMethod(countryProfile.bank.defaultTransferMethod)
+    setCollectReference(`${countryProfile.bank.sameBankOrLocalLabel.replace(/[^A-Z0-9]/gi, '').slice(0, 6).toUpperCase() || 'REF'}-${Math.floor(100000 + Math.random() * 900000)}`)
     setIsCollectModalOpen(true)
   }
 
@@ -211,7 +215,7 @@ export function FinanceReceivables({
 
     const dueDateStr = formatDate(dueDate)
     const sub = Number(newSubtotal) || 0
-    const tax = sub * 0.16
+    const tax = sub * standardVatRate
     const total = sub + tax
 
     const newInvoice: InvoiceReceivable = {
@@ -220,7 +224,7 @@ export function FinanceReceivables({
       orderFolio: newOrderFolio.trim() || `PED-2026-${String(nextNum).padStart(3, '0')}`,
       clientCompany: newClientCompany,
       clientName: client?.name || newClientCompany,
-      clientRfc: newRfc.trim() || client?.rfc || 'XAXX010101000',
+      clientRfc: newRfc.trim() || client?.rfc || countryProfile.taxId.placeholder,
       issueDate: issueDateStr,
       dueDate: dueDateStr,
       subtotal: sub,
@@ -229,8 +233,8 @@ export function FinanceReceivables({
       paidAmount: 0,
       balance: total,
       status: 'Pendiente',
-      currency: 'MXN',
-      paymentMethod: 'Transferencia SPEI',
+      currency: reportingCurrency === 'USD' ? 'USD' : 'MXN',
+      paymentMethod: countryProfile.bank.defaultTransferMethod,
     }
 
     onUpdateReceivables([newInvoice, ...receivables])
@@ -358,7 +362,7 @@ export function FinanceReceivables({
           <Search size={14} />
           <input
             type="text"
-            placeholder="Buscar por folio, cliente, pedido o RFC..."
+            placeholder={`Buscar por folio, cliente, pedido o ${countryProfile.taxId.shortLabel}...`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -437,7 +441,7 @@ export function FinanceReceivables({
                       <div className="po-actions-row">
                         <button
                           className="button-icon-action"
-                          title="Ver detalle del CFDI"
+                          title={`Ver detalle (${countryProfile.fiscalDoc.documentShort})`}
                           onClick={() => {
                             setConfirmingDelete(false)
                             setSelectedInvoice(inv)
@@ -501,19 +505,19 @@ export function FinanceReceivables({
                 </div>
                 <div className="po-detail-card">
                   <span>Importe total factura</span>
-                  <strong>{money(selectedInvoice.total)} MXN</strong>
+                  <strong>{money(selectedInvoice.total)} {selectedInvoice.currency || reportingCurrency}</strong>
                   <small>Ya cobrado: {money(selectedInvoice.paidAmount)}</small>
                 </div>
                 <div className="po-detail-card">
                   <span>Saldo actual pendiente</span>
-                  <strong className="text-alert">{money(selectedInvoice.balance)} MXN</strong>
+                  <strong className="text-alert">{money(selectedInvoice.balance)} {selectedInvoice.currency || reportingCurrency}</strong>
                   <small>Vencimiento: {selectedInvoice.dueDate}</small>
                 </div>
               </div>
 
               <div className="form-grid" style={{ marginTop: '14px' }}>
                 <label className="form-field">
-                  <span>Monto recibido a aplicar (MXN) *</span>
+                  <span>Monto recibido a aplicar ({selectedInvoice.currency || reportingCurrency}) *</span>
                   <input
                     type="number"
                     min="1"
@@ -554,7 +558,9 @@ export function FinanceReceivables({
                     value={collectMethod}
                     onChange={(e) => setCollectMethod(e.target.value)}
                   >
-                    <option value="Transferencia SPEI">Transferencia electrónica SPEI</option>
+                    <option value={countryProfile.bank.defaultTransferMethod}>
+                      {countryProfile.bank.defaultTransferMethod} ({countryProfile.bank.networkName})
+                    </option>
                     <option value="Tarjeta de crédito">Tarjeta de crédito / TPV</option>
                     <option value="Tarjeta de débito">Tarjeta de débito</option>
                     <option value="Cheque nominativo">Cheque nominativo</option>
@@ -565,7 +571,7 @@ export function FinanceReceivables({
                 <label className="form-field">
                   <span>Referencia / Clave de rastreo bancaria</span>
                   <input
-                    placeholder="Ej. SPEI-882104 o AUTH-9941"
+                    placeholder={`Ej. ${countryProfile.bank.networkName}-882104 o AUTH-9941`}
                     value={collectReference}
                     onChange={(e) => setCollectReference(e.target.value)}
                   />
@@ -647,9 +653,9 @@ export function FinanceReceivables({
                 </label>
 
                 <label className="form-field">
-                  <span>RFC receptor</span>
+                  <span>{countryProfile.taxId.label} receptor</span>
                   <input
-                    placeholder="Ej. ENO190412TK8"
+                    placeholder={`Ej. ${countryProfile.taxId.placeholder}`}
                     value={newRfc}
                     onChange={(e) => setNewRfc(e.target.value)}
                   />
@@ -658,7 +664,7 @@ export function FinanceReceivables({
 
               <div className="form-grid">
                 <label className="form-field">
-                  <span>Subtotal antes de IVA (MXN) *</span>
+                  <span>Subtotal antes de {countryProfile.vat.label} ({reportingCurrency}) *</span>
                   <input
                     type="number"
                     min="1"
@@ -687,12 +693,12 @@ export function FinanceReceivables({
                   <strong>{money(newSubtotal)}</strong>
                 </div>
                 <div className="po-totals-row">
-                  <span>IVA (16%):</span>
-                  <strong>{money(newSubtotal * 0.16)}</strong>
+                  <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
+                  <strong>{money(newSubtotal * standardVatRate)}</strong>
                 </div>
                 <div className="po-totals-row grand">
                   <span>Total a facturar:</span>
-                  <strong>{money(newSubtotal * 1.16)} MXN</strong>
+                  <strong>{money(newSubtotal * (1 + standardVatRate))} {reportingCurrency}</strong>
                 </div>
               </div>
 
@@ -728,7 +734,7 @@ export function FinanceReceivables({
           <section className="create-modal modal-wide" role="dialog" aria-modal="true">
             <div className="create-modal-heading">
               <div>
-                <div className="panel-kicker">COMPROBANTE FISCAL DIGITAL · CFDI</div>
+                <div className="panel-kicker">{countryProfile.fiscalDoc.documentKicker}</div>
                 <h2>{selectedInvoice.folio}</h2>
                 <p>Información fiscal, fechas de devengo y registro de cobranza.</p>
               </div>
@@ -748,15 +754,15 @@ export function FinanceReceivables({
               <div className="cfdi-header-row">
                 <div className="cfdi-emisor">
                   <strong>Brújula Estudio S.A. de C.V.</strong>
-                  <small>RFC: BES180320AB1</small>
-                  <small>Régimen General de Ley Personas Morales (601)</small>
-                  <small>Lugar de Expedición: 03940, Ciudad de México</small>
+                  <small>{countryProfile.taxId.shortLabel}: BES180320AB1</small>
+                  <small>{countryProfile.regimes[0]?.label || 'Régimen General'}</small>
+                  <small>País fiscal de operación: {countryProfile.countryName}</small>
                 </div>
                 <div className="cfdi-meta">
                   <span className="cfdi-badge">Ingreso (I)</span>
                   <strong>Folio: {selectedInvoice.folio}</strong>
                   <small>Fecha: {selectedInvoice.issueDate}</small>
-                  <small>Método de Pago: PPD · Pago en parcialidades o diferido</small>
+                  <small>Método: {selectedInvoice.paymentMethod || countryProfile.bank.defaultTransferMethod}</small>
                 </div>
               </div>
 
@@ -767,8 +773,8 @@ export function FinanceReceivables({
                 <div>
                   <strong>Receptor: {selectedInvoice.clientCompany}</strong>
                   <span>Contacto: {selectedInvoice.clientName}</span>
-                  <span>RFC: {selectedInvoice.clientRfc || 'XAXX010101000'}</span>
-                  <span>Uso de CFDI: G03 · Gastos en general</span>
+                  <span>{countryProfile.taxId.shortLabel}: {selectedInvoice.clientRfc || countryProfile.taxId.placeholder}</span>
+                  <span>{countryProfile.fiscalDoc.usageLabel}: {selectedInvoice.cfdiUse || countryProfile.fiscalDoc.defaultUsageCode}</span>
                 </div>
               </div>
 
@@ -793,12 +799,12 @@ export function FinanceReceivables({
                   <strong>{money(selectedInvoice.subtotal)}</strong>
                 </div>
                 <div className="po-totals-row">
-                  <span>IVA Trasladado (16%):</span>
+                  <span>{countryProfile.vat.transferredLabel} ({standardVatPct}%):</span>
                   <strong>{money(selectedInvoice.tax)}</strong>
                 </div>
                 <div className="po-totals-row grand">
                   <span>Total Facturado:</span>
-                  <strong>{money(selectedInvoice.total)} MXN</strong>
+                  <strong>{money(selectedInvoice.total)} {selectedInvoice.currency || reportingCurrency}</strong>
                 </div>
                 <div className="po-totals-row">
                   <span>Monto ya cobrado:</span>
@@ -807,7 +813,7 @@ export function FinanceReceivables({
                 <div className="po-totals-row" style={{ borderTop: '1px dashed #d5dcd6', paddingTop: '4px' }}>
                   <span>Saldo insoluto:</span>
                   <strong style={{ color: selectedInvoice.balance > 0 ? '#ba4c32' : '#3c7d5c' }}>
-                    {money(selectedInvoice.balance)} MXN
+                    {money(selectedInvoice.balance)} {selectedInvoice.currency || reportingCurrency}
                   </strong>
                 </div>
               </div>

@@ -85,7 +85,7 @@ export function CrmEmployees({
   onNavigateSettingsRoles,
 }: CrmEmployeesProps) {
   const toast = useToast()
-  const { t } = useI18n()
+  const { t, countryProfile, reportingCurrency } = useI18n()
 
   // Live role catalog synced with Settings > Roles y permisos
   const [roleDefinitions, setRoleDefinitions] = useState<RoleDefinition[]>(() =>
@@ -467,9 +467,9 @@ export function CrmEmployees({
       'TELÉFONO',
       'CONTRATO',
       'INGRESO',
-      'RFC',
-      'NSS',
-      'SUELDO MENSUAL (MXN)',
+      countryProfile.taxId.shortLabel.toUpperCase(),
+      countryProfile.hr.socialSecurityLabel.toUpperCase(),
+      `SUELDO MENSUAL (${reportingCurrency || countryProfile.defaultCurrency})`,
       'FRECUENCIA PAGO',
       'ESTADO',
     ]
@@ -581,7 +581,7 @@ export function CrmEmployees({
             aria-label="Buscar empleados"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por nombre, código, puesto, RFC o departamento..."
+            placeholder={`Buscar por nombre, código, puesto, ${countryProfile.taxId.shortLabel} o departamento...`}
           />
         </label>
         <select
@@ -678,7 +678,7 @@ export function CrmEmployees({
                       </span>
                       {emp.rfc && (
                         <small className="emp-fiscal-sub">
-                          RFC: {emp.rfc} {emp.nss ? `· NSS: ${emp.nss}` : ''}
+                          {countryProfile.taxId.shortLabel}: {emp.rfc} {emp.nss ? `· ${countryProfile.hr.socialSecurityLabel}: ${emp.nss}` : ''}
                         </small>
                       )}
                     </div>
@@ -1030,34 +1030,34 @@ export function CrmEmployees({
               <div className="form-section-divider">Datos fiscales y base de nómina</div>
               <div className="form-grid-3">
                 <label className="form-field">
-                  <span>RFC</span>
+                  <span>{countryProfile.taxId.label}</span>
                   <input
                     value={rfc}
                     onChange={(e) => setRfc(e.target.value)}
-                    placeholder="AAAA900101XXX"
+                    placeholder={countryProfile.taxId.placeholder}
                   />
                 </label>
                 <label className="form-field">
-                  <span>CURP</span>
+                  <span>{countryProfile.code === 'MX' ? 'CURP' : countryProfile.code === 'ES' ? 'DNI / NIE' : countryProfile.code === 'VE' ? 'Cédula de identidad' : 'Documento nacional ID'}</span>
                   <input
                     value={curp}
                     onChange={(e) => setCurp(e.target.value)}
-                    placeholder="18 caracteres"
+                    placeholder={countryProfile.code === 'MX' ? '18 caracteres' : countryProfile.code === 'VE' ? 'V-12345678' : 'Documento oficial'}
                   />
                 </label>
                 <label className="form-field">
-                  <span>NSS (IMSS)</span>
+                  <span>{countryProfile.hr.socialSecurityLabel}</span>
                   <input
                     value={nss}
                     onChange={(e) => setNss(e.target.value)}
-                    placeholder="11 dígitos"
+                    placeholder={countryProfile.code === 'MX' ? '11 dígitos' : countryProfile.hr.socialSecurityLabel}
                   />
                 </label>
               </div>
 
               <div className="form-grid-4">
                 <label className="form-field">
-                  <span>Sueldo mensual bruto (MXN)</span>
+                  <span>Sueldo mensual bruto ({reportingCurrency || countryProfile.defaultCurrency})</span>
                   <input
                     type="number"
                     min={0}
@@ -1082,15 +1082,15 @@ export function CrmEmployees({
                   <input
                     value={bankName}
                     onChange={(e) => setBankName(e.target.value)}
-                    placeholder="Ej. BBVA México"
+                    placeholder={`Ej. ${countryProfile.bank.sampleBanks[0] || 'Banco principal'}`}
                   />
                 </label>
                 <label className="form-field">
-                  <span>CLABE interbancaria</span>
+                  <span>{countryProfile.bank.routingLabel}</span>
                   <input
                     value={clabe}
                     onChange={(e) => setClabe(e.target.value)}
-                    placeholder="18 dígitos"
+                    placeholder={countryProfile.bank.routingPlaceholder}
                   />
                 </label>
               </div>
@@ -1397,19 +1397,19 @@ export function CrmEmployees({
                 </div>
                 <div className="emp-sheet-fields-grid cols-3">
                   <div className="emp-sheet-field">
-                    <span className="emp-field-label">RFC</span>
+                    <span className="emp-field-label">{countryProfile.taxId.label}</span>
                     <strong className="emp-field-val mono">
                       {detailEmployee.rfc || 'No registrado'}
                     </strong>
                   </div>
                   <div className="emp-sheet-field">
-                    <span className="emp-field-label">CURP</span>
+                    <span className="emp-field-label">{countryProfile.code === 'MX' ? 'CURP' : countryProfile.code === 'ES' ? 'DNI / NIE' : countryProfile.code === 'VE' ? 'Cédula' : 'ID Nacional'}</span>
                     <strong className="emp-field-val mono wrap-anywhere">
                       {detailEmployee.curp || 'No registrado'}
                     </strong>
                   </div>
                   <div className="emp-sheet-field">
-                    <span className="emp-field-label">NSS (IMSS)</span>
+                    <span className="emp-field-label">{countryProfile.hr.socialSecurityLabel}</span>
                     <strong className="emp-field-val mono">
                       {detailEmployee.nss || 'No registrado'}
                     </strong>
@@ -1430,7 +1430,7 @@ export function CrmEmployees({
                     </strong>
                   </div>
                   <div className="emp-sheet-field">
-                    <span className="emp-field-label">CLABE interbancaria</span>
+                    <span className="emp-field-label">{countryProfile.bank.routingLabel}</span>
                     <strong className="emp-field-val mono wrap-anywhere">
                       {detailEmployee.clabe || 'No registrada'}
                     </strong>

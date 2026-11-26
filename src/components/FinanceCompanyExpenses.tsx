@@ -63,6 +63,7 @@ import {
 } from '../data/finance'
 import type { DepartmentRecord, PhysicalLocationRecord } from './AdministrationSection'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 export type ExpensesSectionTab =
   | 'Resumen y control'
@@ -240,12 +241,6 @@ const parseErpDateToIso = (dateStr: string): string | null => {
   return null
 }
 
-const isValidMexicanRfc = (rfc: string): boolean => {
-  const normalized = rfc.trim().toUpperCase()
-  if (!normalized) return false
-  return /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(normalized)
-}
-
 const parseErpDateMonthKey = (dateStr: string): string | null => {
   const iso = parseErpDateToIso(dateStr)
   return iso ? iso.slice(0, 7) : null
@@ -345,6 +340,9 @@ export function FinanceCompanyExpenses({
   onExportAudit,
 }: FinanceCompanyExpensesProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
 
   // Local sub-tab fallback when embedded inside Finanzas > Gastos de la empresa
   const [embeddedView, setEmbeddedView] = useState<'ledger' | 'summary' | 'budgets' | 'recurring'>('ledger')
@@ -417,7 +415,7 @@ export function FinanceCompanyExpenses({
   const [amount, setAmount] = useState<string>('4500')
   const [taxMode, setTaxMode] = useState<'16' | '0' | 'custom'>('16')
   const [customTaxAmount, setCustomTaxAmount] = useState<string>('0')
-  const [paymentMethod, setPaymentMethod] = useState('Transferencia SPEI')
+  const [paymentMethod, setPaymentMethod] = useState(countryProfile.bank.defaultTransferMethod)
   const [bankAccountId, setBankAccountId] = useState(bankAccounts[0]?.id || '')
   const [departmentName, setDepartmentName] = useState(
     departments.find((d) => d.active)?.name || 'Finanzas y Tesorería'
@@ -1083,7 +1081,7 @@ export function FinanceCompanyExpenses({
   const parsedAmount = Math.max(0, Number(amount) || 0)
   const previewTax =
     taxMode === '16'
-      ? Number((parsedAmount * 0.16).toFixed(2))
+      ? Number((parsedAmount * standardVatRate).toFixed(2))
       : taxMode === 'custom'
         ? Number(Math.max(0, Number(customTaxAmount) || 0).toFixed(2))
         : 0
@@ -1499,7 +1497,7 @@ export function FinanceCompanyExpenses({
     recurringTemplates.forEach((tpl) => {
       if (tpl.active) {
         activeCount += 1
-        const estTotal = tpl.hasTax ? tpl.amount * 1.16 : tpl.amount
+        const estTotal = tpl.hasTax ? tpl.amount * (1 + standardVatRate) : tpl.amount
         const mult =
           tpl.frequency === 'Quincenal' ? 2 : tpl.frequency === 'Anual' ? 1 / 12 : 1
         monthlyCommitment += estTotal * mult
@@ -1616,12 +1614,12 @@ export function FinanceCompanyExpenses({
       'Cuenta contable',
       'Descripción',
       'Beneficiario',
-      'RFC emisor',
+      `${countryProfile.taxId.label} emisor`,
       'Forma de pago',
       'Cuenta bancaria',
       'Comprobante',
       'Subtotal',
-      'IVA',
+      countryProfile.vat.label,
       'Total',
       'Responsable',
     ]
@@ -2833,7 +2831,7 @@ export function FinanceCompanyExpenses({
                     value={recPaymentMethod}
                     onChange={(e) => setRecPaymentMethod(e.target.value)}
                   >
-                    <option value="Transferencia SPEI">Transferencia SPEI</option>
+                    <option value="Transferencia SPEI">{countryProfile.bank.defaultTransferMethod}</option>
                     <option value="Domiciliación bancaria">Domiciliación bancaria</option>
                     <option value="Tarjeta corporativa">Tarjeta corporativa</option>
                     <option value="Cargo bancario automático">Cargo bancario automático</option>
@@ -2899,7 +2897,7 @@ export function FinanceCompanyExpenses({
                       checked={recHasTax}
                       onChange={(e) => setRecHasTax(e.target.checked)}
                     />
-                    <span>Desglosar IVA (16%)</span>
+                    <span>Desglosar {countryProfile.vat.label} ({standardVatPct}%)</span>
                   </label>
                 </div>
               </div>
@@ -2950,7 +2948,7 @@ export function FinanceCompanyExpenses({
                   </tr>
                 ) : (
                   recurringStats.filteredTemplates.map((tpl) => {
-                    const estTotal = tpl.hasTax ? tpl.amount * 1.16 : tpl.amount
+                    const estTotal = tpl.hasTax ? tpl.amount * (1 + standardVatRate) : tpl.amount
                     const natMeta = getNatureMeta(tpl.nature)
                     const generatedCount = recurringStats.generatedCounts[tpl.id] || 0
                     const daysUntilRun = Math.ceil(
@@ -3017,7 +3015,7 @@ export function FinanceCompanyExpenses({
                         <td style={{ textAlign: 'right' }} className="tabular-nums">
                           <strong>{money(estTotal)}</strong>
                           <div className="company-expense-muted-sep">
-                            {tpl.hasTax ? 'Incluye IVA 16%' : 'Exento / 0%'}
+                            {tpl.hasTax ? `Incluye ${countryProfile.vat.label} ${standardVatPct}%` : 'Exento / 0%'}
                           </div>
                         </td>
                         <td>
@@ -4245,25 +4243,28 @@ export function FinanceCompanyExpenses({
 
                 <div className="company-expense-form-grid">
                   <label className="form-field">
-                    <span>RFC emisor (fiscal)</span>
+                    <span>{countryProfile.taxId.label} emisor (fiscal)</span>
                     <input
                       type="text"
-                      placeholder="Ej. XAXX010101000"
-                      maxLength={13}
+                      placeholder={`Ej. ${countryProfile.taxId.placeholder}`}
+                      maxLength={20}
                       value={issuerRfc}
                       onChange={(e) => setIssuerRfc(e.target.value.toUpperCase())}
                     />
-                    {issuerRfc.trim() !== '' && (
-                      <small
-                        className={`expense-field-hint ${
-                          isValidMexicanRfc(issuerRfc) ? 'is-valid' : 'is-warn'
-                        }`}
-                      >
-                        {isValidMexicanRfc(issuerRfc)
-                          ? `RFC válido (${issuerRfc.trim().length === 12 ? 'Persona Moral' : 'Persona Física'})`
-                          : 'Formato esperado: 12 o 13 caracteres SAT'}
-                      </small>
-                    )}
+                    {issuerRfc.trim() !== '' && (() => {
+                      const taxValidation = countryProfile.taxId.validate(issuerRfc)
+                      return (
+                        <small
+                          className={`expense-field-hint ${
+                            taxValidation.valid ? 'is-valid' : 'is-warn'
+                          }`}
+                        >
+                          {taxValidation.valid
+                            ? `${countryProfile.taxId.shortLabel} válido (${taxValidation.kindLabel || countryProfile.countryName})`
+                            : taxValidation.reason || countryProfile.taxId.formatHint}
+                        </small>
+                      )
+                    })()}
                   </label>
 
                   <label className="form-field">
@@ -4289,7 +4290,9 @@ export function FinanceCompanyExpenses({
                       value={paymentMethod}
                       onChange={(e) => setPaymentMethod(e.target.value)}
                     >
-                      <option value="Transferencia SPEI">Transferencia electrónica SPEI</option>
+                      <option value={countryProfile.bank.defaultTransferMethod}>
+                        {countryProfile.bank.defaultTransferMethod} ({countryProfile.bank.networkName})
+                      </option>
                       <option value="Domiciliación bancaria">Domiciliación bancaria</option>
                       <option value="Tarjeta corporativa">Tarjeta corporativa</option>
                       <option value="Cargo bancario automático">Cargo bancario automático</option>
@@ -4298,21 +4301,21 @@ export function FinanceCompanyExpenses({
                   </label>
 
                   <label className="form-field">
-                    <span>Régimen IVA / Impuestos</span>
+                    <span>Régimen {countryProfile.vat.label} / Impuestos</span>
                     <select
                       value={taxMode}
                       onChange={(e) => setTaxMode(e.target.value as '16' | '0' | 'custom')}
                     >
-                      <option value="16">IVA 16% (Estándar)</option>
-                      <option value="0">Tasa 0% / Exento de IVA</option>
-                      <option value="custom">IVA / Impuesto manual ($)</option>
+                      <option value="16">{countryProfile.vat.standardOptionLabel}</option>
+                      <option value="0">{countryProfile.vat.exemptOptionLabel}</option>
+                      <option value="custom">{countryProfile.vat.label} / Impuesto manual</option>
                     </select>
                     {taxMode === 'custom' && (
                       <input
                         type="number"
                         min="0"
                         step="0.01"
-                        placeholder="Importe de IVA o impuestos"
+                        placeholder={`Importe de ${countryProfile.vat.label} o impuestos`}
                         value={customTaxAmount}
                         onChange={(e) => setCustomTaxAmount(e.target.value)}
                         style={{ marginTop: 6 }}
@@ -4328,12 +4331,12 @@ export function FinanceCompanyExpenses({
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>
-                      IVA: <strong>{money(previewTax)}</strong>
+                      {countryProfile.vat.label}: <strong>{money(previewTax)}</strong>
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>
                       Total a registrar:{' '}
-                      <strong className="text-negative">{money(previewTotal)} MXN</strong>
+                      <strong className="text-negative">{money(previewTotal)} {reportingCurrency}</strong>
                     </span>
                   </div>
 
@@ -4424,7 +4427,7 @@ export function FinanceCompanyExpenses({
                 }
               >
                 <option value="Todos">Fiscal: Todos</option>
-                <option value="Comprobado">Con RFC y comprobante</option>
+                <option value="Comprobado">Con {countryProfile.taxId.shortLabel} y comprobante</option>
                 <option value="Sin comprobante">Pendiente comprobación</option>
               </select>
 
@@ -4491,7 +4494,7 @@ export function FinanceCompanyExpenses({
                 <Search size={14} />
                 <input
                   type="text"
-                  placeholder="Buscar folio, RFC, UUID o concepto..."
+                  placeholder={`Buscar folio, ${countryProfile.taxId.shortLabel}, ref. fiscal o concepto...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -4545,7 +4548,7 @@ export function FinanceCompanyExpenses({
                   <th>ESTADO</th>
                   <th>FORMA DE PAGO</th>
                   <th style={{ textAlign: 'right' }}>SUBTOTAL</th>
-                  <th style={{ textAlign: 'right' }}>IVA</th>
+                  <th style={{ textAlign: 'right' }}>{countryProfile.vat.label.toUpperCase()}</th>
                   <th style={{ textAlign: 'right' }}>TOTAL</th>
                   <th style={{ textAlign: 'right' }}>ACCIONES</th>
                 </tr>
@@ -4607,10 +4610,10 @@ export function FinanceCompanyExpenses({
                               }
                             >
                               {hasCompleteFiscal
-                                ? `RFC ${exp.issuerRfc} · ${exp.referenceDoc}`
+                                ? `${countryProfile.taxId.shortLabel} ${exp.issuerRfc} · ${exp.referenceDoc}`
                                 : exp.issuerRfc || exp.referenceDoc
-                                  ? `${exp.issuerRfc ? `RFC ${exp.issuerRfc}` : 'Sin RFC'} · ${
-                                      exp.referenceDoc ? exp.referenceDoc : 'Sin UUID/Ref'
+                                  ? `${exp.issuerRfc ? `${countryProfile.taxId.shortLabel} ${exp.issuerRfc}` : `Sin ${countryProfile.taxId.shortLabel}`} · ${
+                                      exp.referenceDoc ? exp.referenceDoc : 'Sin ref. fiscal'
                                     }`
                                   : 'Pendiente de comprobación fiscal'}
                             </small>
@@ -4859,18 +4862,18 @@ export function FinanceCompanyExpenses({
                   </label>
 
                   <label className="form-field">
-                    <span>RFC emisor</span>
+                    <span>{countryProfile.taxId.label} emisor</span>
                     <input
                       type="text"
-                      maxLength={13}
-                      placeholder="Ej. XAXX010101000"
+                      maxLength={20}
+                      placeholder={`Ej. ${countryProfile.taxId.placeholder}`}
                       value={editIssuerRfc}
                       onChange={(e) => setEditIssuerRfc(e.target.value.toUpperCase())}
                     />
                   </label>
 
                   <label className="form-field">
-                    <span>Comprobante / UUID</span>
+                    <span>{countryProfile.fiscalDoc.uuidLabel}</span>
                     <input
                       type="text"
                       value={editReferenceDoc}
@@ -4908,7 +4911,7 @@ export function FinanceCompanyExpenses({
                   <small>Beneficiario / Proveedor</small>
                   <strong>{viewingExpense.beneficiary}</strong>
                   <span>
-                    {viewingExpense.issuerRfc ? `RFC: ${viewingExpense.issuerRfc} · ` : ''}
+                    {viewingExpense.issuerRfc ? `${countryProfile.taxId.shortLabel}: ${viewingExpense.issuerRfc} · ` : ''}
                     Resp.: {viewingExpense.user}
                   </span>
                 </div>
@@ -4948,7 +4951,7 @@ export function FinanceCompanyExpenses({
                 <strong className="tabular-nums">{money(viewingExpense.amount)}</strong>
               </div>
               <div className="po-totals-row">
-                <span>IVA (16%):</span>
+                <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
                 <strong className="tabular-nums">
                   {viewingExpense.tax > 0 ? money(viewingExpense.tax) : '$0.00'}
                 </strong>
@@ -4956,7 +4959,7 @@ export function FinanceCompanyExpenses({
               <div className="po-totals-row grand">
                 <span>Total del gasto:</span>
                 <strong className="text-negative tabular-nums">
-                  {money(viewingExpense.total)} MXN
+                  {money(viewingExpense.total)} {reportingCurrency}
                 </strong>
               </div>
             </div>

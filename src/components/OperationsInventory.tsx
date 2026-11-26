@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Boxes,
   ArrowDownLeft,
@@ -30,6 +30,7 @@ import type {
   StockMovement,
   MovementType,
 } from '../data/operations'
+import { PRODUCT_CATALOG_CATEGORIES, type ProductServiceItem } from '../data/products'
 import { Skeleton } from 'boneyard-js/react'
 import { inventoryTableBones } from '../bones/registry'
 import { useToast } from './Toast'
@@ -42,11 +43,15 @@ import {
 interface OperationsInventoryProps {
   warehouses: Warehouse[]
   inventory: InventoryItemLocation[]
+  products?: ProductServiceItem[]
   transfers: InventoryTransfer[]
   movements: StockMovement[]
   categoryThresholds?: CategoryStockThresholdRule[]
   productCategoryMap?: Map<string, string>
+  initialSearchQuery?: string
+  onClearInitialSearch?: () => void
   onOpenCategoryThresholds?: () => void
+  onNavigateToCatalog?: (sku?: string) => void
   onUpdateInventory: (items: InventoryItemLocation[]) => void
   onUpdateTransfers: (transfers: InventoryTransfer[]) => void
   onAddMovement: (movement: StockMovement) => void
@@ -70,11 +75,15 @@ const formatSpanishDate = (date: Date = new Date()) => {
 export function OperationsInventory({
   warehouses,
   inventory,
+  products = [],
   transfers,
   movements,
   categoryThresholds = [],
   productCategoryMap,
+  initialSearchQuery,
+  onClearInitialSearch,
   onOpenCategoryThresholds,
+  onNavigateToCatalog,
   onUpdateInventory,
   onUpdateTransfers,
   onAddMovement,
@@ -89,6 +98,15 @@ export function OperationsInventory({
   const [filterLowStockOnly, setFilterLowStockOnly] = useState(false)
   const [transferStatusFilter, setTransferStatusFilter] = useState<'Todos' | TransferStatus>('Todos')
   const [isInventoryLoading, setIsInventoryLoading] = useState(false)
+
+  useEffect(() => {
+    if (initialSearchQuery) {
+      setSearchQuery(initialSearchQuery)
+      setActiveTab('stock')
+      setSelectedWarehouseId('all')
+      onClearInitialSearch?.()
+    }
+  }, [initialSearchQuery, onClearInitialSearch])
 
   const handleWarehouseChange = (whId: string) => {
     setSelectedWarehouseId(whId)
@@ -110,12 +128,26 @@ export function OperationsInventory({
 
   // Modals
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false)
+  const [isAddSkuModalOpen, setIsAddSkuModalOpen] = useState(false)
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false)
   const [isThresholdModalOpen, setIsThresholdModalOpen] = useState(false)
   const [selectedTransferDetail, setSelectedTransferDetail] = useState<InventoryTransfer | null>(null)
   const [selectedStockDetail, setSelectedStockDetail] = useState<InventoryItemLocation | null>(null)
   const [confirmingDeleteTransfer, setConfirmingDeleteTransfer] = useState(false)
   const [confirmingDeleteStock, setConfirmingDeleteStock] = useState(false)
+
+  // Add SKU / Assign Catalog Product to Warehouse state
+  const [addSkuMode, setAddSkuMode] = useState<'catalog' | 'new'>('catalog')
+  const [addCatalogProdId, setAddCatalogProdId] = useState('')
+  const [addNewSku, setAddNewSku] = useState('')
+  const [addNewName, setAddNewName] = useState('')
+  const [addNewCategory, setAddNewCategory] = useState<string>('Hardware')
+  const [addNewUnit, setAddNewUnit] = useState<string>('Pza')
+  const [addTargetWhId, setAddTargetWhId] = useState('')
+  const [addLocationBin, setAddLocationBin] = useState('Recepción 01')
+  const [addInitialStock, setAddInitialStock] = useState(5)
+  const [addMinStock, setAddMinStock] = useState(2)
+  const [addUnitCost, setAddUnitCost] = useState(0)
 
   // Threshold configuration state
   const [thresholdItemId, setThresholdItemId] = useState('')
@@ -1130,6 +1162,140 @@ export function OperationsInventory({
     setAdjustReference('')
   }
 
+  const catalogTangibleProducts = useMemo(
+    () => products.filter((p) => p.type === 'product'),
+    [products]
+  )
+
+  const handleOpenAddSkuModal = () => {
+    const defaultWh =
+      (selectedWarehouseId !== 'all'
+        ? activeWarehouses.find((w) => w.id === selectedWarehouseId)
+        : undefined) ||
+      activeWarehouses.find((w) => w.isDefault) ||
+      activeWarehouses[0] ||
+      warehouses[0]
+    const firstProd = catalogTangibleProducts[0]
+    setAddSkuMode(catalogTangibleProducts.length > 0 ? 'catalog' : 'new')
+    setAddCatalogProdId(firstProd?.id || '')
+    setAddNewSku('')
+    setAddNewName('')
+    setAddNewCategory('Hardware')
+    setAddNewUnit('Pza')
+    setAddTargetWhId(defaultWh?.id || '')
+    setAddLocationBin(defaultWh ? `Recepción ${defaultWh.code}` : 'Recepción 01')
+    setAddInitialStock(5)
+    setAddMinStock(firstProd?.minStock ?? 2)
+    setAddUnitCost(firstProd?.cost ?? 0)
+    setIsAddSkuModalOpen(true)
+  }
+
+  const handleConfirmAddSkuToWarehouse = (e: React.FormEvent) => {
+    e.preventDefault()
+    const targetWh = warehouses.find((w) => w.id === addTargetWhId)
+    if (!targetWh) {
+      toast.warning('Selecciona un almacén de destino.', 'Almacén requerido')
+      return
+    }
+
+    let resolvedProductId = `prod_${Date.now()}`
+    let resolvedSku = ''
+    let resolvedName = ''
+    let resolvedCategory = addNewCategory
+    let resolvedUnit = addNewUnit
+
+    if (addSkuMode === 'catalog') {
+      const catProd = catalogTangibleProducts.find((p) => p.id === addCatalogProdId)
+      if (!catProd) {
+        toast.warning('Selecciona un producto del catálogo.', 'Producto requerido')
+        return
+      }
+      resolvedProductId = catProd.id
+      resolvedSku = catProd.sku
+      resolvedName = catProd.name
+      resolvedCategory = catProd.category
+      resolvedUnit = catProd.unitOfMeasure
+    } else {
+      resolvedSku = addNewSku.trim().toUpperCase()
+      resolvedName = addNewName.trim()
+      if (!resolvedSku || !resolvedName) {
+        toast.warning('Ingresa el SKU y el nombre del artículo.', 'Campos requeridos')
+        return
+      }
+    }
+
+    const qty = Math.max(0, Math.round(addInitialStock))
+    const safeMin = Math.max(0, Math.round(addMinStock))
+    const safeCost = Math.max(0, Number(addUnitCost) || 0)
+
+    const existingIdx = inventory.findIndex(
+      (i) =>
+        i.warehouseId === targetWh.id &&
+        i.sku.trim().toLowerCase() === resolvedSku.toLowerCase()
+    )
+
+    let nextInventory: InventoryItemLocation[]
+    if (existingIdx >= 0) {
+      nextInventory = inventory.map((row, idx) =>
+        idx === existingIdx
+          ? {
+              ...row,
+              stock: row.stock + qty,
+              minStock: safeMin,
+              cost: safeCost > 0 ? safeCost : row.cost,
+              locationBin: addLocationBin.trim() || row.locationBin,
+            }
+          : row
+      )
+    } else {
+      const newRow: InventoryItemLocation = {
+        id: `inv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        productId: resolvedProductId,
+        sku: resolvedSku,
+        name: resolvedName,
+        category: resolvedCategory,
+        warehouseId: targetWh.id,
+        warehouseName: targetWh.name,
+        stock: qty,
+        reserved: 0,
+        inTransit: 0,
+        minStock: safeMin,
+        thresholdSource: 'sku',
+        cost: safeCost,
+        unitOfMeasure: resolvedUnit,
+        locationBin: addLocationBin.trim() || `Recepción ${targetWh.code}`,
+      }
+      nextInventory = [newRow, ...inventory]
+    }
+
+    onUpdateInventory(nextInventory)
+
+    if (qty > 0) {
+      onAddMovement({
+        id: `mov_inv_add_${Date.now()}`,
+        folio: `MOV-2026-${String(movements.length + 1).padStart(3, '0')}`,
+        date: formatSpanishDate(),
+        type: 'Entrada',
+        sku: resolvedSku,
+        productName: resolvedName,
+        quantity: qty,
+        targetWarehouse: targetWh.name,
+        referenceDoc: addSkuMode === 'catalog' ? 'ASIGNACIÓN-CATÁLOGO' : 'ALTA-ALMACÉN',
+        reason:
+          addSkuMode === 'catalog'
+            ? `Asignación de SKU de catálogo a ${targetWh.name}`
+            : `Alta directa de SKU en ${targetWh.name} (sincronizado a Catálogo)`,
+        user: 'Almacén / Operaciones',
+      })
+    }
+
+    toast.success(
+      `${resolvedSku} (${qty} ${resolvedUnit}) registrado en ${targetWh.name} y sincronizado con Catálogo.`,
+      'Inventario actualizado'
+    )
+    setIsAddSkuModalOpen(false)
+  }
+
   const getMovementBadgeClass = (type: MovementType) => {
     switch (type) {
       case 'Entrada':
@@ -1242,6 +1408,14 @@ export function OperationsInventory({
             }
           >
             <Download size={14} /> Exportar CSV
+          </button>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={handleOpenAddSkuModal}
+            title="Asignar un producto del catálogo a un almacén o registrar un SKU nuevo"
+          >
+            <Plus size={14} /> Alta de SKU
           </button>
           <button
             type="button"
@@ -2708,6 +2882,40 @@ export function OperationsInventory({
               </div>
             </div>
 
+            {(() => {
+              const linkedCatalogItem = products.find(
+                (p) =>
+                  p.id === selectedStockDetail.productId ||
+                  p.sku.trim().toLowerCase() === selectedStockDetail.sku.trim().toLowerCase()
+              )
+              if (!linkedCatalogItem) return null
+              return (
+                <div className="inv-catalog-sync-strip">
+                  <div className="inv-catalog-sync-meta">
+                    <span>Catálogo comercial: <strong>{linkedCatalogItem.category}</strong></span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">Precio lista {money(linkedCatalogItem.unitPrice)}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>Estado: {linkedCatalogItem.status}</span>
+                  </div>
+                  {onNavigateToCatalog && (
+                    <button
+                      type="button"
+                      className="text-subtle-action catalog-jump-inv-btn"
+                      onClick={() => {
+                        const targetSku = selectedStockDetail.sku
+                        setSelectedStockDetail(null)
+                        setConfirmingDeleteStock(false)
+                        onNavigateToCatalog(targetSku)
+                      }}
+                    >
+                      Ver en Catálogo <ArrowUpRight size={13} />
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
+
             <div className={`create-modal-actions ${onDeleteInventoryItem ? 'has-delete-action' : ''}`}>
               {onDeleteInventoryItem && (
                 <div className="modal-delete-slot">
@@ -2771,6 +2979,218 @@ export function OperationsInventory({
                 </button>
               </div>
             </div>
+          </section>
+        </div>
+      )}
+
+      {/* Modal: Alta de SKU en almacén (Desde Catálogo o Nuevo SKU sincronizado) */}
+      {isAddSkuModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsAddSkuModalOpen(false)
+          }}
+        >
+          <section className="create-modal" role="dialog" aria-modal="true" aria-labelledby="add-sku-modal-title">
+            <div className="create-modal-heading">
+              <div>
+                <div className="panel-kicker">INVENTARIO ↔ CATÁLOGO COMERCIAL</div>
+                <h2 id="add-sku-modal-title">Alta de existencias en almacén</h2>
+                <p>
+                  Asigna un producto del catálogo a un almacén o registra un nuevo SKU; ambos módulos quedarán sincronizados automáticamente.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setIsAddSkuModalOpen(false)}
+                aria-label="Cerrar modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="catalog-segmented-filter" style={{ marginBottom: 14 }} role="group" aria-label="Origen del SKU">
+              <button
+                type="button"
+                className={addSkuMode === 'catalog' ? 'active' : ''}
+                onClick={() => setAddSkuMode('catalog')}
+                disabled={catalogTangibleProducts.length === 0}
+              >
+                Desde catálogo comercial
+              </button>
+              <button
+                type="button"
+                className={addSkuMode === 'new' ? 'active' : ''}
+                onClick={() => setAddSkuMode('new')}
+              >
+                Nuevo SKU manual
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmAddSkuToWarehouse}>
+              {addSkuMode === 'catalog' ? (
+                <label className="form-field">
+                  <span>Producto del catálogo *</span>
+                  <select
+                    required
+                    value={addCatalogProdId}
+                    onChange={(e) => {
+                      const nextId = e.target.value
+                      setAddCatalogProdId(nextId)
+                      const found = catalogTangibleProducts.find((p) => p.id === nextId)
+                      if (found) {
+                        setAddUnitCost(found.cost ?? 0)
+                        setAddMinStock(found.minStock ?? 2)
+                      }
+                    }}
+                  >
+                    <option value="">Selecciona un producto...</option>
+                    {catalogTangibleProducts.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        [{p.sku}] {p.name} · Stock actual: {p.stock ?? 0} {p.unitOfMeasure}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <>
+                  <div className="form-grid">
+                    <label className="form-field">
+                      <span>SKU único *</span>
+                      <input
+                        type="text"
+                        required
+                        className="font-mono"
+                        placeholder="Ej. HW-SW-24P"
+                        value={addNewSku}
+                        onChange={(e) => setAddNewSku(e.target.value.toUpperCase())}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>Nombre del artículo *</span>
+                      <input
+                        type="text"
+                        required
+                        placeholder="Ej. Switch Administrable 24 Puertos"
+                        value={addNewName}
+                        onChange={(e) => setAddNewName(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="form-grid">
+                    <label className="form-field">
+                      <span>Categoría</span>
+                      <select
+                        value={addNewCategory}
+                        onChange={(e) => setAddNewCategory(e.target.value)}
+                      >
+                        {PRODUCT_CATALOG_CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>Unidad de medida</span>
+                      <select
+                        value={addNewUnit}
+                        onChange={(e) => setAddNewUnit(e.target.value)}
+                      >
+                        <option value="Pza">Pieza (Pza)</option>
+                        <option value="Paquete">Paquete</option>
+                        <option value="Servicio">Servicio</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>Almacén destino *</span>
+                  <select
+                    required
+                    value={addTargetWhId}
+                    onChange={(e) => {
+                      const nextId = e.target.value
+                      setAddTargetWhId(nextId)
+                      const wh = warehouses.find((w) => w.id === nextId)
+                      if (wh) setAddLocationBin(`Recepción ${wh.code}`)
+                    }}
+                  >
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name} ({w.code}){!w.active ? ' · Inactiva' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="form-field">
+                  <span>Ubicación / Rack *</span>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej. Rack A-03"
+                    value={addLocationBin}
+                    onChange={(e) => setAddLocationBin(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="form-grid form-grid-3">
+                <label className="form-field">
+                  <span>Cantidad a ingresar *</span>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    className="font-mono tabular-nums"
+                    value={addInitialStock}
+                    onChange={(e) => setAddInitialStock(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Umbral mínimo</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="font-mono tabular-nums"
+                    value={addMinStock}
+                    onChange={(e) => setAddMinStock(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  />
+                </label>
+
+                <label className="form-field">
+                  <span>Costo unitario (MXN)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="font-mono tabular-nums"
+                    value={addUnitCost || ''}
+                    onChange={(e) => setAddUnitCost(parseFloat(e.target.value) || 0)}
+                  />
+                </label>
+              </div>
+
+              <div className="create-modal-actions">
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => setIsAddSkuModalOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="button button-primary">
+                  <PackageCheck size={14} /> Registrar en almacén y sincronizar
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       )}

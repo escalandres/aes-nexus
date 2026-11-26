@@ -68,6 +68,8 @@ import {
 } from './IncomeStatementReport'
 import { exportIncomeStatementPdf } from '../utils/incomeStatementPdf'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
+import { getCurrencySymbol, getRateSummaryLabel } from '../services/currencyService'
 
 export type ReportsSectionTab =
   | 'Resumen ejecutivo'
@@ -256,12 +258,12 @@ function resolveDatePresetBounds(preset: DateRangePreset): { from: string; to: s
   return { from: '', to: '' }
 }
 
-const shortMoneyAxis = (val: number) => {
+const formatShortMoneyAxis = (val: number, symbol = '$') => {
   const abs = Math.abs(val)
   const sign = val < 0 ? '-' : ''
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`
-  if (abs >= 1_000) return `${sign}$${Math.round(abs / 1_000)}k`
-  return `${sign}$${Math.round(abs)}`
+  if (abs >= 1_000_000) return `${sign}${symbol}${(abs / 1_000_000).toFixed(1)}M`
+  if (abs >= 1_000) return `${sign}${symbol}${Math.round(abs / 1_000)}k`
+  return `${sign}${symbol}${Math.round(abs)}`
 }
 
 const MONTH_SHORT_ES = [
@@ -296,12 +298,7 @@ function formatPeriodBucketLabel(key: string, granularity: 'day' | 'month'): str
   return key
 }
 
-const money = (val: number, currency: string = 'MXN') =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 2,
-  }).format(val)
+// Monetary formatting inside ReportsSection uses reportingCurrency via useI18n()
 
 const compactNum = (val: number) =>
   new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 }).format(val)
@@ -466,6 +463,19 @@ export function ReportsSection({
   onExportAudit,
 }: ReportsSectionProps) {
   const toast = useToast()
+  const {
+    countryProfile,
+    reportingCurrency,
+    convertAmount,
+    formatCurrency,
+    formatConvertedCurrency,
+  } = useI18n()
+  const money = (val: number, sourceCurrency?: string) =>
+    sourceCurrency
+      ? formatConvertedCurrency(val, sourceCurrency, 2)
+      : formatCurrency(val, reportingCurrency, 2)
+  const shortMoneyAxis = (val: number) =>
+    formatShortMoneyAxis(val, getCurrencySymbol(reportingCurrency))
   const [filters, setFilters] = useState<ReportFilterState>({
     searchQuery: '',
     datePreset: 'all',
@@ -930,33 +940,69 @@ export function ReportsSection({
 
   // Core cross-module financial & operational aggregations on scoped datasets
   const metrics = useMemo(() => {
-    const totalLiquidity = bankAccounts.reduce((s, b) => s + b.balance, 0)
-    const totalBilledAR = scoped.scopedReceivables.reduce((s, r) => s + r.total, 0)
-    const openAR = scoped.scopedReceivables.reduce((s, r) => s + r.balance, 0)
-    const collectedAR = scoped.scopedReceivables.reduce((s, r) => s + r.paidAmount, 0)
+    const totalLiquidity = bankAccounts.reduce(
+      (s, b) => s + convertAmount(b.balance, b.currency || 'MXN'),
+      0
+    )
+    const totalBilledAR = scoped.scopedReceivables.reduce(
+      (s, r) => s + convertAmount(r.total, r.currency || 'MXN'),
+      0
+    )
+    const openAR = scoped.scopedReceivables.reduce(
+      (s, r) => s + convertAmount(r.balance, r.currency || 'MXN'),
+      0
+    )
+    const collectedAR = scoped.scopedReceivables.reduce(
+      (s, r) => s + convertAmount(r.paidAmount, r.currency || 'MXN'),
+      0
+    )
     const arCollectionRate = totalBilledAR > 0 ? (collectedAR / totalBilledAR) * 100 : 0
 
-    const totalVendorBills = scoped.scopedPayables.reduce((s, b) => s + b.total, 0)
-    const openAP = scoped.scopedPayables.reduce((s, b) => s + b.balance, 0)
-    const paidAP = scoped.scopedPayables.reduce((s, b) => s + b.paidAmount, 0)
+    const totalVendorBills = scoped.scopedPayables.reduce(
+      (s, b) => s + convertAmount(b.total, b.currency || 'MXN'),
+      0
+    )
+    const openAP = scoped.scopedPayables.reduce(
+      (s, b) => s + convertAmount(b.balance, b.currency || 'MXN'),
+      0
+    )
+    const paidAP = scoped.scopedPayables.reduce(
+      (s, b) => s + convertAmount(b.paidAmount, b.currency || 'MXN'),
+      0
+    )
 
-    const totalExpenses = scoped.scopedExpenses.reduce((s, e) => s + e.total, 0)
+    const totalExpenses = scoped.scopedExpenses.reduce(
+      (s, e) => s + convertAmount(e.total, 'MXN'),
+      0
+    )
     const ebpAppliedTotal = scoped.scopedEbpBatches
       .filter((b) => b.status === 'Aplicado en banco')
-      .reduce((s, b) => s + b.totalAmount, 0)
+      .reduce((s, b) => s + convertAmount(b.totalAmount, b.currency || 'MXN'), 0)
     const ebpPendingTotal = scoped.scopedEbpBatches
       .filter((b) => b.status !== 'Aplicado en banco' && b.status !== 'Rechazado')
-      .reduce((s, b) => s + b.totalAmount, 0)
+      .reduce((s, b) => s + convertAmount(b.totalAmount, b.currency || 'MXN'), 0)
 
-    const inventoryValue = scoped.scopedInventory.reduce((s, it) => s + it.stock * it.cost, 0)
+    const inventoryValue = scoped.scopedInventory.reduce(
+      (s, it) => s + convertAmount(it.stock * it.cost, 'MXN'),
+      0
+    )
     const totalStockUnits = scoped.scopedInventory.reduce((s, it) => s + it.stock, 0)
     const lowStockCount = scoped.scopedInventory.filter((it) => it.stock <= it.minStock).length
 
     const activeEmployees = scoped.scopedEmployees.filter((e) => e.status === 'Activo')
-    const monthlyPayrollNet = scoped.scopedPayrollRuns.reduce((s, r) => s + r.totalNet, 0)
+    const monthlyPayrollNet = scoped.scopedPayrollRuns.reduce(
+      (s, r) => s + convertAmount(r.totalNet, 'MXN'),
+      0
+    )
 
-    const quotesValue = scoped.scopedQuotes.reduce((s, qt) => s + qt.total, 0)
-    const ordersValue = scoped.scopedOrders.reduce((s, ord) => s + ord.total, 0)
+    const quotesValue = scoped.scopedQuotes.reduce(
+      (s, qt) => s + convertAmount(qt.total, qt.currency || 'MXN'),
+      0
+    )
+    const ordersValue = scoped.scopedOrders.reduce(
+      (s, ord) => s + convertAmount(ord.total, ord.currency || 'MXN'),
+      0
+    )
 
     return {
       totalLiquidity,
@@ -978,7 +1024,7 @@ export function ReportsSection({
       quotesValue,
       ordersValue,
     }
-  }, [bankAccounts, scoped])
+  }, [bankAccounts, scoped, convertAmount])
 
   // Secondary text/status/currency filters for each tab table
   const filteredTransactionsAndExpenses = useMemo(() => {
@@ -1098,7 +1144,7 @@ export function ReportsSection({
         (filters.statusFilter === 'Alerta' && r.batchStatus === 'Rechazado')
       return matchQ && matchCur && matchStatus
     })
-  }, [scoped.scopedEbpBatches, q, filters.currencyFilter, filters.statusFilter])
+  }, [scoped.scopedEbpBatches, q, filters.currencyFilter, filters.statusFilter, reportingCurrency])
 
   const filteredReceivables = useMemo(() => {
     return scoped.scopedReceivables.filter((r) => {
@@ -1164,27 +1210,29 @@ export function ReportsSection({
             bankAccounts: sup.bankAccounts,
           }).filter((a) => a.active !== false).length
         : 0
+      const billBalCvt = convertAmount(b.balance, b.currency || 'MXN')
+      const billPaidCvt = convertAmount(b.paidAmount, b.currency || 'MXN')
       if (existing) {
-        existing.openBalance += b.balance
-        existing.paidTotal += b.paidAmount
+        existing.openBalance += billBalCvt
+        existing.paidTotal += billPaidCvt
         existing.billsCount += 1
       } else {
         byVendor.set(key, {
           company: b.supplierCompany,
-          openBalance: b.balance,
-          paidTotal: b.paidAmount,
+          openBalance: billBalCvt,
+          paidTotal: billPaidCvt,
           billsCount: 1,
           bankAccountsCount: accountsCount,
         })
       }
     })
     return Array.from(byVendor.values()).sort((a, b) => b.openBalance - a.openBalance)
-  }, [scoped.scopedPayables, suppliers])
+  }, [scoped.scopedPayables, suppliers, convertAmount])
 
   const expenseCategoriesBreakdown = useMemo(() => {
     const map = new Map<string, number>()
     scoped.scopedExpenses.forEach((e) => {
-      map.set(e.category, (map.get(e.category) || 0) + e.total)
+      map.set(e.category, (map.get(e.category) || 0) + convertAmount(e.total, 'MXN'))
     })
     const total = Array.from(map.values()).reduce((s, v) => s + v, 0) || 1
     return Array.from(map.entries())
@@ -1194,7 +1242,7 @@ export function ReportsSection({
         pct: (amount / total) * 100,
       }))
       .sort((a, b) => b.amount - a.amount)
-  }, [scoped.scopedExpenses])
+  }, [scoped.scopedExpenses, convertAmount])
 
   const departmentHeadcount = useMemo(() => {
     const map = new Map<string, { name: string; activeCount: number; monthlySalary: number }>()
@@ -1206,13 +1254,13 @@ export function ReportsSection({
       const key = emp.departmentName || 'General'
       const prev = map.get(key) || { name: key, activeCount: 0, monthlySalary: 0 }
       prev.activeCount += 1
-      prev.monthlySalary += emp.baseSalaryMonthly || 0
+      prev.monthlySalary += convertAmount(emp.baseSalaryMonthly || 0, 'MXN')
       map.set(key, prev)
     })
     return Array.from(map.values())
       .filter((d) => d.activeCount > 0)
       .sort((a, b) => b.monthlySalary - a.monthlySalary)
-  }, [activeDepartments, scoped.scopedEmployees])
+  }, [activeDepartments, scoped.scopedEmployees, convertAmount])
 
   // Cross-branch organizational summary (respects date range and active department filter)
   const branchSummary = useMemo(() => {
@@ -1226,7 +1274,7 @@ export function ReportsSection({
       const branchInvVal = isOpsDeptSelected
         ? inventory
             .filter((it) => whIds.has(it.warehouseId) || whNames.has(it.warehouseName.toLowerCase()))
-            .reduce((s, it) => s + it.stock * it.cost, 0)
+            .reduce((s, it) => s + convertAmount(it.stock * it.cost, 'MXN'), 0)
         : 0
       const branchPoVal = purchaseOrders
         .filter((po) => isDateWithinRange(po.date, filters.dateFrom, filters.dateTo))
@@ -1240,7 +1288,7 @@ export function ReportsSection({
               meta?.departmentName?.toLowerCase() === selectedDepartment.name.toLowerCase())
           )
         })
-        .reduce((s, po) => s + po.total, 0)
+        .reduce((s, po) => s + convertAmount(po.total, po.currency || 'MXN'), 0)
       const branchEmps = employees.filter(
         (e) =>
           e.status === 'Activo' &&
@@ -1253,7 +1301,10 @@ export function ReportsSection({
         name: loc.name,
         type: loc.type,
         employeesCount: branchEmps.length,
-        monthlyPayrollBase: branchEmps.reduce((s, e) => s + e.baseSalaryMonthly, 0),
+        monthlyPayrollBase: branchEmps.reduce(
+          (s, e) => s + convertAmount(e.baseSalaryMonthly, 'MXN'),
+          0
+        ),
         inventoryValue: branchInvVal,
         purchaseOrdersTotal: branchPoVal,
       }
@@ -1269,6 +1320,7 @@ export function ReportsSection({
     filters.departmentId,
     selectedDepartment,
     lookups,
+    convertAmount,
   ])
 
   // Cross-department summary (respects date range and active branch filter)
@@ -1295,7 +1347,7 @@ export function ReportsSection({
             (filters.locationId === 'all' || resolvedLoc === filters.locationId)
           )
         })
-        .reduce((s, exp) => s + exp.total, 0)
+        .reduce((s, exp) => s + convertAmount(exp.total, 'MXN'), 0)
       const deptPoTotal = purchaseOrders
         .filter((po) => isDateWithinRange(po.date, filters.dateFrom, filters.dateTo))
         .filter((po) => {
@@ -1307,7 +1359,7 @@ export function ReportsSection({
             filters.locationId === 'all' || meta?.locationId === filters.locationId
           return matchDept && matchLoc
         })
-        .reduce((s, po) => s + po.total, 0)
+        .reduce((s, po) => s + convertAmount(po.total, po.currency || 'MXN'), 0)
 
       return {
         id: dept.id,
@@ -1316,7 +1368,10 @@ export function ReportsSection({
         leader: dept.leader,
         costCenter: dept.costCenter || '—',
         employeesCount: deptEmps.length,
-        monthlyPayrollBase: deptEmps.reduce((s, e) => s + e.baseSalaryMonthly, 0),
+        monthlyPayrollBase: deptEmps.reduce(
+          (s, e) => s + convertAmount(e.baseSalaryMonthly, 'MXN'),
+          0
+        ),
         expensesTotal: deptExpenseTotal,
         purchaseOrdersTotal: deptPoTotal,
       }
@@ -1330,6 +1385,7 @@ export function ReportsSection({
     filters.dateTo,
     filters.locationId,
     lookups,
+    convertAmount,
   ])
 
   // Recharts Dataset 1: Department comparison (Expenses, Purchase Orders & Scoped Payroll Net)
@@ -1338,7 +1394,7 @@ export function ReportsSection({
     scoped.scopedPayrollRuns.forEach((run) => {
       run.receipts.forEach((rec) => {
         const key = (rec.departmentName || 'General').toLowerCase()
-        payrollByDept.set(key, (payrollByDept.get(key) || 0) + rec.netPay)
+        payrollByDept.set(key, (payrollByDept.get(key) || 0) + convertAmount(rec.netPay, 'MXN'))
       })
     })
 
@@ -1365,7 +1421,7 @@ export function ReportsSection({
         costoTotal,
       }
     })
-  }, [departmentSummary, scoped.scopedPayrollRuns, filters.departmentId])
+  }, [departmentSummary, scoped.scopedPayrollRuns, filters.departmentId, convertAmount])
 
   // Recharts Dataset 2: Chronological period trend (Ingresos, Egresos & Net Performance)
   const periodChartConfig = useMemo(() => {
@@ -1414,15 +1470,16 @@ export function ReportsSection({
       if (rec.paidAmount <= 0) return
       if (filters.currencyFilter !== 'Todas' && rec.currency !== filters.currencyFilter) return
       const b = ensureBucket(rec.issueDate)
-      if (b) b.ingresos += Math.round(rec.paidAmount)
+      if (b) b.ingresos += Math.round(convertAmount(rec.paidAmount, rec.currency || 'MXN'))
     })
 
     scoped.scopedExpenses.forEach((exp) => {
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
       const b = ensureBucket(exp.date)
       if (b) {
-        b.gastosOp += Math.round(exp.total)
-        b.egresos += Math.round(exp.total)
+        const amt = Math.round(convertAmount(exp.total, 'MXN'))
+        b.gastosOp += amt
+        b.egresos += amt
       }
     })
 
@@ -1430,8 +1487,9 @@ export function ReportsSection({
       if (filters.currencyFilter !== 'Todas' && po.currency !== filters.currencyFilter) return
       const b = ensureBucket(po.date)
       if (b) {
-        b.comprasOc += Math.round(po.total)
-        b.egresos += Math.round(po.total)
+        const amt = Math.round(convertAmount(po.total, po.currency || 'MXN'))
+        b.comprasOc += amt
+        b.egresos += amt
       }
     })
 
@@ -1439,8 +1497,9 @@ export function ReportsSection({
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
       const b = ensureBucket(run.paymentDate)
       if (b) {
-        b.nominaYPagos += Math.round(run.totalNet)
-        b.egresos += Math.round(run.totalNet)
+        const amt = Math.round(convertAmount(run.totalNet, 'MXN'))
+        b.nominaYPagos += amt
+        b.egresos += amt
       }
     })
 
@@ -1462,6 +1521,7 @@ export function ReportsSection({
     scoped.scopedExpenses,
     scoped.scopedPurchaseOrders,
     scoped.scopedPayrollRuns,
+    convertAmount,
   ])
 
   // Recharts Dataset 3: Year-over-Year (YoY) comparison respecting active filters (branch, dept, currency, date window)
@@ -1540,19 +1600,19 @@ export function ReportsSection({
     // Current-year scoped datasets
     scoped.scopedReceivables.forEach((rec) => {
       if (filters.currencyFilter !== 'Todas' && rec.currency !== filters.currencyFilter) return
-      applyRecord(rec.issueDate, rec.paidAmount, 'Ingresos')
+      applyRecord(rec.issueDate, convertAmount(rec.paidAmount, rec.currency || 'MXN'), 'Ingresos')
     })
     scoped.scopedExpenses.forEach((exp) => {
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
-      applyRecord(exp.date, exp.total, 'Gastos')
+      applyRecord(exp.date, convertAmount(exp.total, 'MXN'), 'Gastos')
     })
     scoped.scopedPurchaseOrders.forEach((po) => {
       if (filters.currencyFilter !== 'Todas' && po.currency !== filters.currencyFilter) return
-      applyRecord(po.date, po.total, 'Compras')
+      applyRecord(po.date, convertAmount(po.total, po.currency || 'MXN'), 'Compras')
     })
     scoped.scopedPayrollRuns.forEach((run) => {
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
-      applyRecord(run.paymentDate, run.totalNet, 'Nomina')
+      applyRecord(run.paymentDate, convertAmount(run.totalNet, 'MXN'), 'Nomina')
     })
 
     // Scan live prior-year records across raw datasets with same Branch / Dept / Currency scope
@@ -1562,7 +1622,7 @@ export function ReportsSection({
       if (filters.currencyFilter !== 'Todas' && rec.currency !== filters.currencyFilter) return
       const locId = (rec.orderFolio && orderToLocation.get(rec.orderFolio)) || 'loc_1'
       if (!matchesScope({ locationId: locId, departmentName: 'Ventas y Comercial' })) return
-      applyRecord(iso, rec.paidAmount, 'Ingresos')
+      applyRecord(iso, convertAmount(rec.paidAmount, rec.currency || 'MXN'), 'Ingresos')
     })
     expenses.forEach((exp) => {
       if (exp.status === 'Cancelado') return
@@ -1589,7 +1649,7 @@ export function ReportsSection({
       ) {
         return
       }
-      applyRecord(iso, exp.total, 'Gastos')
+      applyRecord(iso, convertAmount(exp.total, 'MXN'), 'Gastos')
     })
     purchaseOrders.forEach((po) => {
       const iso = parseErpDateToIso(po.date)
@@ -1605,14 +1665,14 @@ export function ReportsSection({
       ) {
         return
       }
-      applyRecord(iso, po.total, 'Compras')
+      applyRecord(iso, convertAmount(po.total, po.currency || 'MXN'), 'Compras')
     })
     payrollRuns.forEach((run) => {
       const iso = parseErpDateToIso(run.paymentDate)
       if (!iso || Number(iso.slice(0, 4)) !== priorYear) return
       if (filters.currencyFilter !== 'Todas' && filters.currencyFilter !== 'MXN') return
       if (filters.locationId === 'all' && filters.departmentId === 'all') {
-        applyRecord(iso, run.totalNet, 'Nomina')
+        applyRecord(iso, convertAmount(run.totalNet, 'MXN'), 'Nomina')
       } else {
         const net = run.receipts
           .filter((rec) => {
@@ -1623,7 +1683,7 @@ export function ReportsSection({
               departmentName: rec.departmentName,
             })
           })
-          .reduce((s, r) => s + r.netPay, 0)
+          .reduce((s, r) => s + convertAmount(r.netPay, 'MXN'), 0)
         applyRecord(iso, net, 'Nomina')
       }
     })
@@ -1730,6 +1790,7 @@ export function ReportsSection({
     orders,
     lookups,
     locations,
+    convertAmount,
   ])
 
   const hasScopedDateOrOrgFilter = Boolean(
@@ -1755,6 +1816,7 @@ export function ReportsSection({
         sourceMode: pnlSourceMode,
         taxRate: pnlTaxRate,
         currencyFilter: filters.currencyFilter,
+        displayCurrency: reportingCurrency,
         hasScopedDateOrOrgFilter,
         searchQuery: filters.searchQuery,
       }),
@@ -1772,6 +1834,7 @@ export function ReportsSection({
       pnlSourceMode,
       pnlTaxRate,
       filters.currencyFilter,
+      reportingCurrency,
       hasScopedDateOrOrgFilter,
       filters.searchQuery,
     ]
@@ -1808,21 +1871,21 @@ export function ReportsSection({
     const branchBreakdown: CostCenterBranchRow[] = activeLocations.map((loc) => {
       const revenue = dateFilteredReceivables
         .filter((rec) => ((rec.orderFolio && orderLocMap.get(rec.orderFolio)) || 'loc_1') === loc.id)
-        .reduce((s, r) => s + r.subtotal, 0)
+        .reduce((s, r) => s + convertAmount(r.subtotal, r.currency || 'MXN'), 0)
       const locExpenses = dateFilteredExpenses.filter((exp) => (exp.locationId || 'loc_1') === loc.id)
       const fixedCosts = locExpenses
         .filter((e) => e.costBehavior !== 'Variable')
-        .reduce((s, e) => s + e.total, 0)
+        .reduce((s, e) => s + convertAmount(e.total, 'MXN'), 0)
       const variableCosts = locExpenses
         .filter((e) => e.costBehavior === 'Variable')
-        .reduce((s, e) => s + e.total, 0)
+        .reduce((s, e) => s + convertAmount(e.total, 'MXN'), 0)
       const payrollCosts = dateFilteredPayroll.reduce((sum, run) => {
         const net = run.receipts
           .filter((rec) => {
             const emp = lookups.empById.get(rec.employeeId)
             return (emp?.locationId || 'loc_1') === loc.id
           })
-          .reduce((s, rec) => s + rec.netPay, 0)
+          .reduce((s, rec) => s + convertAmount(rec.netPay, 'MXN'), 0)
         return sum + net
       }, 0)
 
@@ -1855,10 +1918,10 @@ export function ReportsSection({
       })
       const fixedExpenses = deptExpenses
         .filter((e) => e.costBehavior !== 'Variable')
-        .reduce((s, e) => s + e.total, 0)
+        .reduce((s, e) => s + convertAmount(e.total, 'MXN'), 0)
       const variableExpenses = deptExpenses
         .filter((e) => e.costBehavior === 'Variable')
-        .reduce((s, e) => s + e.total, 0)
+        .reduce((s, e) => s + convertAmount(e.total, 'MXN'), 0)
       const payrollCosts = dateFilteredPayroll.reduce((sum, run) => {
         const net = run.receipts
           .filter((rec) => {
@@ -1868,7 +1931,7 @@ export function ReportsSection({
               emp?.departmentName?.toLowerCase() === dept.name.toLowerCase()
             )
           })
-          .reduce((s, rec) => s + rec.netPay, 0)
+          .reduce((s, rec) => s + convertAmount(rec.netPay, 'MXN'), 0)
         return sum + net
       }, 0)
 
@@ -1911,6 +1974,7 @@ export function ReportsSection({
     filters.dateTo,
     filters.currencyFilter,
     lookups,
+    convertAmount,
   ])
 
   const activeScopeSummary = useMemo(() => {
@@ -1928,6 +1992,11 @@ export function ReportsSection({
         ? `Departamento: ${selectedDepartment.code} · ${selectedDepartment.name}`
         : 'Departamento: Todos'
     )
+    parts.push(
+      reportingCurrency !== 'MXN'
+        ? `Moneda reporte: ${reportingCurrency} (${getRateSummaryLabel(reportingCurrency)})`
+        : `Moneda reporte: ${reportingCurrency}`
+    )
     if (filters.compareYoY) {
       parts.push(`Comparativa YoY: ${yoyComparisonData.currentYear} vs ${yoyComparisonData.priorYear}`)
     }
@@ -1938,6 +2007,7 @@ export function ReportsSection({
     filters.compareYoY,
     selectedLocation,
     selectedDepartment,
+    reportingCurrency,
     yoyComparisonData.currentYear,
     yoyComparisonData.priorYear,
   ])
@@ -2057,7 +2127,7 @@ export function ReportsSection({
       )
     } else if (activeTab === 'Finanzas y Tesorería') {
       filename = `reporte_finanzas_tesoreria_${dateStamp}.csv`
-      headers = ['Folio', 'Fecha', 'Tipo / Categoría', 'Entidad', 'Referencia', 'Cuenta / Método', 'Dirección', 'Importe', 'Estado']
+      headers = ['Folio', 'Fecha', 'Tipo / Categoría', 'Entidad', 'Referencia', 'Cuenta / Método', 'Dirección', `Importe (${reportingCurrency})`, 'Estado']
       rows = filteredTransactionsAndExpenses.map((r) => [
         r.folio,
         r.date,
@@ -2066,12 +2136,12 @@ export function ReportsSection({
         r.reference,
         r.account,
         r.direction,
-        r.amount,
+        Number(convertAmount(r.amount, r.currency).toFixed(2)),
         r.status,
       ])
     } else if (activeTab === 'CxP y Pagos EBP') {
       filename = `reporte_cxp_ebp_${dateStamp}.csv`
-      headers = ['Lote EBP', 'Modo', 'Fecha', 'Proveedor', 'Alias Bancario', 'Banco', 'CLABE', 'Motivo del pago', 'Facturas Cubiertas', 'Importe', 'Moneda', 'Estado']
+      headers = ['Lote EBP', 'Modo', 'Fecha', 'Proveedor', 'Alias Bancario', 'Banco', countryProfile.bank.routingShortLabel, 'Motivo del pago', 'Facturas Cubiertas', `Importe (${reportingCurrency})`, 'Moneda Origen', 'Estado']
       rows = filteredEbpLines.map((r) => [
         r.batchFolio,
         r.aggregationLabel,
@@ -2082,28 +2152,28 @@ export function ReportsSection({
         r.clabe,
         r.paymentReason,
         r.folios,
-        r.amount,
+        Number(convertAmount(r.amount, r.currency).toFixed(2)),
         r.currency,
         r.batchStatus,
       ])
     } else if (activeTab === 'Ventas y CxC') {
       filename = `reporte_ventas_cxc_${dateStamp}.csv`
-      headers = ['Folio', 'Cliente', 'Pedido', 'Emisión', 'Vencimiento', 'Total', 'Cobrado', 'Saldo Pendiente', 'Moneda', 'Estado']
+      headers = ['Folio', 'Cliente', 'Pedido', 'Emisión', 'Vencimiento', `Total (${reportingCurrency})`, `Cobrado (${reportingCurrency})`, `Saldo Pendiente (${reportingCurrency})`, 'Moneda Origen', 'Estado']
       rows = filteredReceivables.map((r) => [
         r.folio,
         r.clientCompany,
         r.orderFolio || '',
         r.issueDate,
         r.dueDate,
-        r.total,
-        r.paidAmount,
-        r.balance,
+        Number(convertAmount(r.total, r.currency).toFixed(2)),
+        Number(convertAmount(r.paidAmount, r.currency).toFixed(2)),
+        Number(convertAmount(r.balance, r.currency).toFixed(2)),
         r.currency,
         r.status,
       ])
     } else if (activeTab === 'Compras e Inventario') {
       filename = `reporte_inventario_compras_${dateStamp}.csv`
-      headers = ['SKU', 'Producto', 'Ubicación / Bin', 'Almacén', 'Existencia', 'Mínimo', 'Costo Unitario', 'Valor Total']
+      headers = ['SKU', 'Producto', 'Ubicación / Bin', 'Almacén', 'Existencia', 'Mínimo', `Costo Unitario (${reportingCurrency})`, `Valor Total (${reportingCurrency})`]
       rows = filteredInventory.map((it) => [
         it.sku,
         it.name,
@@ -2111,20 +2181,20 @@ export function ReportsSection({
         it.warehouseName,
         it.stock,
         it.minStock,
-        it.cost,
-        it.stock * it.cost,
+        Number(convertAmount(it.cost, 'MXN').toFixed(2)),
+        Number(convertAmount(it.stock * it.cost, 'MXN').toFixed(2)),
       ])
     } else {
       filename = `reporte_nomina_rrhh_${dateStamp}.csv`
-      headers = ['Folio Nómina', 'Periodo', 'Fecha Pago', 'Colaboradores', 'Total Percepciones', 'Deducciones', 'Neto Dispersado', 'Estado']
+      headers = ['Folio Nómina', 'Periodo', 'Fecha Pago', 'Colaboradores', `Total Percepciones (${reportingCurrency})`, `Deducciones (${reportingCurrency})`, `Neto Dispersado (${reportingCurrency})`, 'Estado']
       rows = filteredPayrollRuns.map((run) => [
         run.folio,
         run.periodLabel,
         run.paymentDate,
         run.employeesCount,
-        run.totalGross,
-        run.totalDeductions,
-        run.totalNet,
+        Number(convertAmount(run.totalGross, 'MXN').toFixed(2)),
+        Number(convertAmount(run.totalDeductions, 'MXN').toFixed(2)),
+        Number(convertAmount(run.totalNet, 'MXN').toFixed(2)),
         run.status,
       ])
     }
@@ -2147,6 +2217,7 @@ export function ReportsSection({
         data: incomeStatementData,
         compareYoY: filters.compareYoY,
         activeScopeSummary,
+        displayCurrency: reportingCurrency,
       })
       onExportAudit?.(`Estado de Resultados PDF (${activeScopeSummary})`, rowCount)
       toast.success(
@@ -3519,7 +3590,7 @@ export function ReportsSection({
                 {money(
                   filteredTransactionsAndExpenses
                     .filter((r) => r.direction === 'Ingreso')
-                    .reduce((s, r) => s + r.amount, 0)
+                    .reduce((s, r) => s + convertAmount(r.amount, r.currency), 0)
                 )}
               </div>
               <div className="ops-kpi-foot">
@@ -3565,7 +3636,12 @@ export function ReportsSection({
                   </thead>
                   <tbody>
                     {bankAccounts.map((acc) => {
-                      const pct = metrics.totalLiquidity > 0 ? (acc.balance / metrics.totalLiquidity) * 100 : 0
+                      const pct =
+                        metrics.totalLiquidity > 0
+                          ? (convertAmount(acc.balance, acc.currency || 'MXN') /
+                              metrics.totalLiquidity) *
+                            100
+                          : 0
                       return (
                         <tr key={acc.id}>
                           <td>
@@ -3903,7 +3979,7 @@ export function ReportsSection({
               <h2>Trazabilidad de Dispersiones Bancarias EBP ({filteredEbpLines.length} líneas)</h2>
               <div className="overview-card-head-sub">
                 <Landmark size={16} />
-                <p>Muestra el alias bancario seleccionado por línea, CLABE destino, motivo del pago y facturas cubiertas.</p>
+                <p>Muestra el alias bancario seleccionado por línea, {countryProfile.bank.routingShortLabel} destino, motivo del pago y facturas cubiertas.</p>
               </div>
             </div>
             <div className="table-wrap ops-table-wrap">
@@ -4122,8 +4198,8 @@ export function ReportsSection({
                           <td>{it.warehouseName}</td>
                           <td style={{ textAlign: 'right' }} className="mono"><strong>{it.stock}</strong></td>
                           <td style={{ textAlign: 'right' }} className="mono">{it.minStock}</td>
-                          <td style={{ textAlign: 'right' }} className="mono">{money(it.cost)}</td>
-                          <td style={{ textAlign: 'right' }} className="mono"><strong>{money(it.stock * it.cost)}</strong></td>
+                          <td style={{ textAlign: 'right' }} className="mono">{money(it.cost, 'MXN')}</td>
+                          <td style={{ textAlign: 'right' }} className="mono"><strong>{money(it.stock * it.cost, 'MXN')}</strong></td>
                           <td>{isLow ? 'Stock bajo' : 'Óptimo'}</td>
                         </tr>
                       )
@@ -4164,7 +4240,12 @@ export function ReportsSection({
                 <span className="ops-kpi-icon icon-amber"><ReceiptText size={16} /></span>
               </div>
               <div className="ops-kpi-val mono">
-                {money(filteredPayrollRuns.reduce((s, r) => s + r.totalGross, 0))}
+                {money(
+                  filteredPayrollRuns.reduce(
+                    (s, r) => s + convertAmount(r.totalGross, 'MXN'),
+                    0
+                  )
+                )}
               </div>
               <div className="ops-kpi-foot"><span>{filteredPayrollRuns.length} corrida(s) en periodo</span></div>
             </article>
@@ -4174,9 +4255,24 @@ export function ReportsSection({
                 <span className="ops-kpi-icon icon-green"><Landmark size={16} /></span>
               </div>
               <div className="ops-kpi-val mono">
-                {money(filteredPayrollRuns.reduce((s, r) => s + r.totalNet, 0))}
+                {money(
+                  filteredPayrollRuns.reduce(
+                    (s, r) => s + convertAmount(r.totalNet, 'MXN'),
+                    0
+                  )
+                )}
               </div>
-              <div className="ops-kpi-foot"><span>Deducciones {money(filteredPayrollRuns.reduce((s, r) => s + r.totalDeductions, 0))}</span></div>
+              <div className="ops-kpi-foot">
+                <span>
+                  Deducciones{' '}
+                  {money(
+                    filteredPayrollRuns.reduce(
+                      (s, r) => s + convertAmount(r.totalDeductions, 'MXN'),
+                      0
+                    )
+                  )}
+                </span>
+              </div>
             </article>
           </div>
 
@@ -4255,9 +4351,9 @@ export function ReportsSection({
                           <td>{run.periodLabel}</td>
                           <td className="mono">{run.paymentDate}</td>
                           <td style={{ textAlign: 'right' }} className="mono">{run.employeesCount}</td>
-                          <td style={{ textAlign: 'right' }} className="mono">{money(run.totalGross)}</td>
-                          <td style={{ textAlign: 'right' }} className="mono">{money(run.totalDeductions)}</td>
-                          <td style={{ textAlign: 'right' }} className="mono"><strong>{money(run.totalNet)}</strong></td>
+                          <td style={{ textAlign: 'right' }} className="mono">{money(run.totalGross, 'MXN')}</td>
+                          <td style={{ textAlign: 'right' }} className="mono">{money(run.totalDeductions, 'MXN')}</td>
+                          <td style={{ textAlign: 'right' }} className="mono"><strong>{money(run.totalNet, 'MXN')}</strong></td>
                           <td>{run.status}</td>
                         </tr>
                       ))

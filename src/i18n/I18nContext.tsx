@@ -13,17 +13,26 @@ import {
   type RegionalSettings,
   type SupportedLocale,
 } from './types'
+import {
+  getCountryProfile,
+  type CountryLocalizationProfile,
+} from '../data/countryLocalization'
+import { convertCurrency, normalizeCurrencyCode } from '../services/currencyService'
 
 interface I18nContextValue {
   locale: SupportedLocale
   regional: RegionalSettings
   mainCountry: string
   mainCountryName: string
+  countryProfile: CountryLocalizationProfile
   reportingCurrency: string
   countryTimezones: TimezoneOption[]
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string
   updateRegional: (next: RegionalSettings) => void
   updateGeneralLocalization: (mainCountry: string, reportingCurrency?: string) => void
+  setReportingCurrencyCode: (currency: string) => void
+  convertAmount: (value: number, fromCurrency?: string) => number
+  formatConvertedCurrency: (value: number, fromCurrency?: string, decimals?: number) => string
   formatDate: (date?: Date) => string
   formatTime: (date?: Date) => string
   formatNumber: (value: number, decimals?: number) => string
@@ -37,8 +46,9 @@ function loadInitialGeneralLocalization(): { mainCountry: string; reportingCurre
     const saved = localStorage.getItem('aes_nexus_settings_general')
     if (saved) {
       const parsed = JSON.parse(saved)
+      const rawCountry = String(parsed.mainCountry || 'MX').trim()
       return {
-        mainCountry: resolveCountryCode(parsed.mainCountry || 'MX'),
+        mainCountry: rawCountry.toUpperCase() === 'GLOBAL' ? 'GLOBAL' : resolveCountryCode(rawCountry),
         reportingCurrency: parsed.reportingCurrency || 'MXN',
       }
     }
@@ -108,7 +118,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }
 
   const updateGeneralLocalization = (countryInput: string, currencyOverride?: string) => {
-    const resolvedCode = resolveCountryCode(countryInput)
+    const resolvedCode =
+      countryInput.trim().toUpperCase() === 'GLOBAL' ? 'GLOBAL' : resolveCountryCode(countryInput)
     setMainCountry(resolvedCode)
     if (currencyOverride) {
       setReportingCurrency(currencyOverride)
@@ -127,6 +138,24 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       }
       return updated
     })
+  }
+
+  const setReportingCurrencyCode = (currency: string) => {
+    const nextCurrency = normalizeCurrencyCode(currency)
+    setReportingCurrency(nextCurrency)
+    try {
+      const saved = localStorage.getItem('aes_nexus_settings_general')
+      const parsed = saved ? JSON.parse(saved) : {}
+      localStorage.setItem(
+        'aes_nexus_settings_general',
+        JSON.stringify({
+          ...parsed,
+          reportingCurrency: nextCurrency,
+        })
+      )
+    } catch {
+      // ignore storage quota errors
+    }
   }
 
   const value = useMemo<I18nContextValue>(() => {
@@ -169,24 +198,42 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         maximumFractionDigits: decimals,
       }).format(num)
 
-    const formatCurrency = (num: number, currencyOverride?: string, decimals = 2) =>
-      new Intl.NumberFormat(intlLocale, {
-        style: 'currency',
-        currency: currencyOverride || reportingCurrency || 'MXN',
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      }).format(num)
+    const formatCurrency = (num: number, currencyOverride?: string, decimals = 2) => {
+      const targetCurrency = normalizeCurrencyCode(currencyOverride || reportingCurrency || 'MXN')
+      try {
+        return new Intl.NumberFormat(intlLocale, {
+          style: 'currency',
+          currency: targetCurrency,
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals,
+        }).format(num)
+      } catch {
+        return `${targetCurrency} ${num.toFixed(decimals)}`
+      }
+    }
+
+    const convertAmount = (num: number, fromCurrency: string = 'MXN') =>
+      convertCurrency(num, fromCurrency, reportingCurrency)
+
+    const formatConvertedCurrency = (num: number, fromCurrency: string = 'MXN', decimals = 2) =>
+      formatCurrency(convertAmount(num, fromCurrency), reportingCurrency, decimals)
+
+    const countryProfile = getCountryProfile(mainCountry)
 
     return {
       locale: regional.language,
       regional,
       mainCountry,
       mainCountryName,
+      countryProfile,
       reportingCurrency,
       countryTimezones,
       t: (key, vars) => translate(regional.language, key, vars),
       updateRegional,
       updateGeneralLocalization,
+      setReportingCurrencyCode,
+      convertAmount,
+      formatConvertedCurrency,
       formatDate,
       formatTime,
       formatNumber,

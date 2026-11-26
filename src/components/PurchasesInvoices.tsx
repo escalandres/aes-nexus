@@ -17,6 +17,7 @@ import type { BillPayable } from '../data/finance'
 import type { PurchaseOrder } from '../data/operations'
 import type { EbpAggregationMode } from '../data/ebp'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface SupplierOption {
   name: string
@@ -51,6 +52,9 @@ export function PurchasesInvoices({
   onOpenEbpBatchFromBills,
 }: PurchasesInvoicesProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
@@ -153,7 +157,7 @@ export function PurchasesInvoices({
     const due = new Date()
     due.setDate(today.getDate() + 15)
 
-    const tax = Math.round(subtotal * 0.16)
+    const tax = Math.round(subtotal * standardVatRate)
     const total = subtotal + tax
 
     const newBill: BillPayable = {
@@ -161,7 +165,7 @@ export function PurchasesInvoices({
       folio,
       purchaseOrderFolio: poReference.trim() || undefined,
       supplierCompany,
-      supplierContact: sup?.email || 'facturacion@proveedor.mx',
+      supplierContact: sup?.email || 'facturacion@proveedor.com',
       issueDate: fmt(today),
       dueDate: dueDate.trim() || fmt(due),
       subtotal,
@@ -170,8 +174,8 @@ export function PurchasesInvoices({
       paidAmount: 0,
       balance: total,
       status: 'Pendiente',
-      currency: 'MXN',
-      paymentMethod: 'Transferencia SPEI',
+      currency: reportingCurrency === 'USD' ? 'USD' : 'MXN',
+      paymentMethod: countryProfile.bank.defaultTransferMethod,
     }
 
     onCreateSupplierBill(newBill)
@@ -527,7 +531,7 @@ export function PurchasesInvoices({
               </div>
 
               <label className="form-field">
-                <span>Subtotal antes de IVA (MXN) *</span>
+                <span>Subtotal antes de {countryProfile.vat.label} ({reportingCurrency || countryProfile.defaultCurrency}) *</span>
                 <input
                   type="number"
                   min="1"
@@ -543,12 +547,12 @@ export function PurchasesInvoices({
                   <strong className="tabular-nums">{money(subtotal)}</strong>
                 </div>
                 <div className="po-totals-row">
-                  <span>IVA (16%):</span>
-                  <strong className="tabular-nums">{money(subtotal * 0.16)}</strong>
+                  <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
+                  <strong className="tabular-nums">{money(subtotal * standardVatRate)}</strong>
                 </div>
                 <div className="po-totals-row grand">
                   <span>Total factura CxP:</span>
-                  <strong className="tabular-nums">{money(subtotal * 1.16)} MXN</strong>
+                  <strong className="tabular-nums">{money(subtotal * (1 + standardVatRate))} {reportingCurrency || countryProfile.defaultCurrency}</strong>
                 </div>
               </div>
 

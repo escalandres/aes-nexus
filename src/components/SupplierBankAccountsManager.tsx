@@ -15,12 +15,15 @@ import {
   type EbpCurrency,
   type SupplierBankAccount,
 } from '../data/ebp'
+import { useI18n } from '../i18n/I18nContext'
+import { getEntityCountryFields } from '../data/countryLocalization'
 
 interface SupplierBankAccountsManagerProps {
   accounts: SupplierBankAccount[]
   installedPacks: BankFormatPack[]
   usedAccountIds?: Set<string>
   defaultCurrency?: EbpCurrency
+  countryCode?: string
   onChange: (nextAccounts: SupplierBankAccount[]) => void
 }
 
@@ -29,8 +32,11 @@ export function SupplierBankAccountsManager({
   installedPacks,
   usedAccountIds,
   defaultCurrency = 'MXN',
+  countryCode,
   onChange,
 }: SupplierBankAccountsManagerProps) {
+  const { countryProfile } = useI18n()
+  const entityFields = getEntityCountryFields(countryCode, countryProfile.code)
   const [selectedId, setSelectedId] = useState<string>(() => accounts[0]?.id || '')
 
   const vendorPacks = useMemo(
@@ -99,7 +105,30 @@ export function SupplierBankAccountsManager({
     }
   }
 
-  const clabeCheck = activeAccount?.clabe ? validateClabeMod10(activeAccount.clabe) : null
+  const isMxRouting = (val?: string) =>
+    entityFields.countryCode === 'MX' || /^\d{18}$/.test((val || '').replace(/\s+/g, ''))
+
+  const validateAccountRouting = (val?: string) => {
+    if (!val) return null
+    if (isMxRouting(val)) {
+      const res = validateClabeMod10(val)
+      return {
+        valid: res.valid,
+        reason: res.reason,
+        badgeOk: 'Mod-10',
+        hintOk: `Banxico Mod-10 válida${res.bankLabel ? ` (${res.bankLabel})` : ''}`,
+      }
+    }
+    const res = entityFields.validateBankRouting(val)
+    return {
+      valid: res.valid,
+      reason: res.reason,
+      badgeOk: `${entityFields.bankNetworkName} OK`,
+      hintOk: `${entityFields.bankRoutingShortLabel} válido (${entityFields.bankNetworkName})`,
+    }
+  }
+
+  const clabeCheck = validateAccountRouting(activeAccount?.clabe)
 
   return (
     <div className="ebp-multi-bank-shell">
@@ -136,7 +165,7 @@ export function SupplierBankAccountsManager({
           <div className="ebp-multi-bank-list" role="tablist" aria-label="Cuentas bancarias del proveedor">
             {accounts.map((acc) => {
               const isSelected = activeAccount?.id === acc.id
-              const check = acc.clabe ? validateClabeMod10(acc.clabe) : null
+              const check = validateAccountRouting(acc.clabe)
               const isHistorical = Boolean(usedAccountIds?.has(acc.id))
               return (
                 <button
@@ -153,7 +182,7 @@ export function SupplierBankAccountsManager({
                   </div>
                   <div className="ebp-bank-item-sub mono">
                     {acc.bankName || 'Banco sin asignar'} ·{' '}
-                    {acc.clabe ? `••••${acc.clabe.slice(-4)}` : 'Sin CLABE'}
+                    {acc.clabe ? `••••${acc.clabe.slice(-4)}` : `Sin ${entityFields.bankRoutingShortLabel}`}
                   </div>
                   <div className="ebp-bank-item-flags">
                     {acc.isDefault && (
@@ -165,11 +194,11 @@ export function SupplierBankAccountsManager({
                       <span className="ebp-mini-status muted">Inactiva</span>
                     ) : check?.valid ? (
                       <span className="ebp-mini-status ok">
-                        <CheckCircle2 size={9} /> Mod-10
+                        <CheckCircle2 size={9} /> {check.badgeOk}
                       </span>
                     ) : (
                       <span className="ebp-mini-status err">
-                        <AlertTriangle size={9} /> Revisar CLABE
+                        <AlertTriangle size={9} /> Revisar {entityFields.bankRoutingShortLabel}
                       </span>
                     )}
                     {isHistorical && <span className="ebp-mini-status muted">En historial</span>}
@@ -246,7 +275,7 @@ export function SupplierBankAccountsManager({
                   <span>Banco receptor *</span>
                   <input
                     value={activeAccount.bankName}
-                    placeholder="Ej. BBVA México"
+                    placeholder={`Ej. ${entityFields.bankSampleBanks[0] || 'Banco principal'}`}
                     onChange={(e) =>
                       updateAccount(activeAccount.id, { bankName: e.target.value })
                     }
@@ -256,16 +285,18 @@ export function SupplierBankAccountsManager({
 
               <div className="form-grid-3">
                 <label className="form-field">
-                  <span>CLABE interbancaria (18 dígitos) *</span>
+                  <span>{entityFields.bankRoutingLabel} ({entityFields.bankRoutingFormatHint}) *</span>
                   <input
                     className="mono"
-                    maxLength={18}
+                    maxLength={entityFields.bankRoutingMaxLength}
                     value={activeAccount.clabe}
-                    placeholder="012180..."
+                    placeholder={entityFields.bankRoutingPlaceholder}
                     onChange={(e) => {
-                      const raw = e.target.value.replace(/\s+/g, '')
+                      const raw = e.target.value.replace(/\s+/g, '').toUpperCase()
                       const detectedBank =
-                        raw.length >= 3 ? BANXICO_BANK_NAMES[raw.slice(0, 3)] : undefined
+                        entityFields.countryCode === 'MX' && raw.length >= 3
+                          ? BANXICO_BANK_NAMES[raw.slice(0, 3)]
+                          : undefined
                       updateAccount(activeAccount.id, {
                         clabe: raw,
                         bankName:
@@ -277,9 +308,7 @@ export function SupplierBankAccountsManager({
                   />
                   {clabeCheck && (
                     <small className={clabeCheck.valid ? 'ebp-field-hint' : 'ebp-field-err'}>
-                      {clabeCheck.valid
-                        ? `Banxico Mod-10 válida${clabeCheck.bankLabel ? ` (${clabeCheck.bankLabel})` : ''}`
-                        : clabeCheck.reason}
+                      {clabeCheck.valid ? clabeCheck.hintOk : clabeCheck.reason}
                     </small>
                   )}
                 </label>

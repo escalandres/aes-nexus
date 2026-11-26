@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 import { parseErpDateToIso } from './ReportsSection'
 import type { EmployeeRecord } from '../data/employees'
 import type { PurchaseOrder, Warehouse } from '../data/operations'
@@ -45,7 +46,7 @@ const LOCATION_TYPES: LocationType[] = [
   'Punto de venta',
 ]
 
-const CURRENCY_OPTIONS = ['MXN', 'USD', 'EUR', 'COP', 'CLP', 'PEN'] as const
+const CURRENCY_OPTIONS = ['MXN', 'USD', 'EUR', 'VES', 'COP', 'CLP', 'PEN'] as const
 
 interface SubsidiaryDetailViewProps {
   subsidiaryId: string
@@ -162,6 +163,7 @@ export function SubsidiaryDetailView({
   onUpdateLocations,
 }: SubsidiaryDetailViewProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
   const isNewMode = subsidiaryId === '__new__'
 
   const subsidiary = useMemo(
@@ -859,7 +861,7 @@ export function SubsidiaryDetailView({
     e.preventDefault()
     if (!code.trim() || !name.trim() || !legalName.trim() || !taxId.trim()) {
       toast.error(
-        'Completa el código, nombre comercial, razón social y RFC / Tax ID de la subsidiaria.',
+        `Completa el código, nombre comercial, razón social y ${countryProfile.taxId.label} de la subsidiaria.`,
         'Campos requeridos'
       )
       return
@@ -1631,7 +1633,7 @@ export function SubsidiaryDetailView({
         <div className="sub-detail-kpi-item">
           <span className="sub-detail-kpi-label">Identidad fiscal y divisa</span>
           <strong className="sub-detail-kpi-value sub-detail-mono">
-            {taxId.trim().toUpperCase() || 'SIN RFC'}
+            {taxId.trim().toUpperCase() || `SIN ${countryProfile.taxId.shortLabel.toUpperCase()}`}
           </strong>
           <span className="sub-detail-kpi-meta">
             {country || 'México'} · Moneda base {currency || 'MXN'}
@@ -1667,11 +1669,11 @@ export function SubsidiaryDetailView({
               </label>
 
               <label className="form-field">
-                <span>RFC / Tax ID *</span>
+                <span>{countryProfile.taxId.label} *</span>
                 <input
                   required
                   disabled={!canEditSub && !isNewMode}
-                  placeholder="Ej. ANS240115KL9"
+                  placeholder={`Ej. ${countryProfile.taxId.placeholder}`}
                   value={taxId}
                   onChange={(e) => setTaxId(e.target.value)}
                 />
@@ -1741,7 +1743,7 @@ export function SubsidiaryDetailView({
               <span>Domicilio fiscal</span>
               <input
                 disabled={!canEditSub && !isNewMode}
-                placeholder="Calle, número, colonia, C.P., ciudad y estado"
+                placeholder={`Calle, número, ${countryProfile.territory.districtLabel.toLowerCase()}, ${countryProfile.territory.postalShortLabel}, ciudad y ${countryProfile.territory.stateLabel.toLowerCase()}`}
                 value={fiscalAddress}
                 onChange={(e) => setFiscalAddress(e.target.value)}
               />

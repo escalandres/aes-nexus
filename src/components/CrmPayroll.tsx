@@ -30,6 +30,7 @@ import {
   type PayrollStatus,
 } from '../data/payroll'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface CrmPayrollProps {
   employees: EmployeeRecord[]
@@ -68,6 +69,15 @@ export function CrmPayroll({
   onOpenEbpWizard,
 }: CrmPayrollProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
+  const payrollTaxLabel =
+    countryProfile.code === 'MX'
+      ? 'ISR / IMSS'
+      : countryProfile.code === 'ES'
+      ? 'IRPF / Seg. Social'
+      : countryProfile.code === 'VE'
+      ? 'ISLR / IVSS'
+      : 'Retenciones / Seg. Soc.'
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
@@ -321,8 +331,8 @@ export function CrmPayroll({
     const folio = `NOM-2026-${prefix}${String(payrollRuns.length + 22).padStart(2, '0')}`
     const bankObj = bankAccounts.find((b) => b.id === bankAccountId)
     const paymentMethodLabel = bankObj
-      ? `Transferencia SPEI · ${bankObj.bankName} ${bankObj.accountNumber}`
-      : 'Transferencia SPEI'
+      ? `${countryProfile.bank.defaultTransferMethod} · ${bankObj.bankName} ${bankObj.accountNumber}`
+      : countryProfile.bank.defaultTransferMethod
 
     if (editingRunId) {
       const existingRun = payrollRuns.find((r) => r.id === editingRunId)
@@ -429,7 +439,7 @@ export function CrmPayroll({
       'EMPLEADOS',
       'SUELDO BRUTO',
       'BONOS',
-      'DEDUCCIONES (ISR/IMSS)',
+      `DEDUCCIONES (${payrollTaxLabel.toUpperCase()})`,
       'TOTAL NETO PAGADO',
       'METODO / CUENTA',
       'ESTADO',
@@ -473,12 +483,12 @@ export function CrmPayroll({
       'PUESTO',
       'DEPARTAMENTO',
       'BANCO',
-      'CLABE',
+      countryProfile.bank.routingShortLabel.toUpperCase(),
       'DIAS',
       'SUELDO BRUTO',
       'BONOS',
-      'ISR',
-      'IMSS',
+      countryProfile.code === 'MX' ? 'ISR' : countryProfile.code === 'ES' ? 'IRPF' : countryProfile.code === 'VE' ? 'ISLR' : 'IMP. RENTA',
+      countryProfile.hr.socialSecurityLabel.toUpperCase(),
       'OTRAS DEDUCCIONES',
       'NETO A PAGAR',
     ]
@@ -894,7 +904,7 @@ export function CrmPayroll({
                         checked={applyAutomaticTaxes}
                         onChange={(e) => setApplyAutomaticTaxes(e.target.checked)}
                       />
-                      <span>Calcular ISR / IMSS</span>
+                      <span>Calcular {payrollTaxLabel}</span>
                     </label>
                     <label className="low-stock-toggle" style={{ fontSize: 9 }}>
                       <input
@@ -925,7 +935,7 @@ export function CrmPayroll({
                         <th style={{ textAlign: 'right' }}>SUELDO PROP.</th>
                         <th style={{ textAlign: 'right', width: 92 }}>BONOS</th>
                         <th style={{ textAlign: 'right', width: 92 }}>OTRAS DED.</th>
-                        <th style={{ textAlign: 'right' }}>ISR + IMSS</th>
+                        <th style={{ textAlign: 'right' }}>{payrollTaxLabel}</th>
                         <th style={{ textAlign: 'right' }}>NETO</th>
                       </tr>
                     </thead>
@@ -1029,7 +1039,7 @@ export function CrmPayroll({
                     <strong>{money(draftTotals.gross + draftTotals.bonuses)}</strong>
                   </div>
                   <div>
-                    <small>ISR + IMSS + Otras ded.</small>
+                    <small>{payrollTaxLabel} + Otras ded.</small>
                     <strong style={{ color: '#b44f3e' }}>-{money(draftTotals.deductions)}</strong>
                   </div>
                   <div>
@@ -1156,7 +1166,7 @@ export function CrmPayroll({
               <div className="po-detail-card">
                 <span>Retenciones y deducciones</span>
                 <strong style={{ color: '#b44f3e' }}>-{money(detailRun.totalDeductions)}</strong>
-                <small>ISR, cuota IMSS y descuentos internos</small>
+                <small>Retenciones fiscales, {countryProfile.hr.socialSecurityLabel} y descuentos internos</small>
               </div>
               <div className="po-detail-card">
                 <span>Total neto dispersado</span>
@@ -1172,11 +1182,11 @@ export function CrmPayroll({
                 <thead>
                   <tr>
                     <th>COLABORADOR</th>
-                    <th>BANCO / CLABE</th>
+                    <th>BANCO / {countryProfile.bank.routingShortLabel.toUpperCase()}</th>
                     <th style={{ textAlign: 'center' }}>DÍAS</th>
                     <th style={{ textAlign: 'right' }}>SUELDO BASE</th>
                     <th style={{ textAlign: 'right' }}>BONOS</th>
-                    <th style={{ textAlign: 'right' }}>ISR + IMSS</th>
+                    <th style={{ textAlign: 'right' }}>{payrollTaxLabel}</th>
                     <th style={{ textAlign: 'right' }}>OTRAS DED.</th>
                     <th style={{ textAlign: 'right' }}>NETO PAGADO</th>
                   </tr>
@@ -1194,7 +1204,7 @@ export function CrmPayroll({
                       <td>
                         <div className="supplier-cell">
                           <strong>{rec.bankName || 'Sin banco'}</strong>
-                          <small>{rec.clabe || 'Sin CLABE registrada'}</small>
+                          <small>{rec.clabe || `Sin ${countryProfile.bank.routingShortLabel} registrada`}</small>
                         </div>
                       </td>
                       <td style={{ textAlign: 'center' }}>{rec.daysWorked}</td>

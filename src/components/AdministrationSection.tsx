@@ -304,7 +304,7 @@ export function AdministrationSection({
   canDeleteInTab,
 }: AdministrationSectionProps) {
   const toast = useToast()
-  const { t, formatDate, formatTime } = useI18n()
+  const { t, formatDate, formatTime, countryProfile } = useI18n()
 
   const canCreateSub = canCreateInTab ? canCreateInTab('Subsidiarias') : true
   const canEditSub = canEditInTab ? canEditInTab('Subsidiarias') : true
@@ -1014,7 +1014,7 @@ export function AdministrationSection({
     e.preventDefault()
     if (!subCode.trim() || !subName.trim() || !subLegalName.trim() || !subTaxId.trim()) {
       toast.error(
-        'Indica el código, nombre comercial, razón social y RFC / Tax ID de la subsidiaria.',
+        `Indica el código, nombre comercial, razón social y ${countryProfile.taxId.label} de la subsidiaria.`,
         'Campos requeridos'
       )
       return
@@ -1530,7 +1530,7 @@ export function AdministrationSection({
                   <Search size={14} />
                   <input
                     type="text"
-                    placeholder="Buscar por código, nombre, razón social, RFC o país..."
+                    placeholder={`Buscar por código, nombre, razón social, ${countryProfile.taxId.shortLabel} o país...`}
                     value={subsidiarySearch}
                     onChange={(e) => setSubsidiarySearch(e.target.value)}
                   />
@@ -1584,7 +1584,7 @@ export function AdministrationSection({
                   <tr>
                     <th style={{ width: '110px' }}>CÓDIGO</th>
                     <th>SUBSIDIARIA / RAZÓN SOCIAL</th>
-                    <th>RFC / TAX ID</th>
+                    <th>{countryProfile.taxId.label.toUpperCase()}</th>
                     <th>PAÍS Y DIVISA</th>
                     <th>DEPARTAMENTOS Y SEDES</th>
                     <th>ESTADO</th>
@@ -3225,10 +3225,10 @@ export function AdministrationSection({
                 </label>
 
                 <label className="form-field">
-                  <span>RFC / Tax ID *</span>
+                  <span>{countryProfile.taxId.label} *</span>
                   <input
                     required
-                    placeholder="Ej. ANM210412KX8"
+                    placeholder={`Ej. ${countryProfile.taxId.placeholder}`}
                     value={subTaxId}
                     onChange={(e) => setSubTaxId(e.target.value)}
                   />
