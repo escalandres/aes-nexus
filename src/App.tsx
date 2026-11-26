@@ -7,8 +7,12 @@ import {
   Target, Users, WalletCards, Warehouse as WarehouseIcon, ShieldCheck, X,
   Check, MapPin, AlertTriangle, SlidersHorizontal, CheckCircle2, Package,
   LockKeyhole, ShieldAlert, UserCheck, CheckCheck, Truck, Receipt, FileText, RotateCcw,
-  LogIn, LogOut, BarChart3, BadgeCheck, Trash2,
+  LogIn, LogOut, BarChart3, BadgeCheck, Trash2, Globe,
 } from 'lucide-react'
+import {
+  DISPLAY_CURRENCY_OPTIONS,
+  getRateSummaryLabel,
+} from './services/currencyService'
 import {
   activities,
   CRM_TODAY_ISO,
@@ -24,6 +28,7 @@ import { CountryFlag } from './components/CountryFlag'
 import { ToastProvider, useToast } from './components/Toast'
 import { I18nProvider, useI18n } from './i18n/I18nContext'
 import type { TranslationKey } from './i18n/translations'
+import { getEntityCountryFields } from './data/countryLocalization'
 import { SettingsSection } from './components/SettingsSection'
 import { RoleSessionSelectorModal } from './components/RoleSessionSelectorModal'
 import { CrmEmployees } from './components/CrmEmployees'
@@ -70,13 +75,19 @@ import {
   resolveEffectiveAccess,
 } from './data/accessControl'
 import { initialPayrollRuns, type PayrollRunRecord } from './data/payroll'
-import { ProductsAndServices } from './components/ProductsAndServices'
+import { ProductsAndServices, type CatalogSaveSyncOptions } from './components/ProductsAndServices'
 import { QuotesSection } from './components/QuotesSection'
 import { OrdersSection } from './components/OrdersSection'
 import { SalesInvoices } from './components/SalesInvoices'
 import { SalesOverview } from './components/SalesOverview'
 import { initialQuotes, initialOrders, type Quote, type SalesOrder, type SalesSectionTab } from './data/sales'
-import { initialProductsAndServices } from './data/products'
+import { initialProductsAndServices, type ProductServiceItem } from './data/products'
+import {
+  deriveSyncedProducts,
+  matchesProductInventoryRow,
+  syncCatalogToInventoryOnSave,
+  syncInventoryToCatalogOnUpdate,
+} from './utils/catalogInventorySync'
 import { OperationsInventory } from './components/OperationsInventory'
 import { OperationsTransfers } from './components/OperationsTransfers'
 import { OperationsPurchases } from './components/OperationsPurchases'
@@ -93,6 +104,8 @@ import {
   doesTransitionRequireApproval,
   getAllowedNextStatusesForReturn,
   getDefaultInitialStatusForReturn,
+  initialCustomerReturns,
+  initialSupplierReturns,
   isReturnDeleteBlocked,
   isReturnEditBlocked,
   loadStoredCustomerReturns,
@@ -107,6 +120,13 @@ import {
   type SupplierReturn,
   type SupplierReturnStatus,
 } from './data/returns'
+import {
+  clearAllErpWorkspaceStorage,
+  clearTransactionalErpStorage,
+  ERP_DATA_STORAGE_KEYS,
+  loadPersistedArray,
+  savePersistedJson,
+} from './utils/erpPersistence'
 import {
   initialRequisitions,
   type PurchaseRequisition,
@@ -764,7 +784,10 @@ const subsidiaryIdFromPath = (pathname: string): string | null => {
 
 function AppContent() {
   const toast = useToast()
-  const { t } = useI18n()
+  const { t, countryProfile, reportingCurrency, setReportingCurrencyCode } = useI18n()
+  const activeCurrency = reportingCurrency || countryProfile.defaultCurrency
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
   const [activePage, setActivePage] = useState(() => pageFromPath(window.location.pathname))
   const [crmSection, setCrmSection] = useState(() => crmSectionFromPath(window.location.pathname))
   const [salesSection, setSalesSection] = useState<SalesSectionTab>(() => salesSectionFromPath(window.location.pathname))
@@ -777,8 +800,13 @@ function AppContent() {
   const [selectedSubsidiaryId, setSelectedSubsidiaryId] = useState<string | null>(() =>
     subsidiaryIdFromPath(window.location.pathname)
   )
-  const [quotes, setQuotes] = useState<Quote[]>(initialQuotes)
-  const [orders, setOrders] = useState<SalesOrder[]>(initialOrders)
+  const skipDataPersistRef = useRef(false)
+  const [quotes, setQuotes] = useState<Quote[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.quotes, initialQuotes)
+  )
+  const [orders, setOrders] = useState<SalesOrder[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.orders, initialOrders)
+  )
   const [customerReturns, setCustomerReturns] = useState<CustomerReturn[]>(() => loadStoredCustomerReturns())
   const [supplierReturns, setSupplierReturns] = useState<SupplierReturn[]>(() => loadStoredSupplierReturns())
   const [returnWorkflows, setReturnWorkflows] = useState<ReturnWorkflowsSettings>(() => loadStoredReturnWorkflows())
@@ -798,12 +826,26 @@ function AppContent() {
     const validSubIds = new Set(loadStoredSubsidiaries().map((s) => s.id))
     return buildWarehousesFromLocations(loadStoredLocations(validSubIds))
   })
-  const [inventory, setInventory] = useState<InventoryItemLocation[]>(initialInventory)
-  const [transfers, setTransfers] = useState<InventoryTransfer[]>(initialTransfers)
+  const [products, setProducts] = useState<ProductServiceItem[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.products, initialProductsAndServices)
+  )
+  const [presetCatalogSearchSku, setPresetCatalogSearchSku] = useState<string>('')
+  const [presetInventorySearchSku, setPresetInventorySearchSku] = useState<string>('')
+  const [inventory, setInventory] = useState<InventoryItemLocation[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.inventory, initialInventory)
+  )
+  const [transfers, setTransfers] = useState<InventoryTransfer[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.transfers, initialTransfers)
+  )
   const [presetTransferItem, setPresetTransferItem] = useState<InventoryItemLocation | null>(null)
   const [categoryStockThresholds, setCategoryStockThresholds] = useState<CategoryStockThresholdRule[]>(
     () => loadStoredCategoryStockThresholds()
   )
+
+  const inventoryRef = useRef<InventoryItemLocation[]>(inventory)
+  inventoryRef.current = inventory
+  const productsRef = useRef<ProductServiceItem[]>(products)
+  productsRef.current = products
 
   useEffect(() => {
     const syncCategoryThresholds = (e: Event) => {
@@ -820,8 +862,8 @@ function AppContent() {
   }, [])
 
   const productCategoryMap = useMemo(
-    () => buildProductCategoryLookup(initialProductsAndServices),
-    []
+    () => buildProductCategoryLookup(products),
+    [products]
   )
 
   const effectiveInventory = useMemo<InventoryItemLocation[]>(() => {
@@ -841,6 +883,11 @@ function AppContent() {
       }
     })
   }, [inventory, categoryStockThresholds, productCategoryMap])
+
+  const syncedProducts = useMemo<ProductServiceItem[]>(
+    () => deriveSyncedProducts(products, effectiveInventory),
+    [products, effectiveInventory]
+  )
 
   const handleUpdateCategoryThresholds = (nextRules: CategoryStockThresholdRule[]) => {
     setCategoryStockThresholds(nextRules)
@@ -968,19 +1015,45 @@ function AppContent() {
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [isNotificationCenterOpen])
-  const [movements, setMovements] = useState<StockMovement[]>(initialMovements)
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(initialPurchaseOrders)
-  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>(initialRequisitions)
-  const [shipments, setShipments] = useState<ShipmentDelivery[]>(initialShipments)
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(initialBankAccounts)
-  const [receivables, setReceivables] = useState<InvoiceReceivable[]>(initialReceivables)
-  const [payables, setPayables] = useState<BillPayable[]>(initialPayables)
-  const [expenses, setExpenses] = useState<ExpenseRecord[]>(initialExpenses)
-  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetRule[]>(initialExpenseBudgets)
-  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseTemplate[]>(initialRecurringExpenses)
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>(initialTransactions)
-  const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(initialChartAccounts)
-  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(initialPayrollRuns)
+  const [movements, setMovements] = useState<StockMovement[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.movements, initialMovements)
+  )
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.purchaseOrders, initialPurchaseOrders)
+  )
+  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.requisitions, initialRequisitions)
+  )
+  const [shipments, setShipments] = useState<ShipmentDelivery[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.shipments, initialShipments)
+  )
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.bankAccounts, initialBankAccounts)
+  )
+  const [receivables, setReceivables] = useState<InvoiceReceivable[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.receivables, initialReceivables)
+  )
+  const [payables, setPayables] = useState<BillPayable[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.payables, initialPayables)
+  )
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.expenses, initialExpenses)
+  )
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetRule[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.expenseBudgets, initialExpenseBudgets)
+  )
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpenseTemplate[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.recurringExpenses, initialRecurringExpenses)
+  )
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.transactions, initialTransactions)
+  )
+  const [chartAccounts, setChartAccounts] = useState<ChartAccount[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.chartAccounts, initialChartAccounts)
+  )
+  const [payrollRuns, setPayrollRuns] = useState<PayrollRunRecord[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.payrollRuns, initialPayrollRuns)
+  )
 
   const [marginAlertSettings, setMarginAlertSettings] = useState<MarginAlertSettings>(() =>
     loadMarginAlertSettings()
@@ -1741,7 +1814,9 @@ function AppContent() {
     }
     return initialBankFormatPacks
   })
-  const [ebpBatches, setEbpBatches] = useState<ElectronicPaymentBatch[]>(initialEbpBatches)
+  const [ebpBatches, setEbpBatches] = useState<ElectronicPaymentBatch[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.ebpBatches, initialEbpBatches)
+  )
   const [globalEbpWizard, setGlobalEbpWizard] = useState<{
     isOpen: boolean
     batchType: 'Nómina' | 'Proveedores'
@@ -1835,7 +1910,7 @@ function AppContent() {
       entityName: `Nómina ${run.periodLabel}`,
       reference: refLabel || run.folio,
       amount: -run.totalNet,
-      method: 'Transferencia SPEI',
+      method: countryProfile.bank.defaultTransferMethod,
       account: bankAcc ? `${bankAcc.bankName} ${bankAcc.accountNumber}` : 'Cuenta operativa',
     })
     handleAddExpense({
@@ -1853,7 +1928,7 @@ function AppContent() {
       user: 'Andrea Morales',
     })
 
-    // Sync ISR + IMSS tax retention liability into Payables & Chart Accounts (2005-001 & 6002-001)
+    // Sync tax retention liability into Payables & Chart Accounts (2005-001 & 6002-001)
     const taxRetentionTotal = run.receipts.reduce(
       (sum, r) => sum + r.isrDeduction + r.imssDeduction,
       0
@@ -1866,10 +1941,10 @@ function AppContent() {
       setPayables((prev) => [
         {
           id: `cxp_tax_${Date.now()}`,
-          folio: `CXP-SAT-${run.folio.replace('NOM-', '')}`,
+          folio: `CXP-${countryProfile.taxId.authority.slice(0, 6).toUpperCase().replace(/\s+/g, '')}-${run.folio.replace('NOM-', '')}`,
           purchaseOrderFolio: run.folio,
-          supplierCompany: 'SAT / IMSS · Retenciones de Nómina',
-          supplierContact: 'Entero mensual de ISR e IMSS',
+          supplierCompany: countryProfile.fiscalDoc.taxAuthorityVendorName,
+          supplierContact: `Entero mensual de retenciones (${countryProfile.hr.socialSecurityLabel})`,
           issueDate: dateStr,
           dueDate: dueStr,
           subtotal: taxRetentionTotal,
@@ -1878,8 +1953,8 @@ function AppContent() {
           paidAmount: 0,
           balance: taxRetentionTotal,
           status: 'Pendiente',
-          currency: 'MXN',
-          paymentMethod: 'Línea de captura SAT',
+          currency: activeCurrency === 'USD' ? 'USD' : 'MXN',
+          paymentMethod: countryProfile.fiscalDoc.taxAuthorityPaymentMethod,
         },
         ...prev,
       ])
@@ -2182,6 +2257,217 @@ function AppContent() {
     })
   }
 
+  const handleUpdateInventorySynced = (
+    updater:
+      | InventoryItemLocation[]
+      | ((prev: InventoryItemLocation[]) => InventoryItemLocation[])
+  ) => {
+    const nextInventory =
+      typeof updater === 'function' ? updater(inventoryRef.current) : updater
+    inventoryRef.current = nextInventory
+    setInventory(nextInventory)
+
+    const syncRes = syncInventoryToCatalogOnUpdate(nextInventory, productsRef.current)
+    if (syncRes.createdSkus.length > 0 || syncRes.updatedSkus.length > 0) {
+      productsRef.current = syncRes.nextProducts
+      setProducts(syncRes.nextProducts)
+    }
+
+    if (syncRes.createdSkus.length > 0) {
+      appendAuditLog({
+        category: 'sales',
+        crudOperation: 'CREATE',
+        entityType: 'Catálogo de productos',
+        action: 'Alta automática en catálogo desde Inventario',
+        detail: `SKUs sincronizados: ${syncRes.createdSkus.join(', ')}`,
+        user: activeSessionProfile.name,
+        userId: activeActorUserId,
+      })
+    }
+  }
+
+  const handleCreateCatalogItem = (
+    newItem: ProductServiceItem,
+    options?: CatalogSaveSyncOptions
+  ) => {
+    const nextProducts = [newItem, ...productsRef.current]
+    productsRef.current = nextProducts
+    setProducts(nextProducts)
+
+    if (newItem.type === 'product') {
+      const syncResult = syncCatalogToInventoryOnSave({
+        mode: 'create',
+        savedItem: newItem,
+        currentInventory: inventoryRef.current,
+        warehouses,
+        preferredWarehouseId: options?.warehouseId,
+        preferredBin: options?.locationBin,
+        movementsCount: movements.length,
+        actorName: activeSessionProfile.name,
+      })
+      inventoryRef.current = syncResult.nextInventory
+      setInventory(syncResult.nextInventory)
+      syncResult.newMovements.forEach((m) => handleAddMovement(m))
+
+      toast.success(
+        `"${newItem.name}" guardado en catálogo y sincronizado con ${
+          syncResult.affectedWarehouses[0] || 'Inventario'
+        }.`,
+        'Artículo registrado y sincronizado'
+      )
+    } else {
+      toast.success(`"${newItem.name}" se guardó en el catálogo de ventas.`, 'Servicio registrado')
+    }
+
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'CREATE',
+      entityType: newItem.type === 'product' ? 'Producto' : 'Servicio',
+      entityId: newItem.id,
+      action: 'Alta en catálogo comercial',
+      detail: `${newItem.sku} · ${newItem.name} · ${money(newItem.unitPrice)}`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+  }
+
+  const handleUpdateCatalogItem = (
+    updatedItem: ProductServiceItem,
+    prevItem: ProductServiceItem,
+    options?: CatalogSaveSyncOptions
+  ) => {
+    const nextProducts = productsRef.current.map((p) =>
+      p.id === updatedItem.id ? updatedItem : p
+    )
+    productsRef.current = nextProducts
+    setProducts(nextProducts)
+
+    const syncResult = syncCatalogToInventoryOnSave({
+      mode: 'edit',
+      prevItem,
+      savedItem: updatedItem,
+      currentInventory: inventoryRef.current,
+      warehouses,
+      preferredWarehouseId: options?.warehouseId,
+      preferredBin: options?.locationBin,
+      movementsCount: movements.length,
+      actorName: activeSessionProfile.name,
+    })
+    inventoryRef.current = syncResult.nextInventory
+    setInventory(syncResult.nextInventory)
+    syncResult.newMovements.forEach((m) => handleAddMovement(m))
+
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'UPDATE',
+      entityType: updatedItem.type === 'product' ? 'Producto' : 'Servicio',
+      entityId: updatedItem.id,
+      action: 'Actualización de catálogo sincronizada con Inventario',
+      detail: `${updatedItem.sku} · ${updatedItem.name}${
+        syncResult.affectedWarehouses.length > 0
+          ? ` · Almacén: ${syncResult.affectedWarehouses.join(', ')}`
+          : ''
+      }`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+
+    toast.success(
+      updatedItem.type === 'product'
+        ? `Los cambios en "${updatedItem.name}" se sincronizaron entre Catálogo e Inventario.`
+        : `Los cambios en "${updatedItem.name}" fueron guardados.`,
+      'Artículo actualizado'
+    )
+  }
+
+  const handleDuplicateCatalogItem = (item: ProductServiceItem) => {
+    const baseSku = `${item.sku}-COPIA`
+    let candidateSku = baseSku
+    let suffix = 2
+    while (
+      productsRef.current.some(
+        (p) => p.sku.trim().toUpperCase() === candidateSku.trim().toUpperCase()
+      )
+    ) {
+      candidateSku = `${baseSku}-${suffix}`
+      suffix += 1
+    }
+
+    const duplicated: ProductServiceItem = {
+      ...item,
+      id: `prod_${Date.now()}`,
+      sku: candidateSku,
+      name: `${item.name} (Copia)`,
+      stock: item.type === 'product' ? 0 : undefined,
+      lastUpdated: 'Hoy',
+    }
+    const nextProducts = [duplicated, ...productsRef.current]
+    productsRef.current = nextProducts
+    setProducts(nextProducts)
+
+    if (duplicated.type === 'product') {
+      const syncResult = syncCatalogToInventoryOnSave({
+        mode: 'create',
+        savedItem: duplicated,
+        currentInventory: inventoryRef.current,
+        warehouses,
+        movementsCount: movements.length,
+        actorName: activeSessionProfile.name,
+      })
+      inventoryRef.current = syncResult.nextInventory
+      setInventory(syncResult.nextInventory)
+    }
+
+    toast.success(`Se duplicó "${item.name}" (${duplicated.sku}) en catálogo.`, 'Artículo duplicado')
+  }
+
+  const handleToggleCatalogStatus = (item: ProductServiceItem) => {
+    const nextStatus: 'Activo' | 'Inactivo' = item.status === 'Activo' ? 'Inactivo' : 'Activo'
+    const nextProducts = productsRef.current.map((p) =>
+      p.id === item.id ? { ...p, status: nextStatus, lastUpdated: 'Hoy' } : p
+    )
+    productsRef.current = nextProducts
+    setProducts(nextProducts)
+    toast.info(`"${item.name}" ahora está ${nextStatus.toLowerCase()}.`, 'Estado actualizado')
+  }
+
+  const handleDeleteCatalogItem = (item: ProductServiceItem) => {
+    const nextProducts = productsRef.current.filter((p) => p.id !== item.id)
+    productsRef.current = nextProducts
+    setProducts(nextProducts)
+
+    const removedInvCount = inventoryRef.current.filter((inv) =>
+      matchesProductInventoryRow(inv, item)
+    ).length
+    if (removedInvCount > 0) {
+      const nextInventory = inventoryRef.current.filter(
+        (inv) => !matchesProductInventoryRow(inv, item)
+      )
+      inventoryRef.current = nextInventory
+      setInventory(nextInventory)
+    }
+
+    appendAuditLog({
+      category: 'sales',
+      crudOperation: 'DELETE',
+      entityType: item.type === 'product' ? 'Producto' : 'Servicio',
+      entityId: item.id,
+      action: 'Eliminación de artículo del catálogo',
+      detail: `${item.sku} · ${item.name}${
+        removedInvCount > 0 ? ` (${removedInvCount} registro(s) de almacén desvinculados)` : ''
+      }`,
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    setNotice(`Artículo “${item.name}” eliminado del catálogo.`)
+    toast.info(
+      removedInvCount > 0
+        ? `"${item.name}" eliminado del catálogo y de ${removedInvCount} registro(s) de almacén.`
+        : `"${item.name}" fue eliminado del catálogo.`,
+      'Artículo eliminado'
+    )
+  }
+
   const handleAddTransaction = (txn: PaymentTransaction) => {
     setTransactions((prev) => [txn, ...prev])
   }
@@ -2348,7 +2634,7 @@ function AppContent() {
     nextSeq: number,
     uidSuffix = ''
   ) => {
-    const tax = tpl.hasTax ? Number((tpl.amount * 0.16).toFixed(2)) : 0
+    const tax = tpl.hasTax ? Number((tpl.amount * standardVatRate).toFixed(2)) : 0
     const total = Number((tpl.amount + tax).toFixed(2))
     const folio = `GST-2026-${String(nextSeq).padStart(3, '0')}`
     const runIso = tpl.nextRunDate || new Date().toISOString().split('T')[0]
@@ -2479,7 +2765,7 @@ function AppContent() {
       entityType: 'Subsidiaria',
       entityId: sub.id,
       action: 'Creación de subsidiaria',
-      detail: `${sub.code} · ${sub.name} (RFC: ${sub.taxId} · ${sub.currency}${sub.isHolding ? ' · Matriz' : ''})`,
+      detail: `${sub.code} · ${sub.name} (${countryProfile.taxId.shortLabel}: ${sub.taxId} · ${sub.currency}${sub.isHolding ? ' · Matriz' : ''})`,
       user: activeSessionProfile.name,
       userId: activeActorUserId,
     })
@@ -2496,7 +2782,7 @@ function AppContent() {
       if (prev.code !== next.code) changes.push(`Código: ${prev.code} → ${next.code}`)
       if (prev.name !== next.name) changes.push(`Nombre: ${prev.name} → ${next.name}`)
       if (prev.legalName !== next.legalName) changes.push('Razón social actualizada')
-      if (prev.taxId !== next.taxId) changes.push(`RFC: ${prev.taxId} → ${next.taxId}`)
+      if (prev.taxId !== next.taxId) changes.push(`${countryProfile.taxId.shortLabel}: ${prev.taxId} → ${next.taxId}`)
       if (prev.country !== next.country) changes.push(`País: ${prev.country} → ${next.country}`)
       if (prev.currency !== next.currency) changes.push(`Divisa: ${prev.currency} → ${next.currency}`)
       if ((prev.legalRep || '') !== (next.legalRep || '')) {
@@ -3117,7 +3403,7 @@ function AppContent() {
     if (created.status === 'Recibida en almacén' && !created.inventoryApplied) {
       const restockLines = created.items.filter((it) => it.disposition === 'Reingreso a almacén')
       if (restockLines.length > 0) {
-        setInventory((prev) =>
+        handleUpdateInventorySynced((prev) =>
           prev.map((inv) => {
             if (inv.warehouseId !== created.warehouseId) return inv
             const matched = restockLines.find(
@@ -3174,7 +3460,7 @@ function AppContent() {
     if (nextStatus === 'Recibida en almacén' && !appliedInv) {
       const restockLines = target.items.filter((it) => it.disposition === 'Reingreso a almacén')
       if (restockLines.length > 0) {
-        setInventory((prev) =>
+        handleUpdateInventorySynced((prev) =>
           prev.map((inv) => {
             if (inv.warehouseId !== target.warehouseId) return inv
             const matched = restockLines.find(
@@ -3571,7 +3857,7 @@ function AppContent() {
             ],
     }
     if (created.status === 'Enviada a proveedor' && !created.inventoryApplied) {
-      setInventory((prev) =>
+      handleUpdateInventorySynced((prev) =>
         prev.map((inv) => {
           if (inv.warehouseId !== created.warehouseId) return inv
           const matched = created.items.find(
@@ -3625,7 +3911,7 @@ function AppContent() {
     let creditNoteFolio = target.creditNoteFolio
 
     if (nextStatus === 'Enviada a proveedor' && !appliedInv) {
-      setInventory((prev) =>
+      handleUpdateInventorySynced((prev) =>
         prev.map((inv) => {
           if (inv.warehouseId !== target.warehouseId) return inv
           const matched = target.items.find(
@@ -4069,7 +4355,7 @@ function AppContent() {
 
     const poItems = req.items.map((it, idx) => {
       const sub = it.quantity * it.estimatedUnitCost
-      const tax = Math.round(sub * 0.16)
+      const tax = Math.round(sub * standardVatRate)
       return {
         id: `poi_${Date.now()}_${idx}`,
         sku: it.sku,
@@ -4077,7 +4363,7 @@ function AppContent() {
         quantity: it.quantity,
         receivedQty: 0,
         unitCost: it.estimatedUnitCost,
-        taxRate: '16%' as const,
+        taxRate: `${standardVatPct}%` as '16%',
         subtotal: sub,
         taxAmount: tax,
         total: sub + tax,
@@ -4104,7 +4390,7 @@ function AppContent() {
       subtotal,
       taxTotal,
       total,
-      currency: 'MXN',
+      currency: activeCurrency === 'USD' ? 'USD' : 'MXN',
     }
 
     setPurchaseOrders((prev) => [newPO, ...prev])
@@ -4179,7 +4465,7 @@ function AppContent() {
       balance: po.total,
       status: 'Pendiente',
       currency: po.currency,
-      paymentMethod: 'Transferencia SPEI',
+      paymentMethod: countryProfile.bank.defaultTransferMethod,
     }
     handleCreateSupplierBill(newBill)
     toast.success(
@@ -4228,10 +4514,166 @@ function AppContent() {
   }, [purchaseOrders, payables])
   const [clientQuery, setClientQuery] = useState('')
   const [clientStatus, setClientStatus] = useState('Todos')
-  const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(clients)
-  const [supplierRecords, setSupplierRecords] = useState(suppliers)
-  const [opportunityRecords, setOpportunityRecords] = useState(opportunities)
-  const [activityRecords, setActivityRecords] = useState<CrmActivity[]>(activities)
+  const [clientRecords, setClientRecords] = useState<DirectoryRecord[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.clients, clients)
+  )
+  const [supplierRecords, setSupplierRecords] = useState<DirectoryRecord[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.suppliers, suppliers)
+  )
+  const [opportunityRecords, setOpportunityRecords] = useState(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.opportunities, opportunities)
+  )
+  const [activityRecords, setActivityRecords] = useState<CrmActivity[]>(() =>
+    loadPersistedArray(ERP_DATA_STORAGE_KEYS.activities, activities)
+  )
+
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.quotes, quotes)
+  }, [quotes])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.orders, orders)
+  }, [orders])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.products, products)
+  }, [products])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.inventory, inventory)
+  }, [inventory])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.transfers, transfers)
+  }, [transfers])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.movements, movements)
+  }, [movements])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.purchaseOrders, purchaseOrders)
+  }, [purchaseOrders])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.requisitions, requisitions)
+  }, [requisitions])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.shipments, shipments)
+  }, [shipments])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.bankAccounts, bankAccounts)
+  }, [bankAccounts])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.receivables, receivables)
+  }, [receivables])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.payables, payables)
+  }, [payables])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.expenses, expenses)
+  }, [expenses])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.expenseBudgets, expenseBudgets)
+  }, [expenseBudgets])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.recurringExpenses, recurringExpenses)
+  }, [recurringExpenses])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.transactions, transactions)
+  }, [transactions])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.chartAccounts, chartAccounts)
+  }, [chartAccounts])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.payrollRuns, payrollRuns)
+  }, [payrollRuns])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.ebpBatches, ebpBatches)
+  }, [ebpBatches])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.clients, clientRecords)
+  }, [clientRecords])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.suppliers, supplierRecords)
+  }, [supplierRecords])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.opportunities, opportunityRecords)
+  }, [opportunityRecords])
+  useEffect(() => {
+    if (skipDataPersistRef.current) return
+    savePersistedJson(ERP_DATA_STORAGE_KEYS.activities, activityRecords)
+  }, [activityRecords])
+
+  const handleResetTransactionalData = () => {
+    clearTransactionalErpStorage()
+    setQuotes(initialQuotes)
+    setOrders(initialOrders)
+    setCustomerReturns(initialCustomerReturns)
+    setSupplierReturns(initialSupplierReturns)
+    setProducts(initialProductsAndServices)
+    setInventory(initialInventory)
+    setTransfers(initialTransfers)
+    setMovements(initialMovements)
+    setPurchaseOrders(initialPurchaseOrders)
+    setRequisitions(initialRequisitions)
+    setShipments(initialShipments)
+    setBankAccounts(initialBankAccounts)
+    setReceivables(initialReceivables)
+    setPayables(initialPayables)
+    setExpenses(initialExpenses)
+    setExpenseBudgets(initialExpenseBudgets)
+    setRecurringExpenses(initialRecurringExpenses)
+    setTransactions(initialTransactions)
+    setChartAccounts(initialChartAccounts)
+    setPayrollRuns(initialPayrollRuns)
+    setEbpBatches(initialEbpBatches)
+    setClientRecords(clients)
+    setSupplierRecords(suppliers)
+    setOpportunityRecords(opportunities)
+    setActivityRecords(activities)
+    setPresetCatalogSearchSku('')
+    setPresetInventorySearchSku('')
+    setPresetTransferItem(null)
+    setPresetOrderToInvoice(null)
+    setPresetInvoiceIdToView(null)
+    setPresetOrderFolioToView(null)
+    setNotice('')
+    appendAuditLog({
+      category: 'settings',
+      crudOperation: 'UPDATE',
+      entityType: 'Datos de demostración',
+      action: 'Restablecimiento de datos transaccionales y directorios demo',
+      detail: 'Se restauraron los registros iniciales de Ventas, Compras, Inventario, Finanzas, Gastos, Nómina y CRM conservando usuarios, roles y configuración.',
+      user: activeSessionProfile.name,
+      userId: activeActorUserId,
+    })
+    toast.success(
+      'Se restauraron los datos iniciales de demostración en todos los módulos operativos y comerciales.',
+      'Datos restablecidos'
+    )
+  }
+
+  const handleResetAllWorkspaceData = () => {
+    skipDataPersistRef.current = true
+    clearAllErpWorkspaceStorage()
+    window.location.reload()
+  }
   const [createKind, setCreateKind] = useState<CreateKind | null>(null)
   const [createForm, setCreateForm] = useState({
     supplierCode: '',
@@ -4790,6 +5232,8 @@ function AppContent() {
       )
       return
     }
+    const defaultEntityCountry = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
+    const defaultEntityFields = getEntityCountryFields(defaultEntityCountry, countryProfile.code)
     setCreateKind(kind)
     setCreateForm({
       supplierCode: '',
@@ -4803,18 +5247,18 @@ function AppContent() {
       activityIcon: 'check',
       activityNotes: '',
       value: '',
-      country: 'MX',
+      country: defaultEntityCountry,
       addressStreet: '',
       addressColony: '',
       addressCity: '',
       addressState: '',
       addressZip: '',
-      addressCountry: 'MX',
+      addressCountry: defaultEntityCountry,
       addressIsShipping: true,
       addressIsBilling: true,
       addressesList: [],
       rfc: '',
-      bankName: 'BBVA México',
+      bankName: defaultEntityFields.bankSampleBanks[0] || '',
       clabe: '',
       accountNumber: '',
       defaultReference: '',
@@ -4829,18 +5273,18 @@ function AppContent() {
       rfc: '',
       entityType: 'company',
       status: 'Activo',
-      currency: 'MXN',
+      currency: defaultEntityCountry === 'MX' ? 'MXN' : 'USD',
       paymentTerms: 'Contado',
       city: '',
       state: '',
-      country: 'MX',
+      country: defaultEntityCountry,
       notes: '',
       addressStreet: '',
       addressColony: '',
       addressCity: '',
       addressState: '',
       addressZip: '',
-      addressCountry: 'MX',
+      addressCountry: defaultEntityCountry,
       addressIsShipping: true,
       addressIsBilling: true,
       addressesList: [],
@@ -4858,6 +5302,7 @@ function AppContent() {
     if (createKind === 'client') {
       setIsSubmittingClient(true)
       try {
+        const fallbackCountry = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
         const clientAddresses: ClientAddress[] = [...clientForm.addressesList]
         if (clientForm.addressStreet.trim() || clientForm.addressCity.trim() || clientForm.addressZip.trim()) {
           clientAddresses.push({
@@ -4867,13 +5312,14 @@ function AppContent() {
             city: clientForm.addressCity.trim(),
             state: clientForm.addressState.trim(),
             zipCode: clientForm.addressZip.trim(),
-            country: clientForm.addressCountry || clientForm.country || 'MX',
+            country: clientForm.addressCountry || clientForm.country || fallbackCountry,
             isShipping: clientForm.addressIsShipping,
             isBilling: clientForm.addressIsBilling,
           })
         }
 
         const primaryAddr = clientAddresses[0]
+        const resolvedClientCountry = clientForm.country || primaryAddr?.country || fallbackCountry
         const response = await createClientApi({
           clientCode: clientForm.clientCode,
           name: clientForm.name,
@@ -4887,7 +5333,7 @@ function AppContent() {
           paymentTerms: clientForm.paymentTerms,
           city: primaryAddr?.city || clientForm.city,
           state: primaryAddr?.state || clientForm.state,
-          country: primaryAddr?.country || clientForm.country || 'MX',
+          country: resolvedClientCountry,
           notes: clientForm.notes,
           addresses: clientAddresses,
         })
@@ -4908,7 +5354,7 @@ function AppContent() {
           paymentTerms: clientData.paymentTerms,
           city: primaryAddr?.city || clientData.address?.city,
           state: primaryAddr?.state || clientData.address?.state,
-          country: primaryAddr?.country || clientData.address?.country || clientForm.country || 'MX',
+          country: clientForm.country || primaryAddr?.country || clientData.address?.country || fallbackCountry,
           notes: clientForm.notes.trim() || undefined,
           addresses: clientAddresses,
         }
@@ -4933,7 +5379,8 @@ function AppContent() {
     if (createKind === 'supplier') {
       const name = createForm.name.trim()
       const company = createForm.company.trim() || name
-      const country = createForm.country.trim() || 'MX'
+      const fallbackCountry = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
+      const country = createForm.country.trim() || fallbackCountry
 
       const supplierAddresses: ClientAddress[] = [...createForm.addressesList]
       if (createForm.addressStreet.trim() || createForm.addressCity.trim() || createForm.addressZip.trim()) {
@@ -5190,7 +5637,7 @@ function AppContent() {
         order: 2,
         title: 'Directorio comercial y tesorería',
         description:
-          'Mantén activos clientes, proveedores con CLABE y tus cuentas bancarias de operación.',
+          `Mantén activos clientes, proveedores con ${countryProfile.bank.routingShortLabel} y tus cuentas bancarias de operación.`,
         evidenceText: `${clientRecords.length} clientes · ${supplierRecords.length} proveedores · ${bankAccounts.length} cuentas`,
         ...s2,
         targetLabel: 'Ir a CRM',
@@ -5527,9 +5974,9 @@ function AppContent() {
         entityType: 'module',
         groupLabel: 'Acciones rápidas',
         title: 'Nuevo proveedor',
-        subtitle: 'Registrar proveedor con RFC, CLABE y cuentas bancarias',
+        subtitle: `Registrar proveedor con ${countryProfile.taxId.shortLabel}, ${countryProfile.bank.routingShortLabel} y cuentas bancarias`,
         meta: 'Crear',
-        keywords: 'alta crear registrar nuevo proveedor clabe banco',
+        keywords: `alta crear registrar nuevo proveedor ${countryProfile.bank.routingShortLabel.toLowerCase()} banco`,
         iconKind: 'action',
         priorityBoost: 74,
         onSelect: () => {
@@ -5782,19 +6229,22 @@ function AppContent() {
 
     // 5. Ventas, compras, inventario, finanzas operativas y gastos
     if (canViewSec('Ventas', 'Catálogo')) {
-      initialProductsAndServices.forEach((prod) => {
+      syncedProducts.forEach((prod) => {
+        const stockText =
+          prod.type === 'product' ? ` · Stock ${prod.stock ?? 0} ${prod.unitOfMeasure}` : ''
         list.push({
           id: `comm:prod:${prod.id}`,
           entityType: 'operations',
           groupLabel: 'Catálogo de productos y servicios',
           title: prod.name,
-          subtitle: `${prod.category} · ${money(prod.unitPrice)} / ${prod.unitOfMeasure} · ${prod.status}`,
+          subtitle: `${prod.category} · ${money(prod.unitPrice)} / ${prod.unitOfMeasure} · ${prod.status}${stockText}`,
           meta: prod.sku,
-          keywords: `${prod.description} ${prod.type} sku producto servicio`,
+          keywords: `${prod.description} ${prod.type} sku producto servicio catalogo`,
           iconKind: 'product',
           priorityBoost: 42,
           onSelect: () => {
             setMenuOpen(false)
+            setPresetCatalogSearchSku(prod.sku)
             navigateToSalesSection('Catálogo')
           },
         })
@@ -6009,9 +6459,9 @@ function AppContent() {
           entityType: 'operations',
           groupLabel: 'Cuentas bancarias y tesorería',
           title: `${bank.bankName} (${bank.accountNumber})`,
-          subtitle: `${bank.type} · CLABE ${bank.clabe}`,
+          subtitle: `${bank.type} · ${countryProfile.bank.routingShortLabel} ${bank.clabe}`,
           meta: money(bank.balance),
-          keywords: `${bank.currency} banco tesoreria clabe`,
+          keywords: `${bank.currency} banco tesoreria clabe iban`,
           iconKind: 'bank',
           priorityBoost: 38,
           onSelect: () => {
@@ -6072,7 +6522,7 @@ function AppContent() {
           entityType: 'help',
           groupLabel: 'Subsidiarias y razones sociales',
           title: sub.name,
-          subtitle: `${sub.legalName} · RFC ${sub.taxId} · ${sub.country}`,
+          subtitle: `${sub.legalName} · ${countryProfile.taxId.shortLabel} ${sub.taxId} · ${sub.country}`,
           meta: sub.code,
           keywords: `${sub.currency} subsidiaria empresa razon social`,
           iconKind: 'admin',
@@ -6194,6 +6644,7 @@ function AppContent() {
     subsidiaries,
     supplierRecords,
     supplierReturns,
+    syncedProducts,
     totalSetupCount,
   ])
 
@@ -6560,6 +7011,36 @@ function AppContent() {
           <div className="breadcrumbs"><span>AES Nexus</span><span className="crumb-slash">/</span><strong>{activePage === 'Inicio' ? t('nav.home') : activePage === 'CRM' ? t('nav.crm') : activePage === 'Ventas' ? t('nav.sales') : activePage === 'Compras' ? t('nav.purchases') : activePage === 'Operaciones' ? t('nav.operations') : activePage === 'Finanzas' ? t('nav.finance') : activePage === 'Gastos' ? t('nav.expenses') : activePage === 'Reportes' ? t('nav.reports') : activePage === 'Administración' ? t('nav.admin') : activePage === 'Configuración' ? t('nav.settings') : activePage === 'Centro de ayuda' ? t('nav.help') : activePage}</strong>{activePage === 'CRM' ? <> <span className="crumb-slash">/</span> <span>{crmSection === 'Clientes' ? t('tabs.crm.clients') : crmSection === 'Proveedores' ? t('tabs.crm.suppliers') : crmSection === 'Empleados' ? t('tabs.crm.employees') : crmSection === 'Nómina' ? t('tabs.crm.payroll') : crmSection === 'Oportunidades' ? t('tabs.crm.opportunities') : crmSection === 'Actividades' ? t('tabs.crm.activities') : t('tabs.crm.summary')}</span> </> : activePage === 'Ventas' ? <> <span className="crumb-slash">/</span> <span>{salesSection === 'Catálogo' ? t('tabs.sales.catalog') : salesSection === 'Cotizaciones' ? t('tabs.sales.quotes') : salesSection === 'Pedidos' ? t('tabs.sales.orders') : salesSection === 'Facturas' ? t('tabs.sales.invoices') : salesSection === 'Devoluciones' ? t('tabs.sales.returns') : t('tabs.sales.summary')}</span> </> : activePage === 'Compras' ? <> <span className="crumb-slash">/</span> <span>{purchasesSection === 'Requisiciones' ? t('tabs.purchases.requisitions') : purchasesSection === 'Órdenes de compra' ? t('tabs.purchases.orders') : purchasesSection === 'Recepciones' ? t('tabs.purchases.receptions') : purchasesSection === 'Facturas' ? t('tabs.purchases.invoices') : purchasesSection === 'Devoluciones' ? t('tabs.purchases.returns') : t('tabs.purchases.summary')}</span> </> : activePage === 'Operaciones' ? <> <span className="crumb-slash">/</span> <span>{operationsSection === 'Inventario' ? t('tabs.ops.inventory') : operationsSection === 'Traslados' ? t('tabs.ops.transfers') : operationsSection === 'Compras' ? t('tabs.ops.purchases') : operationsSection === 'Entregas' ? t('tabs.ops.deliveries') : t('tabs.ops.summary')}</span> </> : activePage === 'Finanzas' ? <> <span className="crumb-slash">/</span> <span>{financeSection === 'Cobros' ? t('tabs.fin.receivables') : financeSection === 'Pagos' ? t('tabs.fin.payables') : financeSection === 'Pagos Bancarios' ? t('tabs.fin.ebp') : financeSection === 'Cuentas contables' ? t('tabs.fin.accounting') : t('tabs.fin.summary')}</span> </> : activePage === 'Gastos' ? <> <span className="crumb-slash">/</span> <span>{expensesSection === 'Registro y pólizas' ? t('tabs.expenses.ledger') : expensesSection === 'Presupuestos y alertas' ? t('tabs.expenses.budgets') : expensesSection === 'Gastos recurrentes' ? t('tabs.expenses.recurring') : t('tabs.expenses.summary')}</span> </> : activePage === 'Reportes' ? <> <span className="crumb-slash">/</span> <span>{reportsSection === 'Estado de Resultados' ? t('tabs.reports.incomeStatement') : reportsSection === 'Finanzas y Tesorería' ? t('tabs.reports.financial') : reportsSection === 'CxP y Pagos EBP' ? t('tabs.reports.payablesEbp') : reportsSection === 'Ventas y CxC' ? t('tabs.reports.sales') : reportsSection === 'Compras e Inventario' ? t('tabs.reports.inventory') : reportsSection === 'Nómina y RRHH' ? t('tabs.reports.payroll') : t('tabs.reports.executive')}</span> </> : activePage === 'Administración' ? <> <span className="crumb-slash">/</span> <span>{adminSection === 'Subsidiarias' ? t('tabs.admin.subsidiaries') : adminSection === 'Departamentos' ? t('tabs.admin.departments') : adminSection === 'Ubicaciones' ? t('tabs.admin.locations') : adminSection === 'Flujos de devoluciones' ? t('tabs.admin.returnWorkflows') : adminSection === 'Historial de Auditoría' ? t('tabs.admin.audit') : t('tabs.admin.summary')}</span> {adminSection === 'Subsidiarias' && selectedSubsidiaryId ? <> <span className="crumb-slash">/</span> <span>{selectedSubsidiaryId === '__new__' ? 'Nueva subsidiaria' : subsidiaries.find((s) => s.id === selectedSubsidiaryId)?.code || selectedSubsidiaryId}</span> </> : null} </> : null}</div>
           <div className="topbar-actions">
             <span className="demo-pill"><i /> {t('topbar.demo')}</span>
+
+            <div
+              className="topbar-currency-wrap"
+              title={`Moneda global de visualización · ${getRateSummaryLabel(activeCurrency)}`}
+            >
+              <Globe size={13} aria-hidden="true" />
+              <select
+                className="topbar-currency-select"
+                aria-label="Selector de moneda global"
+                value={activeCurrency}
+                onChange={(e) => {
+                  const nextCur = e.target.value
+                  setReportingCurrencyCode(nextCur)
+                  toast.info(
+                    `Tablero y reportes convertidos a ${nextCur} (${getRateSummaryLabel(nextCur)}).`,
+                    'Moneda global actualizada'
+                  )
+                }}
+              >
+                {DISPLAY_CURRENCY_OPTIONS.map((opt) => (
+                  <option key={opt.code} value={opt.code}>
+                    {opt.shortLabel}
+                  </option>
+                ))}
+                {!DISPLAY_CURRENCY_OPTIONS.some((o) => o.code === activeCurrency) && (
+                  <option value={activeCurrency}>{activeCurrency}</option>
+                )}
+              </select>
+              <ChevronDown size={11} className="topbar-currency-chevron" aria-hidden="true" />
+            </div>
 
             <div className="notification-center-anchor" ref={notificationCenterRef}>
               <button
@@ -7167,12 +7648,14 @@ function AppContent() {
               isFullAdmin={isFullAdmin}
               isAccountActive={activeSessionProfile.isActive}
               inventory={inventory}
-              products={initialProductsAndServices}
-              onUpdateInventory={setInventory}
+              products={syncedProducts}
+              onUpdateInventory={handleUpdateInventorySynced}
               categoryThresholds={categoryStockThresholds}
               onUpdateCategoryThresholds={handleUpdateCategoryThresholds}
               currentUserName={activeSessionProfile.name}
               currentUserId={activeActorUserId}
+              onResetTransactionalData={handleResetTransactionalData}
+              onResetAllWorkspaceData={handleResetAllWorkspaceData}
             />
           ) : activePage === 'CRM' ? (
             <section className="crm-page" aria-labelledby="crm-title">
@@ -7368,10 +7851,15 @@ function AppContent() {
                 />
               ) : crmSection === 'Clientes' || crmSection === 'Proveedores' ? <>
                 <div className="crm-section-heading"><div><div className="panel-kicker">DIRECTORIO COMERCIAL</div><h2>{crmSection}</h2><p>{crmSection === 'Clientes' ? 'Personas y empresas con una relación comercial en tu espacio.' : 'Empresas y contactos que suministran productos o servicios a tu organización.'}</p></div><div className="crm-section-heading-actions">{canCreateInSection('CRM', crmSection, activeSectionAccess, isFullAdmin, activeSessionProfile.isActive) && (crmSection === 'Clientes' ? <button className="button button-primary" onClick={() => openCreate('client')}><Plus size={15} /> Nuevo cliente</button> : <button className="button button-primary" onClick={() => openCreate('supplier')}><Plus size={15} /> Nuevo proveedor</button>)}<span className="demo-pill"><i /> DATOS DEMO</span></div></div>
-                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder="Buscar por código, nombre, empresa, correo o RFC" /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
+                <div className="clients-toolbar"><label className="clients-search"><Search size={15} /><input aria-label="Buscar clientes" value={clientQuery} onChange={(event) => setClientQuery(event.target.value)} placeholder={`Buscar por código, nombre, empresa, correo o ${countryProfile.taxId.shortLabel}`} /></label><select aria-label="Filtrar clientes por estado" value={clientStatus} onChange={(event) => setClientStatus(event.target.value)}><option>Todos</option><option>Activo</option><option>Prospecto</option><option>Inactivo</option></select></div>
                 <div className="clients-summary"><span><strong>{filteredDirectory.length}</strong> de {crmSection === 'Clientes' ? clientRecords.length : supplierRecords.length} registros visibles</span><span>Última actualización: hace unos momentos</span></div>
                 <div className="clients-table-wrap"><table className="clients-table"><thead><tr><th>{crmSection === 'Clientes' ? 'CLIENTE / EMPRESA' : 'PROVEEDOR'}</th><th>CONTACTO</th><th>ESTADO</th><th>ÚLTIMA ACTIVIDAD</th><th style={{ textAlign: 'right' }}>ACCIONES</th></tr></thead><tbody>{filteredDirectory.map((client) => {
   const countryObj = findCountry(client.country)
+  const rowEntityFields = getEntityCountryFields(client.country, countryProfile.code)
+  const rowAddrFields = getEntityCountryFields(
+    client.addresses?.[0]?.country || client.country,
+    countryProfile.code
+  )
   return (
     <tr key={client.email}>
       <td>
@@ -7387,7 +7875,7 @@ function AppContent() {
               )}
             </div>
             <span>
-              {client.name} {client.rfc ? `· ${client.rfc}` : ''}
+              {client.name} {client.rfc ? `· ${rowEntityFields.taxIdShortLabel}: ${client.rfc}` : ''}
               {countryObj && (
                 <>
                   {' · '}
@@ -7404,8 +7892,15 @@ function AppContent() {
               <span className="client-address-snippet">
                 <MapPin size={10} className="address-pin-icon" />
                 <span>
-                  {client.addresses[0].street ? `${client.addresses[0].street}, ` : ''}
-                  {client.addresses[0].city || client.addresses[0].state || ''}
+                  {[
+                    client.addresses[0].street,
+                    client.addresses[0].colony
+                      ? `${rowAddrFields.districtShortLabel} ${client.addresses[0].colony}`
+                      : '',
+                    client.addresses[0].city || client.addresses[0].state,
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}
                 </span>
                 {client.addresses[0].isShipping && <span className="address-mini-tag shipping">Envío</span>}
                 {client.addresses[0].isBilling && <span className="address-mini-tag billing">Facturación</span>}
@@ -7414,7 +7909,7 @@ function AppContent() {
             )}
             {crmSection === 'Proveedores' && client.clabe && (
               <span className="client-address-snippet mono" style={{ marginTop: 2 }}>
-                <span>{client.bankName || 'Banco'} · CLABE {client.clabe}</span>
+                <span>{client.bankName || 'Banco'} · {rowEntityFields.bankRoutingShortLabel} {client.clabe}</span>
               </span>
             )}
           </div>
@@ -7516,7 +8011,7 @@ function AppContent() {
                       <div>
                         <strong>{supplierRecords.length}</strong>
                         <span>
-                          Proveedores registrados · {supplierRecords.filter((s) => Boolean(s.clabe)).length} con CLABE EBP
+                          Proveedores registrados · {supplierRecords.filter((s) => Boolean(s.clabe)).length} con {countryProfile.bank.routingShortLabel} EBP
                         </span>
                       </div>
                       <button className="text-link" onClick={() => navigateToCrmSection('Proveedores')}>
@@ -7646,6 +8141,11 @@ function AppContent() {
 
               {salesSection === 'Catálogo' ? (
                 <ProductsAndServices
+                  items={syncedProducts}
+                  inventory={effectiveInventory}
+                  warehouses={warehouses}
+                  initialSearchQuery={presetCatalogSearchSku}
+                  onClearInitialSearch={() => setPresetCatalogSearchSku('')}
                   canDelete={canDeleteInSection(
                     'Ventas',
                     'Catálogo',
@@ -7653,19 +8153,20 @@ function AppContent() {
                     isFullAdmin,
                     activeSessionProfile.isActive
                   )}
-                  onItemDeleted={(item) => {
-                    appendAuditLog({
-                      category: 'sales',
-                      action: 'Eliminación de artículo del catálogo',
-                      detail: `${item.sku} · ${item.name}`,
-                      user: activeSessionProfile.name,
-                    })
-                    setNotice(`Artículo “${item.name}” eliminado del catálogo.`)
+                  onCreateItem={handleCreateCatalogItem}
+                  onUpdateItem={handleUpdateCatalogItem}
+                  onDuplicateItem={handleDuplicateCatalogItem}
+                  onToggleStatus={handleToggleCatalogStatus}
+                  onDeleteItem={handleDeleteCatalogItem}
+                  onNavigateToInventory={(sku) => {
+                    if (sku) setPresetInventorySearchSku(sku)
+                    navigateToOperationsSection('Inventario')
                   }}
                 />
               ) : salesSection === 'Cotizaciones' ? (
                 <QuotesSection
                   quotes={quotes}
+                  products={syncedProducts}
                   onUpdateQuotes={setQuotes}
                   onConvertToOrder={handleConvertToOrder}
                   onDeleteQuote={
@@ -7705,6 +8206,7 @@ function AppContent() {
               ) : salesSection === 'Pedidos' ? (
                 <OrdersSection
                   orders={orders}
+                  products={syncedProducts}
                   onUpdateOrders={setOrders}
                   onDeleteOrder={
                     canDeleteInSection(
@@ -7755,6 +8257,7 @@ function AppContent() {
                 <SalesInvoices
                   receivables={receivables}
                   orders={orders}
+                  products={syncedProducts}
                   clientsList={clientRecords.map((c) => ({
                     company: c.company,
                     name: c.name,
@@ -7811,7 +8314,7 @@ function AppContent() {
                   orders={orders}
                   receivables={receivables}
                   warehouses={warehouses}
-                  catalogProducts={initialProductsAndServices.map((p) => ({
+                  catalogProducts={syncedProducts.map((p) => ({
                     id: p.id,
                     sku: p.sku,
                     name: p.name,
@@ -7874,7 +8377,7 @@ function AppContent() {
                   quotes={quotes}
                   orders={orders}
                   receivables={receivables}
-                  products={initialProductsAndServices}
+                  products={syncedProducts}
                   onNavigateSection={(sec) => navigateToSalesSection(sec)}
                   onOpenNewQuote={() => navigateToSalesSection('Cotizaciones')}
                   onOpenNewOrder={() => navigateToSalesSection('Pedidos')}
@@ -8045,7 +8548,7 @@ function AppContent() {
                   requisitions={requisitions}
                   warehouses={warehouses}
                   inventory={effectiveInventory}
-                  catalogProducts={initialProductsAndServices.map((p) => ({
+                  catalogProducts={syncedProducts.map((p) => ({
                     id: p.id,
                     sku: p.sku,
                     name: p.name,
@@ -8108,7 +8611,7 @@ function AppContent() {
                     company: s.company,
                     email: s.email,
                   }))}
-                  catalogProducts={initialProductsAndServices.map((p) => ({
+                  catalogProducts={syncedProducts.map((p) => ({
                     id: p.id,
                     sku: p.sku,
                     name: p.name,
@@ -8116,7 +8619,7 @@ function AppContent() {
                     unitOfMeasure: p.unitOfMeasure,
                   }))}
                   onUpdatePurchaseOrders={setPurchaseOrders}
-                  onUpdateInventory={setInventory}
+                  onUpdateInventory={handleUpdateInventorySynced}
                   inventory={inventory}
                   onAddMovement={handleAddMovement}
                   movementsCount={movements.length}
@@ -8175,7 +8678,7 @@ function AppContent() {
                       ))
                   }
                   onUpdatePurchaseOrders={setPurchaseOrders}
-                  onUpdateInventory={setInventory}
+                  onUpdateInventory={handleUpdateInventorySynced}
                   onAddMovement={handleAddMovement}
                 />
               ) : purchasesSection === 'Facturas' ? (
@@ -8221,7 +8724,7 @@ function AppContent() {
                   purchaseOrders={purchaseOrders}
                   payables={payables}
                   warehouses={warehouses}
-                  catalogProducts={initialProductsAndServices.map((p) => ({
+                  catalogProducts={syncedProducts.map((p) => ({
                     id: p.id,
                     sku: p.sku,
                     name: p.name,
@@ -8348,10 +8851,13 @@ function AppContent() {
                 <OperationsInventory
                   warehouses={warehouses}
                   inventory={inventory}
+                  products={syncedProducts}
                   transfers={transfers}
                   movements={movements}
                   categoryThresholds={categoryStockThresholds}
                   productCategoryMap={productCategoryMap}
+                  initialSearchQuery={presetInventorySearchSku}
+                  onClearInitialSearch={() => setPresetInventorySearchSku('')}
                   onOpenCategoryThresholds={
                     canAccessSection(
                       'Configuración',
@@ -8364,7 +8870,11 @@ function AppContent() {
                       ? () => navigateToSettingSection('Umbrales de stock')
                       : undefined
                   }
-                  onUpdateInventory={setInventory}
+                  onNavigateToCatalog={(sku) => {
+                    if (sku) setPresetCatalogSearchSku(sku)
+                    navigateToSalesSection('Catálogo')
+                  }}
+                  onUpdateInventory={handleUpdateInventorySynced}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
                   onDeleteInventoryItem={
@@ -8377,7 +8887,7 @@ function AppContent() {
                     )
                       ? (itemId) => {
                           const target = inventory.find((it) => it.id === itemId)
-                          setInventory((prev) => prev.filter((it) => it.id !== itemId))
+                          handleUpdateInventorySynced((prev) => prev.filter((it) => it.id !== itemId))
                           if (target) {
                             appendAuditLog({
                               category: 'inventory',
@@ -8428,7 +8938,7 @@ function AppContent() {
                   movementsCount={movements.length}
                   presetItem={presetTransferItem}
                   onClearPresetItem={() => setPresetTransferItem(null)}
-                  onUpdateInventory={setInventory}
+                  onUpdateInventory={handleUpdateInventorySynced}
                   onUpdateTransfers={setTransfers}
                   onAddMovement={handleAddMovement}
                   onDeleteTransfer={
@@ -8465,7 +8975,7 @@ function AppContent() {
                     company: s.company,
                     email: s.email,
                   }))}
-                  catalogProducts={initialProductsAndServices.map((p) => ({
+                  catalogProducts={syncedProducts.map((p) => ({
                     id: p.id,
                     sku: p.sku,
                     name: p.name,
@@ -8473,7 +8983,7 @@ function AppContent() {
                     unitOfMeasure: p.unitOfMeasure,
                   }))}
                   onUpdatePurchaseOrders={setPurchaseOrders}
-                  onUpdateInventory={setInventory}
+                  onUpdateInventory={handleUpdateInventorySynced}
                   inventory={inventory}
                   onAddMovement={handleAddMovement}
                   movementsCount={movements.length}
@@ -8781,8 +9291,13 @@ function AppContent() {
                   payables={payables}
                   expenses={expenses}
                   transactions={transactions}
+                  chartAccounts={chartAccounts}
+                  orders={orders}
+                  inventory={inventory}
+                  payrollRuns={payrollRuns}
                   onNavigateSection={(sec) => navigateToFinanceSection(sec)}
                   onNavigateExpenses={() => navigateToExpensesSection('Registro y pólizas')}
+                  onNavigateIncomeStatement={() => navigateToReportsSection('Estado de Resultados')}
                 />
               )}
             </section>
@@ -9112,7 +9627,7 @@ function AppContent() {
               purchaseOrders={purchaseOrders}
               requisitions={requisitions}
               shipments={shipments}
-              onUpdateInventory={setInventory}
+              onUpdateInventory={handleUpdateInventorySynced}
               isStockConfigOpen={isStockConfigOpen}
               onCloseStockConfig={() => setIsStockConfigOpen(false)}
               initialStockConfigTab={stockConfigTab}
@@ -9170,7 +9685,15 @@ function AppContent() {
             <button className="icon-button" aria-label="Cerrar formulario" disabled={isSubmittingClient} onClick={closeCreate}><X size={18} /></button>
           </div>
           <form onSubmit={submitCreate}>
-            {createKind === 'client' && (
+            {createKind === 'client' && (() => {
+              const clientEntityFields = getEntityCountryFields(clientForm.country, countryProfile.code)
+              const clientCountryName =
+                findCountry(clientForm.country)?.name || clientEntityFields.countryName
+              const clientAddressFields = getEntityCountryFields(
+                clientForm.addressCountry || clientForm.country,
+                countryProfile.code
+              )
+              return (
               <>
                 <div className="form-section-divider">Datos generales y fiscales</div>
                 <div className="form-grid">
@@ -9190,8 +9713,8 @@ function AppContent() {
                       value={clientForm.entityType}
                       onChange={(event) => setClientForm({ ...clientForm, entityType: event.target.value as 'company' | 'individual' })}
                     >
-                      <option value="company">Persona Moral (Empresa)</option>
-                      <option value="individual">Persona Física (Individual)</option>
+                      <option value="company">{clientEntityFields.entityTypeLabels.company}</option>
+                      <option value="individual">{clientEntityFields.entityTypeLabels.individual}</option>
                     </select>
                   </label>
                 </div>
@@ -9218,12 +9741,12 @@ function AppContent() {
                     />
                   </label>
                   <label className="form-field">
-                    <span>RFC / ID Fiscal (México)</span>
+                    <span>{clientEntityFields.taxIdLabel} ({clientCountryName})</span>
                     <input
                       value={clientForm.rfc}
                       onChange={(event) => setClientForm({ ...clientForm, rfc: event.target.value.toUpperCase() })}
-                      placeholder="Ej. DNO180420AB9"
-                      maxLength={13}
+                      placeholder={`Ej. ${clientEntityFields.taxIdPlaceholder}`}
+                      maxLength={24}
                     />
                   </label>
                 </div>
@@ -9237,7 +9760,7 @@ function AppContent() {
                       required
                       value={clientForm.email}
                       onChange={(event) => setClientForm({ ...clientForm, email: event.target.value })}
-                      placeholder="contacto@empresa.mx"
+                      placeholder={clientEntityFields.contactEmailPlaceholder}
                     />
                   </label>
                   <label className="form-field">
@@ -9246,7 +9769,7 @@ function AppContent() {
                       type="tel"
                       value={clientForm.phone}
                       onChange={(event) => setClientForm({ ...clientForm, phone: event.target.value })}
-                      placeholder="55 1234 5678"
+                      placeholder={clientEntityFields.phonePlaceholder}
                     />
                   </label>
                 </div>
@@ -9267,7 +9790,13 @@ function AppContent() {
                   <CountryDropdown
                     countries={countries}
                     value={clientForm.country}
-                    onChange={(code) => setClientForm({ ...clientForm, country: code })}
+                    onChange={(code) =>
+                      setClientForm((prev) => ({
+                        ...prev,
+                        country: code,
+                        addressCountry: prev.addressCountry === prev.country ? code : prev.addressCountry,
+                      }))
+                    }
                     disabled={isSubmittingClient}
                     placeholder="Seleccionar país"
                     id="client-country"
@@ -9304,16 +9833,21 @@ function AppContent() {
 
                 {clientForm.addressesList.length > 0 && (
                   <div className="address-cards-stack">
-                    {clientForm.addressesList.map((addr, idx) => (
+                    {clientForm.addressesList.map((addr, idx) => {
+                      const addrFields = getEntityCountryFields(
+                        addr.country || clientForm.country,
+                        countryProfile.code
+                      )
+                      return (
                       <div className="address-card-item" key={addr.id || idx}>
                         <div className="address-card-info">
                           <div className="address-card-street">
                             <MapPin size={12} className="address-pin-icon" />
                             <strong>{addr.street || 'Sin calle'}</strong>
-                            {addr.colony ? `, Col. ${addr.colony}` : ''}
+                            {addr.colony ? `, ${addrFields.districtShortLabel} ${addr.colony}` : ''}
                             {addr.city ? `, ${addr.city}` : ''}
                             {addr.state ? `, ${addr.state}` : ''}
-                            {addr.zipCode ? ` C.P. ${addr.zipCode}` : ''}
+                            {addr.zipCode ? ` ${addrFields.postalShortLabel} ${addr.zipCode}` : ''}
                           </div>
                           <div className="address-card-badges">
                             {addr.isShipping && <span className="address-badge shipping">Envío</span>}
@@ -9335,7 +9869,8 @@ function AppContent() {
                           <X size={13} />
                         </button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
@@ -9344,25 +9879,25 @@ function AppContent() {
                   <input
                     value={clientForm.addressStreet}
                     onChange={(event) => setClientForm({ ...clientForm, addressStreet: event.target.value })}
-                    placeholder="Ej. Av. Insurgentes Sur 1602, Piso 4"
+                    placeholder={clientAddressFields.streetPlaceholder}
                   />
                 </label>
 
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>Colonia / Barrio</span>
+                    <span>{clientAddressFields.districtLabel}</span>
                     <input
                       value={clientForm.addressColony}
                       onChange={(event) => setClientForm({ ...clientForm, addressColony: event.target.value })}
-                      placeholder="Ej. Crédito Constructor"
+                      placeholder={clientAddressFields.districtPlaceholder}
                     />
                   </label>
                   <label className="form-field">
-                    <span>Código Postal</span>
+                    <span>{clientAddressFields.postalLabel}</span>
                     <input
                       value={clientForm.addressZip}
                       onChange={(event) => setClientForm({ ...clientForm, addressZip: event.target.value })}
-                      placeholder="Ej. 03940"
+                      placeholder={clientAddressFields.postalPlaceholder}
                     />
                   </label>
                 </div>
@@ -9373,15 +9908,15 @@ function AppContent() {
                     <input
                       value={clientForm.addressCity}
                       onChange={(event) => setClientForm({ ...clientForm, addressCity: event.target.value })}
-                      placeholder="Ej. Benito Juárez"
+                      placeholder={clientAddressFields.cityPlaceholder}
                     />
                   </label>
                   <label className="form-field">
-                    <span>Estado / Provincia</span>
+                    <span>{clientAddressFields.stateLabel}</span>
                     <input
                       value={clientForm.addressState}
                       onChange={(event) => setClientForm({ ...clientForm, addressState: event.target.value })}
-                      placeholder="Ej. Ciudad de México"
+                      placeholder={clientAddressFields.statePlaceholder}
                     />
                   </label>
                 </div>
@@ -9428,6 +9963,7 @@ function AppContent() {
                       toast.warning('Ingresa al menos la calle o ciudad para registrar la dirección en la lista.', 'Dirección incompleta')
                       return
                     }
+                    const fallbackCountry = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
                     const newAddr: ClientAddress = {
                       id: `addr_${Date.now()}`,
                       street: clientForm.addressStreet.trim(),
@@ -9435,7 +9971,7 @@ function AppContent() {
                       city: clientForm.addressCity.trim(),
                       state: clientForm.addressState.trim(),
                       zipCode: clientForm.addressZip.trim(),
-                      country: clientForm.addressCountry || clientForm.country || 'MX',
+                      country: clientForm.addressCountry || clientForm.country || fallbackCountry,
                       isShipping: clientForm.addressIsShipping,
                       isBilling: clientForm.addressIsBilling,
                     }
@@ -9447,7 +9983,7 @@ function AppContent() {
                       addressCity: '',
                       addressState: '',
                       addressZip: '',
-                      addressCountry: clientForm.country || 'MX',
+                      addressCountry: clientForm.country || fallbackCountry,
                       addressIsShipping: true,
                       addressIsBilling: true,
                     })
@@ -9466,9 +10002,18 @@ function AppContent() {
                   />
                 </label>
               </>
-            )}
+              )
+            })()}
 
-            {createKind === 'supplier' && (
+            {createKind === 'supplier' && (() => {
+              const supplierEntityFields = getEntityCountryFields(createForm.country, countryProfile.code)
+              const supplierCountryName =
+                findCountry(createForm.country)?.name || supplierEntityFields.countryName
+              const supplierAddressFields = getEntityCountryFields(
+                createForm.addressCountry || createForm.country,
+                countryProfile.code
+              )
+              return (
               <>
                 <div className="form-grid">
                   <label className="form-field">
@@ -9494,13 +10039,29 @@ function AppContent() {
                 </div>
                 <label className="form-field"><span>Empresa *</span><input required value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Suministros del Centro" /></label>
                 <div className="form-grid">
-                  <label className="form-field"><span>Correo *</span><input type="email" required value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} placeholder="correo@empresa.mx" /></label>
-                  <label className="form-field"><span>Teléfono</span><input value={createForm.phone} onChange={(event) => setCreateForm({ ...createForm, phone: event.target.value })} placeholder="55 0000 0000" /></label>
+                  <label className="form-field"><span>Correo *</span><input type="email" required value={createForm.email} onChange={(event) => setCreateForm({ ...createForm, email: event.target.value })} placeholder={supplierEntityFields.contactEmailPlaceholder} /></label>
+                  <label className="form-field"><span>Teléfono</span><input value={createForm.phone} onChange={(event) => setCreateForm({ ...createForm, phone: event.target.value })} placeholder={supplierEntityFields.phonePlaceholder} /></label>
                 </div>
                 <CountryDropdown
                   countries={countries}
                   value={createForm.country}
-                  onChange={(code) => setCreateForm({ ...createForm, country: code })}
+                  onChange={(code) =>
+                    setCreateForm((prev) => {
+                      const prevDefaultBank =
+                        getEntityCountryFields(prev.country, countryProfile.code).bankSampleBanks[0] || ''
+                      const nextDefaultBank =
+                        getEntityCountryFields(code, countryProfile.code).bankSampleBanks[0] || ''
+                      return {
+                        ...prev,
+                        country: code,
+                        addressCountry: prev.addressCountry === prev.country ? code : prev.addressCountry,
+                        bankName:
+                          !prev.bankName || prev.bankName === prevDefaultBank
+                            ? nextDefaultBank
+                            : prev.bankName,
+                      }
+                    })
+                  }
                   disabled={isSubmittingClient}
                   placeholder="Seleccionar país"
                   id="supplier-country"
@@ -9511,16 +10072,21 @@ function AppContent() {
 
                 {createForm.addressesList.length > 0 && (
                   <div className="address-cards-stack">
-                    {createForm.addressesList.map((addr, idx) => (
+                    {createForm.addressesList.map((addr, idx) => {
+                      const addrFields = getEntityCountryFields(
+                        addr.country || createForm.country,
+                        countryProfile.code
+                      )
+                      return (
                       <div className="address-card-item" key={addr.id || idx}>
                         <div className="address-card-info">
                           <div className="address-card-street">
                             <MapPin size={12} className="address-pin-icon" />
                             <strong>{addr.street || 'Sin calle'}</strong>
-                            {addr.colony ? `, Col. ${addr.colony}` : ''}
+                            {addr.colony ? `, ${addrFields.districtShortLabel} ${addr.colony}` : ''}
                             {addr.city ? `, ${addr.city}` : ''}
                             {addr.state ? `, ${addr.state}` : ''}
-                            {addr.zipCode ? ` C.P. ${addr.zipCode}` : ''}
+                            {addr.zipCode ? ` ${addrFields.postalShortLabel} ${addr.zipCode}` : ''}
                           </div>
                           <div className="address-card-badges">
                             {addr.isShipping && <span className="address-badge shipping">Envío</span>}
@@ -9542,7 +10108,8 @@ function AppContent() {
                           <X size={13} />
                         </button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
@@ -9551,25 +10118,25 @@ function AppContent() {
                   <input
                     value={createForm.addressStreet}
                     onChange={(event) => setCreateForm({ ...createForm, addressStreet: event.target.value })}
-                    placeholder="Ej. Calz. Vallejo 1020, Bodega 4"
+                    placeholder={supplierAddressFields.streetPlaceholder}
                   />
                 </label>
 
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>Colonia / Barrio</span>
+                    <span>{supplierAddressFields.districtLabel}</span>
                     <input
                       value={createForm.addressColony}
                       onChange={(event) => setCreateForm({ ...createForm, addressColony: event.target.value })}
-                      placeholder="Ej. Industrial Vallejo"
+                      placeholder={supplierAddressFields.districtPlaceholder}
                     />
                   </label>
                   <label className="form-field">
-                    <span>Código Postal</span>
+                    <span>{supplierAddressFields.postalLabel}</span>
                     <input
                       value={createForm.addressZip}
                       onChange={(event) => setCreateForm({ ...createForm, addressZip: event.target.value })}
-                      placeholder="Ej. 02300"
+                      placeholder={supplierAddressFields.postalPlaceholder}
                     />
                   </label>
                 </div>
@@ -9580,15 +10147,15 @@ function AppContent() {
                     <input
                       value={createForm.addressCity}
                       onChange={(event) => setCreateForm({ ...createForm, addressCity: event.target.value })}
-                      placeholder="Ej. Azcapotzalco"
+                      placeholder={supplierAddressFields.cityPlaceholder}
                     />
                   </label>
                   <label className="form-field">
-                    <span>Estado / Provincia</span>
+                    <span>{supplierAddressFields.stateLabel}</span>
                     <input
                       value={createForm.addressState}
                       onChange={(event) => setCreateForm({ ...createForm, addressState: event.target.value })}
-                      placeholder="Ej. Ciudad de México"
+                      placeholder={supplierAddressFields.statePlaceholder}
                     />
                   </label>
                 </div>
@@ -9635,6 +10202,7 @@ function AppContent() {
                       toast.warning('Ingresa al menos la calle o ciudad para registrar la dirección en la lista.', 'Dirección incompleta')
                       return
                     }
+                    const fallbackCountry = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
                     const newAddr: ClientAddress = {
                       id: `addr_${Date.now()}`,
                       street: createForm.addressStreet.trim(),
@@ -9642,7 +10210,7 @@ function AppContent() {
                       city: createForm.addressCity.trim(),
                       state: createForm.addressState.trim(),
                       zipCode: createForm.addressZip.trim(),
-                      country: createForm.addressCountry || createForm.country || 'MX',
+                      country: createForm.addressCountry || createForm.country || fallbackCountry,
                       isShipping: createForm.addressIsShipping,
                       isBilling: createForm.addressIsBilling,
                     }
@@ -9654,7 +10222,7 @@ function AppContent() {
                       addressCity: '',
                       addressState: '',
                       addressZip: '',
-                      addressCountry: createForm.country || 'MX',
+                      addressCountry: createForm.country || fallbackCountry,
                       addressIsShipping: true,
                       addressIsBilling: true,
                     })
@@ -9667,12 +10235,12 @@ function AppContent() {
                 <div className="form-section-divider">Datos bancarios para pagos electrónicos (EBP)</div>
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>RFC del proveedor</span>
+                    <span>{supplierEntityFields.taxIdLabel} ({supplierCountryName})</span>
                     <input
                       value={createForm.rfc}
-                      maxLength={13}
+                      maxLength={24}
                       onChange={(e) => setCreateForm({ ...createForm, rfc: e.target.value.toUpperCase() })}
-                      placeholder="Ej. ACO170812K90"
+                      placeholder={`Ej. ${supplierEntityFields.taxIdPlaceholder}`}
                     />
                   </label>
                   <label className="form-field">
@@ -9680,19 +10248,19 @@ function AppContent() {
                     <input
                       value={createForm.bankName}
                       onChange={(e) => setCreateForm({ ...createForm, bankName: e.target.value })}
-                      placeholder="Ej. BBVA México / Banorte"
+                      placeholder={`Ej. ${supplierEntityFields.bankSampleBanks.slice(0, 2).join(' / ') || 'Banco principal'}`}
                     />
                   </label>
                 </div>
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>CLABE interbancaria (18 dígitos)</span>
+                    <span>{supplierEntityFields.bankRoutingLabel} ({supplierEntityFields.bankRoutingFormatHint})</span>
                     <input
                       className="mono"
-                      maxLength={18}
+                      maxLength={supplierEntityFields.bankRoutingMaxLength}
                       value={createForm.clabe}
                       onChange={(e) => setCreateForm({ ...createForm, clabe: e.target.value })}
-                      placeholder="18 dígitos"
+                      placeholder={supplierEntityFields.bankRoutingPlaceholder}
                     />
                   </label>
                   <label className="form-field">
@@ -9705,8 +10273,9 @@ function AppContent() {
                   </label>
                 </div>
               </>
-            )}
-            {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado (MXN)</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
+              )
+            })()}
+            {createKind === 'opportunity' && <><label className="form-field"><span>Empresa</span><input required autoFocus value={createForm.company} onChange={(event) => setCreateForm({ ...createForm, company: event.target.value })} placeholder="Ej. Estudio Horizonte" /></label><div className="form-grid"><label className="form-field"><span>Contacto</span><input value={createForm.name} onChange={(event) => setCreateForm({ ...createForm, name: event.target.value })} placeholder="Nombre del contacto" /></label><label className="form-field"><span>Valor estimado ({activeCurrency})</span><input type="number" min="0" value={createForm.value} onChange={(event) => setCreateForm({ ...createForm, value: event.target.value })} placeholder="25000" /></label></div></>}
             {createKind === 'activity' && (
               <>
                 <label className="form-field">
@@ -9792,6 +10361,10 @@ function AppContent() {
 
       {/* Modal: Configurar múltiples detalles bancarios + Packs EBP del Proveedor */}
       {editingSupplierBank && (() => {
+        const supplierBankFields = getEntityCountryFields(
+          editingSupplierBank.country,
+          countryProfile.code
+        )
         const currentAccounts = normalizeSupplierBankAccounts({
           company: editingSupplierBank.company,
           currency: editingSupplierBank.currency || 'MXN',
@@ -9869,10 +10442,11 @@ function AppContent() {
               >
                 <div className="form-grid" style={{ marginBottom: 12 }}>
                   <label className="form-field">
-                    <span>RFC / Tax ID del proveedor</span>
+                    <span>{supplierBankFields.taxIdLabel} del proveedor</span>
                     <input
                       className="mono"
-                      maxLength={13}
+                      maxLength={24}
+                      placeholder={supplierBankFields.taxIdPlaceholder}
                       value={editingSupplierBank.rfc || ''}
                       onChange={(e) =>
                         setEditingSupplierBank({
@@ -9904,6 +10478,7 @@ function AppContent() {
                   installedPacks={ebpPacks}
                   usedAccountIds={usedAccIds}
                   defaultCurrency={editingSupplierBank.currency || 'MXN'}
+                  countryCode={editingSupplierBank.country}
                   onChange={(nextAccounts) =>
                     setEditingSupplierBank({
                       ...editingSupplierBank,

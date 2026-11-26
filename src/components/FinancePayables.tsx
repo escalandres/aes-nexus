@@ -20,6 +20,7 @@ import type {
 } from '../data/finance'
 import type { EbpAggregationMode } from '../data/ebp'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface SupplierOption {
   company: string
@@ -56,6 +57,9 @@ export function FinancePayables({
   onOpenEbpBatchFromBills,
 }: FinancePayablesProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [selectedBillIds, setSelectedBillIds] = useState<Record<string, boolean>>({})
@@ -70,7 +74,7 @@ export function FinancePayables({
   // Payment form state
   const [payAmount, setPayAmount] = useState<number>(0)
   const [payBankId, setPayBankId] = useState<string>(bankAccounts[0]?.id || '')
-  const [payMethod, setPayMethod] = useState('Transferencia SPEI')
+  const [payMethod, setPayMethod] = useState(countryProfile.bank.defaultTransferMethod)
   const [payReference, setPayReference] = useState('')
 
   // New Bill form state
@@ -121,8 +125,9 @@ export function FinancePayables({
     setSelectedBill(bill)
     setPayAmount(bill.balance)
     setPayBankId(bankAccounts[0]?.id || '')
-    setPayMethod('Transferencia SPEI')
-    setPayReference(`SPEI-${Math.floor(100000 + Math.random() * 900000)}`)
+    setPayMethod(countryProfile.bank.defaultTransferMethod)
+    const refPrefix = countryProfile.bank.networkName.split(' ')[0].toUpperCase()
+    setPayReference(`${refPrefix}-${Math.floor(100000 + Math.random() * 900000)}`)
     setIsPayModalOpen(true)
   }
 
@@ -223,7 +228,7 @@ export function FinancePayables({
     const dueDateStr = newDueDate.trim() || formatDate(due)
 
     const sub = Number(newSubtotal) || 0
-    const tax = sub * 0.16
+    const tax = sub * standardVatRate
     const total = sub + tax
 
     const newBill: BillPayable = {
@@ -231,7 +236,7 @@ export function FinancePayables({
       folio,
       purchaseOrderFolio: newPoFolio.trim() || `OC-2026-${String(nextNum).padStart(3, '0')}`,
       supplierCompany: newSupplierCompany,
-      supplierContact: sup?.email || 'contacto@proveedor.mx',
+      supplierContact: sup?.email || 'contacto@proveedor.com',
       issueDate: issueDateStr,
       dueDate: dueDateStr,
       subtotal: sub,
@@ -240,8 +245,8 @@ export function FinancePayables({
       paidAmount: 0,
       balance: total,
       status: 'Pendiente',
-      currency: 'MXN',
-      paymentMethod: 'Transferencia SPEI',
+      currency: reportingCurrency === 'USD' ? 'USD' : 'MXN',
+      paymentMethod: countryProfile.bank.defaultTransferMethod,
     }
 
     onUpdatePayables([newBill, ...payables])
@@ -622,7 +627,9 @@ export function FinancePayables({
                     value={payMethod}
                     onChange={(e) => setPayMethod(e.target.value)}
                   >
-                    <option value="Transferencia SPEI">Transferencia electrónica SPEI</option>
+                    <option value={countryProfile.bank.defaultTransferMethod}>
+                      {countryProfile.bank.defaultTransferMethod}
+                    </option>
                     <option value="Cheque nominativo">Cheque de empresa</option>
                     <option value="Tarjeta corporativa">Tarjeta corporativa de débito</option>
                     <option value="Caja chica">Efectivo de caja chica</option>
@@ -630,9 +637,9 @@ export function FinancePayables({
                 </label>
 
                 <label className="form-field">
-                  <span>Folio de rastreo SPEI / Comprobante</span>
+                  <span>Folio de rastreo {countryProfile.bank.networkName} / Comprobante</span>
                   <input
-                    placeholder="Ej. SPEI-992104 o REF-40192"
+                    placeholder="Ej. REF-992104 o TRF-40192"
                     value={payReference}
                     onChange={(e) => setPayReference(e.target.value)}
                   />
@@ -719,7 +726,7 @@ export function FinancePayables({
               </div>
 
               <label className="form-field">
-                <span>Subtotal antes de IVA (MXN) *</span>
+                <span>Subtotal antes de {countryProfile.vat.label} ({reportingCurrency || countryProfile.defaultCurrency}) *</span>
                 <input
                   type="number"
                   min="1"
@@ -735,12 +742,12 @@ export function FinancePayables({
                   <strong>{money(newSubtotal)}</strong>
                 </div>
                 <div className="po-totals-row">
-                  <span>IVA Trasladado (16%):</span>
-                  <strong>{money(newSubtotal * 0.16)}</strong>
+                  <span>{countryProfile.vat.transferredLabel} ({standardVatPct}%):</span>
+                  <strong>{money(newSubtotal * standardVatRate)}</strong>
                 </div>
                 <div className="po-totals-row grand">
                   <span>Total pasivo:</span>
-                  <strong>{money(newSubtotal * 1.16)} MXN</strong>
+                  <strong>{money(newSubtotal * (1 + standardVatRate))} {reportingCurrency || countryProfile.defaultCurrency}</strong>
                 </div>
               </div>
 

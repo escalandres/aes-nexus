@@ -17,8 +17,9 @@ import {
 } from 'lucide-react'
 import type { InvoiceReceivable } from '../data/finance'
 import type { SalesLineItem, SalesOrder } from '../data/sales'
-import { initialProductsAndServices } from '../data/products'
+import type { ProductServiceItem } from '../data/products'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface SalesInvoiceClientOption {
   company: string
@@ -32,6 +33,7 @@ interface SalesInvoiceClientOption {
 interface SalesInvoicesProps {
   receivables: InvoiceReceivable[]
   orders: SalesOrder[]
+  products: ProductServiceItem[]
   clientsList: SalesInvoiceClientOption[]
   presetOrderToInvoice?: SalesOrder | null
   onClearPresetOrder?: () => void
@@ -80,6 +82,7 @@ function getDaysFromTerms(terms: string): number {
 export function SalesInvoices({
   receivables,
   orders,
+  products,
   clientsList,
   presetOrderToInvoice,
   onClearPresetOrder,
@@ -91,6 +94,7 @@ export function SalesInvoices({
   onNavigateToOrder,
 }: SalesInvoicesProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [viewingInvoice, setViewingInvoice] = useState<InvoiceReceivable | null>(null)
@@ -112,8 +116,8 @@ export function SalesInvoices({
   // Fiscal / terms fields
   const [rfcInput, setRfcInput] = useState('')
   const [paymentTerms, setPaymentTerms] = useState('Contado')
-  const [paymentMethod, setPaymentMethod] = useState('Transferencia SPEI')
-  const [cfdiUse, setCfdiUse] = useState('G03 · Gastos en general')
+  const [paymentMethod, setPaymentMethod] = useState(countryProfile.bank.defaultTransferMethod)
+  const [cfdiUse, setCfdiUse] = useState(countryProfile.fiscalDoc.defaultUsageCode)
   const [invoiceNotes, setInvoiceNotes] = useState('')
 
   // Map billed totals by order folio
@@ -147,8 +151,8 @@ export function SalesInvoices({
     setCustomPct(100)
     setRfcInput(clientMatch?.rfc || '')
     setPaymentTerms(clientMatch?.paymentTerms || 'Crédito 15 días')
-    setPaymentMethod('Transferencia SPEI')
-    setCfdiUse('G03 · Gastos en general')
+    setPaymentMethod(countryProfile.bank.defaultTransferMethod)
+    setCfdiUse(countryProfile.fiscalDoc.defaultUsageCode)
     setInvoiceNotes(`Facturación generada desde el pedido de venta ${ord.folio}.`)
     setIsCreateOpen(true)
   }
@@ -180,10 +184,10 @@ export function SalesInvoices({
       setDirectClientCompany(firstClient?.company || '')
       setRfcInput(firstClient?.rfc || '')
       setPaymentTerms(firstClient?.paymentTerms || 'Contado')
-      setPaymentMethod('Transferencia SPEI')
-      setCfdiUse('G03 · Gastos en general')
+      setPaymentMethod(countryProfile.bank.defaultTransferMethod)
+      setCfdiUse(countryProfile.fiscalDoc.defaultUsageCode)
       setInvoiceNotes('')
-      const firstProd = initialProductsAndServices[0]
+      const firstProd = products.find((p) => p.status === 'Activo') || products[0]
       if (firstProd) {
         const sub = firstProd.unitPrice
         const tax = firstProd.taxRate === '16%' ? sub * 0.16 : firstProd.taxRate === '8%' ? sub * 0.08 : 0
@@ -273,7 +277,7 @@ export function SalesInvoices({
 
   const handleAddDirectItem = () => {
     if (!selectedProductSku) return
-    const prod = initialProductsAndServices.find((p) => p.sku === selectedProductSku)
+    const prod = products.find((p) => p.sku === selectedProductSku)
     if (!prod) return
     const qty = Math.max(1, itemQuantity)
     const subtotal = prod.unitPrice * qty
@@ -540,7 +544,7 @@ export function SalesInvoices({
           <Search size={14} className="search-icon" />
           <input
             type="search"
-            placeholder="Buscar por folio FAC, pedido PED, cliente o RFC..."
+            placeholder={`Buscar por folio FAC, pedido PED, cliente o ${countryProfile.taxId.shortLabel}...`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -583,7 +587,7 @@ export function SalesInvoices({
             <tr>
               <th>FOLIO FACTURA</th>
               <th>PEDIDO ORIGEN</th>
-              <th>CLIENTE / RFC</th>
+              <th>CLIENTE / {countryProfile.taxId.shortLabel.toUpperCase()}</th>
               <th>EMISIÓN Y VENCIMIENTO</th>
               <th>TOTAL / SALDO</th>
               <th>ESTADO COBRO</th>
@@ -626,7 +630,7 @@ export function SalesInvoices({
                     <strong>{inv.clientCompany}</strong>
                     <span>
                       {inv.clientName}
-                      {inv.clientRfc ? ` · RFC: ${inv.clientRfc}` : ''}
+                      {inv.clientRfc ? ` · ${countryProfile.taxId.shortLabel}: ${inv.clientRfc}` : ''}
                     </span>
                   </div>
                 </td>
@@ -870,11 +874,14 @@ export function SalesInvoices({
                         onChange={(e) => setSelectedProductSku(e.target.value)}
                       >
                         <option value="">Selecciona producto o servicio...</option>
-                        {initialProductsAndServices.map((prod) => (
-                          <option key={prod.sku} value={prod.sku}>
-                            [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}
-                          </option>
-                        ))}
+                        {products
+                          .filter((p) => p.status === 'Activo')
+                          .map((prod) => (
+                            <option key={prod.sku} value={prod.sku}>
+                              [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}
+                              {prod.type === 'product' ? ` · Disp: ${prod.stock ?? 0} ${prod.unitOfMeasure}` : ''}
+                            </option>
+                          ))}
                       </select>
                     </div>
                     <div className="form-field" style={{ width: '90px' }}>
@@ -941,13 +948,13 @@ export function SalesInvoices({
               <div className="form-section-divider">DATOS FISCALES Y CONDICIONES DE COBRO</div>
               <div className="form-grid-3">
                 <label className="form-field">
-                  <span>RFC del receptor</span>
+                  <span>{countryProfile.taxId.label} del receptor</span>
                   <input
                     className="mono"
-                    maxLength={13}
+                    maxLength={24}
                     value={rfcInput}
                     onChange={(e) => setRfcInput(e.target.value.toUpperCase())}
-                    placeholder="XAXX010101000"
+                    placeholder={countryProfile.taxId.placeholder}
                   />
                 </label>
                 <label className="form-field">
@@ -968,7 +975,9 @@ export function SalesInvoices({
                     value={paymentMethod}
                     onChange={(e) => setPaymentMethod(e.target.value)}
                   >
-                    <option value="Transferencia SPEI">Transferencia SPEI</option>
+                    <option value={countryProfile.bank.defaultTransferMethod}>
+                      {countryProfile.bank.defaultTransferMethod}
+                    </option>
                     <option value="Tarjeta de crédito">Tarjeta de crédito</option>
                     <option value="Efectivo">Efectivo</option>
                   </select>
@@ -977,16 +986,16 @@ export function SalesInvoices({
 
               <div className="form-grid">
                 <label className="form-field">
-                  <span>Uso CFDI</span>
+                  <span>{countryProfile.fiscalDoc.usageLabel}</span>
                   <select value={cfdiUse} onChange={(e) => setCfdiUse(e.target.value)}>
-                    <option value="G03 · Gastos en general">G03 · Gastos en general</option>
-                    <option value="G01 · Adquisición de mercancías">
-                      G01 · Adquisición de mercancías
-                    </option>
-                    <option value="I04 · Equipo de cómputo y accesorios">
-                      I04 · Equipo de cómputo y accesorios
-                    </option>
-                    <option value="S01 · Sin efectos fiscales">S01 · Sin efectos fiscales</option>
+                    {!countryProfile.fiscalDoc.usageOptions.some((o) => o.code === cfdiUse) && cfdiUse && (
+                      <option value={cfdiUse}>{cfdiUse}</option>
+                    )}
+                    {countryProfile.fiscalDoc.usageOptions.map((opt) => (
+                      <option key={opt.code} value={opt.code}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="form-field">
@@ -1009,7 +1018,7 @@ export function SalesInvoices({
                 </div>
                 <div className="calc-sign">+</div>
                 <div className="calc-col">
-                  <span>IVA</span>
+                  <span>{countryProfile.vat.label}</span>
                   <strong className="font-mono tabular-nums">
                     {formatMoney(draftPreview.tax, draftPreview.currency)}
                   </strong>
@@ -1089,7 +1098,7 @@ export function SalesInvoices({
                 <strong>{viewingInvoice.clientCompany}</strong>
                 <span>Contacto: {viewingInvoice.clientName}</span>
                 {viewingInvoice.clientRfc && (
-                  <small className="font-mono">RFC: {viewingInvoice.clientRfc}</small>
+                  <small className="font-mono">{countryProfile.taxId.shortLabel}: {viewingInvoice.clientRfc}</small>
                 )}
                 <small className="text-muted">
                   Origen:{' '}
@@ -1108,7 +1117,7 @@ export function SalesInvoices({
                     <tr>
                       <th>Concepto facturado</th>
                       <th>Cant.</th>
-                      <th>IVA</th>
+                      <th>{countryProfile.vat.label}</th>
                       <th className="text-right">Total</th>
                     </tr>
                   </thead>
@@ -1137,7 +1146,7 @@ export function SalesInvoices({
                 <p>
                   Facturación de partidas comerciales vinculadas al pedido{' '}
                   <span className="font-mono">{viewingInvoice.orderFolio}</span>. Forma de pago:{' '}
-                  {viewingInvoice.paymentMethod || 'Transferencia SPEI'}.
+                  {viewingInvoice.paymentMethod || countryProfile.bank.defaultTransferMethod}.
                 </p>
               </div>
             )}
@@ -1157,7 +1166,7 @@ export function SalesInvoices({
                 </strong>
               </div>
               <div className="totals-row">
-                <span>IVA trasladado:</span>
+                <span>{countryProfile.vat.transferredLabel}:</span>
                 <strong className="font-mono tabular-nums">
                   {formatMoney(viewingInvoice.tax, viewingInvoice.currency)}
                 </strong>

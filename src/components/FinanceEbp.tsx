@@ -49,6 +49,7 @@ import {
 } from '../data/ebp'
 import { EbpBatchWizardModal, type EbpWizardCandidateLine } from './EbpBatchWizardModal'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 export type { SupplierBankProfile }
 
@@ -111,6 +112,7 @@ export function FinanceEbp({
   onUpdateSupplierBankAccounts,
 }: FinanceEbpProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
   const jsonInputRef = useRef<HTMLInputElement>(null)
 
   const [activeTab, setActiveTab] = useState<'batches' | 'marketplace' | 'studio'>('batches')
@@ -1424,7 +1426,7 @@ export function FinanceEbp({
                                 })
                               }
                             />
-                            <span>CLABE Mod-10</span>
+                            <span>{countryProfile.bank.routingShortLabel} Mod-10</span>
                           </label>
                           <input
                             style={{ width: 70 }}
@@ -1566,7 +1568,7 @@ export function FinanceEbp({
                   .filter((b) => b.type !== 'Caja chica')
                   .map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.bankName} ({b.accountNumber}) · CLABE {b.clabe}
+                      {b.bankName} ({b.accountNumber}) · {countryProfile.bank.routingShortLabel} {b.clabe}
                     </option>
                   ))}
               </select>

@@ -6,8 +6,9 @@ import {
 } from 'lucide-react'
 import type { SalesOrder, OrderStatus, SalesLineItem } from '../data/sales'
 import type { InvoiceReceivable } from '../data/finance'
-import { initialProductsAndServices } from '../data/products'
+import type { ProductServiceItem } from '../data/products'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
   return new Intl.NumberFormat('es-MX', {
@@ -20,6 +21,7 @@ const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
 
 interface OrdersSectionProps {
   orders: SalesOrder[]
+  products: ProductServiceItem[]
   onUpdateOrders: (orders: SalesOrder[]) => void
   onDeleteOrder?: (orderId: string) => void
   clientNames: { id: string; name: string; company: string; email: string; address?: string }[]
@@ -34,6 +36,7 @@ const ORDER_STEPS: OrderStatus[] = ['Confirmado', 'En preparación', 'Enviado', 
 
 export function OrdersSection({
   orders,
+  products,
   onUpdateOrders,
   onDeleteOrder,
   clientNames,
@@ -44,6 +47,7 @@ export function OrdersSection({
   onClearPresetOrderView,
 }: OrdersSectionProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedStatus, setSelectedStatus] = useState<string>('all')
   const [sortBy, setSortBy] = useState<'folio' | 'total' | 'deliveryDate'>('folio')
@@ -137,7 +141,7 @@ export function OrdersSection({
     setDeliveryDays(7)
     setNotes('Despachar con transportista interno con firma de recibido.')
 
-    const firstProd = initialProductsAndServices[2] || initialProductsAndServices[0]
+    const firstProd = products.find((p) => p.type === 'product' && p.status === 'Activo') || products[0]
     if (firstProd) {
       const subtotal = firstProd.unitPrice * 1
       const taxAmount = firstProd.taxRate === '16%' ? subtotal * 0.16 : 0
@@ -165,7 +169,7 @@ export function OrdersSection({
 
   const handleAddLineItem = () => {
     if (!selectedProductSku) return
-    const prod = initialProductsAndServices.find((p) => p.sku === selectedProductSku)
+    const prod = products.find((p) => p.sku === selectedProductSku)
     if (!prod) return
 
     const qty = Math.max(1, itemQuantity)
@@ -753,7 +757,7 @@ export function OrdersSection({
                 <input
                   type="text"
                   required
-                  placeholder="Calle, número, colonia, ciudad y código postal..."
+                  placeholder={`Calle, número, ${countryProfile.territory.districtLabel.toLowerCase()}, ciudad y ${countryProfile.territory.postalLabel.toLowerCase()}...`}
                   value={shippingAddress}
                   onChange={(e) => setShippingAddress(e.target.value)}
                 />
@@ -769,11 +773,14 @@ export function OrdersSection({
                     onChange={(e) => setSelectedProductSku(e.target.value)}
                   >
                     <option value="">Selecciona un producto o servicio del catálogo...</option>
-                    {initialProductsAndServices.map((prod) => (
-                      <option key={prod.sku} value={prod.sku}>
-                        [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}
-                      </option>
-                    ))}
+                    {products
+                      .filter((p) => p.status === 'Activo')
+                      .map((prod) => (
+                        <option key={prod.sku} value={prod.sku}>
+                          [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}
+                          {prod.type === 'product' ? ` · Disp: ${prod.stock ?? 0} ${prod.unitOfMeasure}` : ''}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="form-field" style={{ width: '90px' }}>

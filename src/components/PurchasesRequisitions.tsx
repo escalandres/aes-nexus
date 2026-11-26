@@ -19,6 +19,7 @@ import type {
 } from '../data/purchases'
 import type { Warehouse, InventoryItemLocation } from '../data/operations'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface CatalogProductOption {
   id: string
@@ -80,6 +81,9 @@ export function PurchasesRequisitions({
   onNavigateToOrder,
 }: PurchasesRequisitionsProps) {
   const toast = useToast()
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
   const [statusFilter, setStatusFilter] = useState<string>('Todas')
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -990,12 +994,12 @@ export function PurchasesRequisitions({
                   <strong className="tabular-nums">{money(convertReq.estimatedTotal)}</strong>
                 </div>
                 <div className="po-totals-row">
-                  <span>IVA (16%):</span>
-                  <strong className="tabular-nums">{money(convertReq.estimatedTotal * 0.16)}</strong>
+                  <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
+                  <strong className="tabular-nums">{money(convertReq.estimatedTotal * standardVatRate)}</strong>
                 </div>
                 <div className="po-totals-row grand">
                   <span>Total OC a emitir:</span>
-                  <strong className="tabular-nums">{money(convertReq.estimatedTotal * 1.16)} MXN</strong>
+                  <strong className="tabular-nums">{money(convertReq.estimatedTotal * (1 + standardVatRate))} {reportingCurrency || countryProfile.defaultCurrency}</strong>
                 </div>
               </div>
 

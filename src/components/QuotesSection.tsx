@@ -5,7 +5,7 @@ import {
   DollarSign, Check, X, ShoppingBag, AlertCircle
 } from 'lucide-react'
 import type { Quote, QuoteStatus, SalesLineItem } from '../data/sales'
-import { initialProductsAndServices } from '../data/products'
+import type { ProductServiceItem } from '../data/products'
 import { useToast } from './Toast'
 
 const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
@@ -19,6 +19,7 @@ const formatMoney = (amount: number, currency: 'MXN' | 'USD' = 'MXN') => {
 
 interface QuotesSectionProps {
   quotes: Quote[]
+  products: ProductServiceItem[]
   onUpdateQuotes: (quotes: Quote[]) => void
   onConvertToOrder: (quote: Quote) => void
   onDeleteQuote?: (quoteId: string) => void
@@ -27,6 +28,7 @@ interface QuotesSectionProps {
 
 export function QuotesSection({
   quotes,
+  products,
   onUpdateQuotes,
   onConvertToOrder,
   onDeleteQuote,
@@ -101,7 +103,7 @@ export function QuotesSection({
     setTerms('50% anticipo al confirmar y 50% contra entrega. Precios más IVA.')
 
     // Default first line item
-    const firstProd = initialProductsAndServices[0]
+    const firstProd = products.find((p) => p.status === 'Activo') || products[0]
     if (firstProd) {
       const subtotal = firstProd.unitPrice * 1
       const taxAmount = firstProd.taxRate === '16%' ? subtotal * 0.16 : 0
@@ -130,7 +132,7 @@ export function QuotesSection({
 
   const handleAddLineItem = () => {
     if (!selectedProductSku) return
-    const prod = initialProductsAndServices.find((p) => p.sku === selectedProductSku)
+    const prod = products.find((p) => p.sku === selectedProductSku)
     if (!prod) return
 
     const qty = Math.max(1, itemQuantity)
@@ -742,11 +744,14 @@ export function QuotesSection({
                     onChange={(e) => setSelectedProductSku(e.target.value)}
                   >
                     <option value="">Selecciona un producto o servicio del catálogo...</option>
-                    {initialProductsAndServices.map((prod) => (
-                      <option key={prod.sku} value={prod.sku}>
-                        [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}/{prod.unitOfMeasure}
-                      </option>
-                    ))}
+                    {products
+                      .filter((p) => p.status === 'Activo')
+                      .map((prod) => (
+                        <option key={prod.sku} value={prod.sku}>
+                          [{prod.sku}] {prod.name} — {formatMoney(prod.unitPrice)}/{prod.unitOfMeasure}
+                          {prod.type === 'product' ? ` · Disp: ${prod.stock ?? 0}` : ''}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div className="form-field" style={{ width: '90px' }}>

@@ -26,6 +26,8 @@ import {
   type SupplierBankAccount,
 } from '../data/ebp'
 import { SupplierBankAccountsManager } from './SupplierBankAccountsManager'
+import { useI18n } from '../i18n/I18nContext'
+import { getEntityCountryFields } from '../data/countryLocalization'
 
 export interface DirectoryProfile {
   clientCode?: string
@@ -87,8 +89,10 @@ export function DirectorySheetModal({
   onEdit,
   onEditBank,
 }: DirectorySheetModalProps) {
+  const { countryProfile } = useI18n()
   const isSupplier = kind === 'supplier'
   const countryObj = findCountry(record.country)
+  const entityFields = getEntityCountryFields(record.country, countryProfile.code)
   const currency = record.currency || 'MXN'
   const primaryAddress = record.addresses?.[0]
   const locationText =
@@ -158,8 +162,8 @@ export function DirectorySheetModal({
                 </span>
                 <span className="emp-contract-chip">
                   {record.entityType === 'individual'
-                    ? 'Persona física'
-                    : 'Empresa / Moral'}
+                    ? entityFields.entityTypeLabels.individual
+                    : entityFields.entityTypeLabels.company}
                 </span>
                 {countryObj && (
                   <span className="emp-contract-chip">
@@ -181,7 +185,7 @@ export function DirectorySheetModal({
               <h2 id="dir-sheet-name">{record.company}</h2>
               <p className="emp-sheet-subtitle">
                 Contacto principal: {record.name}
-                {record.rfc ? ` · RFC: ${record.rfc}` : ''}
+                {record.rfc ? ` · ${entityFields.taxIdShortLabel}: ${record.rfc}` : ''}
               </p>
             </div>
           </div>
@@ -267,7 +271,7 @@ export function DirectorySheetModal({
                 </strong>
               </div>
               <div className="emp-sheet-field">
-                <span className="emp-field-label">RFC / Tax ID</span>
+                <span className="emp-field-label">{entityFields.taxIdLabel}</span>
                 <strong className="emp-field-val mono">
                   {record.rfc || 'No registrado'}
                 </strong>
@@ -302,12 +306,16 @@ export function DirectorySheetModal({
               >
                 {record.addresses.map((addr, idx) => {
                   const addrCountry = findCountry(addr.country)
+                  const addrFields = getEntityCountryFields(
+                    addr.country || record.country,
+                    countryProfile.code
+                  )
                   const fullAddr = [
                     addr.street,
-                    addr.colony ? `Col. ${addr.colony}` : '',
+                    addr.colony ? `${addrFields.districtDisplayPrefix} ${addr.colony}` : '',
                     addr.city,
                     addr.state,
-                    addr.zipCode ? `C.P. ${addr.zipCode}` : '',
+                    addr.zipCode ? `${addrFields.postalShortLabel} ${addr.zipCode}` : '',
                     addrCountry ? addrCountry.name : addr.country,
                   ]
                     .filter(Boolean)
@@ -360,7 +368,13 @@ export function DirectorySheetModal({
               ) : (
                 <div className="ebp-sheet-accounts-stack">
                   {supplierAccounts.map((acc) => {
-                    const check = acc.clabe ? validateClabeMod10(acc.clabe) : null
+                    const isMxFormat =
+                      entityFields.countryCode === 'MX' ||
+                      /^\d{18}$/.test((acc.clabe || '').replace(/\s+/g, ''))
+                    const mxCheck = acc.clabe && isMxFormat ? validateClabeMod10(acc.clabe) : null
+                    const genericCheck =
+                      acc.clabe && !isMxFormat ? entityFields.validateBankRouting(acc.clabe) : null
+                    const check = mxCheck || genericCheck
                     return (
                       <div
                         key={acc.id}
@@ -380,7 +394,7 @@ export function DirectorySheetModal({
                           {check && (
                             <span className={check.valid ? 'ebp-field-hint' : 'ebp-field-err'}>
                               {check.valid
-                                ? `Mod-10 válida${check.bankLabel ? ` (${check.bankLabel})` : ''}`
+                                ? `${isMxFormat ? 'Mod-10 válida' : `${entityFields.bankNetworkName} válido`}${'bankLabel' in check && check.bankLabel ? ` (${check.bankLabel})` : ''}`
                                 : check.reason}
                             </span>
                           )}
@@ -391,7 +405,7 @@ export function DirectorySheetModal({
                             <strong className="emp-field-val">{acc.bankName || 'No registrada'}</strong>
                           </div>
                           <div className="emp-sheet-field">
-                            <span className="emp-field-label">CLABE interbancaria</span>
+                            <span className="emp-field-label">{entityFields.bankRoutingLabel}</span>
                             <strong className="emp-field-val mono wrap-anywhere">
                               {acc.clabe || 'No registrada'}
                             </strong>
@@ -516,7 +530,9 @@ export function DirectoryEditModal({
   onSave,
   onDelete,
 }: DirectoryEditModalProps) {
+  const { countryProfile } = useI18n()
   const isSupplier = kind === 'supplier'
+  const defaultCountryFallback = countryProfile.code === 'GLOBAL' ? 'US' : countryProfile.code
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [clientCode, setClientCode] = useState(record.clientCode || '')
   const [supplierCode, setSupplierCode] = useState(record.supplierCode || '')
@@ -535,7 +551,8 @@ export function DirectoryEditModal({
   const [paymentTerms, setPaymentTerms] = useState(
     record.paymentTerms || 'Contado'
   )
-  const [country, setCountry] = useState(record.country || 'MX')
+  const [country, setCountry] = useState(record.country || defaultCountryFallback)
+  const entityFields = getEntityCountryFields(country, countryProfile.code)
   const [city, setCity] = useState(record.city || record.addresses?.[0]?.city || '')
   const [stateVal, setStateVal] = useState(
     record.state || record.addresses?.[0]?.state || ''
@@ -682,14 +699,16 @@ export function DirectoryEditModal({
               <span>Teléfono</span>
               <input
                 value={phone}
+                placeholder={entityFields.phonePlaceholder}
                 onChange={(e) => setPhone(e.target.value)}
               />
             </label>
             <label className="form-field">
-              <span>RFC / Tax ID</span>
+              <span>{entityFields.taxIdLabel}</span>
               <input
                 className="mono"
-                maxLength={13}
+                maxLength={24}
+                placeholder={entityFields.taxIdPlaceholder}
                 value={rfc}
                 onChange={(e) => setRfc(e.target.value.toUpperCase())}
               />
@@ -705,8 +724,8 @@ export function DirectoryEditModal({
                   setEntityType(e.target.value as 'company' | 'individual')
                 }
               >
-                <option value="company">Empresa / Moral</option>
-                <option value="individual">Persona física</option>
+                <option value="company">{entityFields.entityTypeLabels.company}</option>
+                <option value="individual">{entityFields.entityTypeLabels.individual}</option>
               </select>
             </label>
             <label className="form-field">
@@ -747,12 +766,17 @@ export function DirectoryEditModal({
           <div className="form-grid-3">
             <label className="form-field">
               <span>Ciudad</span>
-              <input value={city} onChange={(e) => setCity(e.target.value)} />
+              <input
+                value={city}
+                placeholder={entityFields.cityPlaceholder}
+                onChange={(e) => setCity(e.target.value)}
+              />
             </label>
             <label className="form-field">
-              <span>Estado / Provincia</span>
+              <span>{entityFields.stateLabel}</span>
               <input
                 value={stateVal}
+                placeholder={entityFields.statePlaceholder}
                 onChange={(e) => setStateVal(e.target.value)}
               />
             </label>
@@ -775,6 +799,7 @@ export function DirectoryEditModal({
                 accounts={bankAccounts}
                 installedPacks={installedPacks}
                 defaultCurrency={currency}
+                countryCode={country}
                 onChange={setBankAccounts}
               />
             </>

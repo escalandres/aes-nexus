@@ -27,6 +27,8 @@ import {
 } from 'lucide-react'
 import type { SalesOrder } from '../data/sales'
 import type { InvoiceReceivable, ExpenseRecord } from '../data/finance'
+import { useI18n } from '../i18n/I18nContext'
+import { getCurrencySymbol } from '../services/currencyService'
 
 interface RevenueTargetChartProps {
   orders: SalesOrder[]
@@ -89,23 +91,18 @@ const loadSavedColors = (): { ventasColor: string; objetivoColor: string } => {
   }
 }
 
-const formatCompactCurrency = (val: number) => {
-  if (val >= 1_000_000) return `$${(val / 1_000_000).toFixed(2)}M`
-  if (val >= 1_000) return `$${(val / 1_000).toFixed(0)}k`
-  return `$${val}`
+const formatCompactWithSymbol = (val: number, symbol: string) => {
+  const abs = Math.abs(val)
+  const sign = val < 0 ? '-' : ''
+  if (abs >= 1_000_000) return `${sign}${symbol}${(abs / 1_000_000).toFixed(2)}M`
+  if (abs >= 1_000) return `${sign}${symbol}${(abs / 1_000).toFixed(0)}k`
+  return `${sign}${symbol}${Math.round(abs)}`
 }
 
-const money = (val: number) =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits: 0,
-  }).format(val)
-
-const formatSignedMoney = (val: number) => {
-  if (val > 0) return `+${money(val)}`
-  if (val < 0) return `-${money(Math.abs(val))}`
-  return money(0)
+const formatSignedWith = (val: number, fmt: (v: number) => string) => {
+  if (val > 0) return `+${fmt(val)}`
+  if (val < 0) return `-${fmt(Math.abs(val))}`
+  return fmt(0)
 }
 
 interface MonthlyChartPoint {
@@ -187,6 +184,9 @@ function CustomRevenueTooltip({
   ventasColor,
   objetivoColor,
 }: CustomRevenueTooltipProps) {
+  const { formatCurrency, reportingCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, reportingCurrency, 0)
+  const formatSignedMoney = (val: number) => formatSignedWith(val, money)
   if (!active || !payload || !payload.length) return null
   const data = payload[0].payload
   const isNov = data.month === 'Nov'
@@ -363,6 +363,10 @@ export function RevenueTargetChart({
   allowSalesSeries = true,
   allowFinanceSeries = true,
 }: RevenueTargetChartProps) {
+  const { reportingCurrency, convertAmount, formatCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, reportingCurrency, 0)
+  const currencySym = getCurrencySymbol(reportingCurrency)
+  const formatCompactCurrency = (val: number) => formatCompactWithSymbol(val, currencySym)
   const [requestedViewMode, setChartViewMode] = useState<ChartViewMode>(() =>
     !allowSalesSeries && allowFinanceSeries ? 'flujo-caja' : 'comparativo'
   )
@@ -425,80 +429,84 @@ export function RevenueTargetChart({
     }
   }, [colorMenuOpen])
 
-  // Real-time calculation for current period (Nov)
+  // Real-time calculation for current period (Nov) converted to reportingCurrency
   const currentNovSales = useMemo(() => {
-    const ordersTotal = orders.reduce((sum, o) => sum + (o.total || 0), 0)
-    return Math.max(ordersTotal, 260000)
-  }, [orders])
+    const ordersTotal = orders.reduce(
+      (sum, o) => sum + convertAmount(o.total || 0, o.currency || 'MXN'),
+      0
+    )
+    return Math.max(ordersTotal, convertAmount(260000, 'MXN'))
+  }, [orders, convertAmount])
 
   const currentNovCobros = useMemo(() => {
     const paidReceivables = receivables
       .filter((r) => r.status === 'Pagada' || r.paidAmount > 0)
-      .reduce((sum, r) => sum + (r.paidAmount || 0), 0)
-    return Math.max(paidReceivables, 245000)
-  }, [receivables])
+      .reduce((sum, r) => sum + convertAmount(r.paidAmount || 0, r.currency || 'MXN'), 0)
+    return Math.max(paidReceivables, convertAmount(245000, 'MXN'))
+  }, [receivables, convertAmount])
 
   const currentNovGastos = useMemo(() => {
-    const expTotal = expenses.reduce((sum, e) => sum + (e.total || 0), 0)
-    return Math.max(expTotal, 118000)
-  }, [expenses])
+    const expTotal = expenses.reduce((sum, e) => sum + convertAmount(e.total || 0, 'MXN'), 0)
+    return Math.max(expTotal, convertAmount(118000, 'MXN'))
+  }, [expenses, convertAmount])
 
   // Monthly dataset for the last 6 months with MoM trend percentages
   const monthlyData: MonthlyChartPoint[] = useMemo(() => {
+    const novTarget = convertAmount(240000, 'MXN')
     const base = [
       {
         month: 'Jun',
         monthFull: 'Junio 2026',
-        ventas: 145000,
-        objetivo: 160000,
-        cobros: 138000,
-        gastos: 82000,
+        ventas: convertAmount(145000, 'MXN'),
+        objetivo: convertAmount(160000, 'MXN'),
+        cobros: convertAmount(138000, 'MXN'),
+        gastos: convertAmount(82000, 'MXN'),
         cumplimiento: 90.6,
       },
       {
         month: 'Jul',
         monthFull: 'Julio 2026',
-        ventas: 182000,
-        objetivo: 175000,
-        cobros: 170000,
-        gastos: 91000,
+        ventas: convertAmount(182000, 'MXN'),
+        objetivo: convertAmount(175000, 'MXN'),
+        cobros: convertAmount(170000, 'MXN'),
+        gastos: convertAmount(91000, 'MXN'),
         cumplimiento: 104.0,
       },
       {
         month: 'Ago',
         monthFull: 'Agosto 2026',
-        ventas: 168000,
-        objetivo: 180000,
-        cobros: 162000,
-        gastos: 96000,
+        ventas: convertAmount(168000, 'MXN'),
+        objetivo: convertAmount(180000, 'MXN'),
+        cobros: convertAmount(162000, 'MXN'),
+        gastos: convertAmount(96000, 'MXN'),
         cumplimiento: 93.3,
       },
       {
         month: 'Sep',
         monthFull: 'Septiembre 2026',
-        ventas: 215000,
-        objetivo: 200000,
-        cobros: 204000,
-        gastos: 104000,
+        ventas: convertAmount(215000, 'MXN'),
+        objetivo: convertAmount(200000, 'MXN'),
+        cobros: convertAmount(204000, 'MXN'),
+        gastos: convertAmount(104000, 'MXN'),
         cumplimiento: 107.5,
       },
       {
         month: 'Oct',
         monthFull: 'Octubre 2026',
-        ventas: 198000,
-        objetivo: 210000,
-        cobros: 195000,
-        gastos: 98000,
+        ventas: convertAmount(198000, 'MXN'),
+        objetivo: convertAmount(210000, 'MXN'),
+        cobros: convertAmount(195000, 'MXN'),
+        gastos: convertAmount(98000, 'MXN'),
         cumplimiento: 94.3,
       },
       {
         month: 'Nov',
         monthFull: 'Noviembre 2026',
         ventas: currentNovSales,
-        objetivo: 240000,
+        objetivo: novTarget,
         cobros: currentNovCobros,
         gastos: currentNovGastos,
-        cumplimiento: Number(((currentNovSales / 240000) * 100).toFixed(1)),
+        cumplimiento: novTarget > 0 ? Number(((currentNovSales / novTarget) * 100).toFixed(1)) : 0,
       },
     ]
 

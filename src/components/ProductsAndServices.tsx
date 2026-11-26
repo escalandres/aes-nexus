@@ -2,10 +2,11 @@ import { useState, useMemo, useRef, useEffect, type ReactNode, type KeyboardEven
 import {
   Plus, Search, MoreHorizontal, Package, Tag, Boxes,
   DollarSign, CheckCircle2, XCircle, ArrowUpDown, Eye, Edit3,
-  Trash2, Copy, X, FolderTree, CornerDownLeft
+  Trash2, Copy, X, FolderTree, CornerDownLeft, ArrowUpRight, AlertTriangle
 } from 'lucide-react'
 import type { ProductServiceItem, ItemType, ItemCategory, TaxRate, UnitOfMeasure } from '../data/products'
-import { initialProductsAndServices } from '../data/products'
+import type { InventoryItemLocation, Warehouse } from '../data/operations'
+import { matchesProductInventoryRow } from '../utils/catalogInventorySync'
 import { useToast } from './Toast'
 
 const CATEGORIES: ItemCategory[] = [
@@ -182,17 +183,41 @@ const emptyFormData: ProductFormData = {
   billingModel: 'Precio fijo',
 }
 
+export interface CatalogSaveSyncOptions {
+  warehouseId?: string
+  locationBin?: string
+}
+
 interface ProductsAndServicesProps {
+  items: ProductServiceItem[]
+  inventory?: InventoryItemLocation[]
+  warehouses?: Warehouse[]
+  initialSearchQuery?: string
+  onClearInitialSearch?: () => void
   canDelete?: boolean
-  onItemDeleted?: (item: ProductServiceItem) => void
+  onCreateItem: (item: ProductServiceItem, options?: CatalogSaveSyncOptions) => void
+  onUpdateItem: (item: ProductServiceItem, prevItem: ProductServiceItem, options?: CatalogSaveSyncOptions) => void
+  onDuplicateItem: (item: ProductServiceItem) => void
+  onToggleStatus: (item: ProductServiceItem) => void
+  onDeleteItem: (item: ProductServiceItem) => void
+  onNavigateToInventory?: (sku?: string) => void
 }
 
 export function ProductsAndServices({
+  items,
+  inventory = [],
+  warehouses = [],
+  initialSearchQuery,
+  onClearInitialSearch,
   canDelete = true,
-  onItemDeleted,
+  onCreateItem,
+  onUpdateItem,
+  onDuplicateItem,
+  onToggleStatus,
+  onDeleteItem,
+  onNavigateToInventory,
 }: ProductsAndServicesProps) {
   const toast = useToast()
-  const [items, setItems] = useState<ProductServiceItem[]>(initialProductsAndServices)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedType, setSelectedType] = useState<'all' | 'product' | 'service'>('all')
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
@@ -205,6 +230,28 @@ export function ProductsAndServices({
   const [activeSuggestionIdx, setActiveSuggestionIdx] = useState(-1)
   const searchContainerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const activeWarehouses = useMemo(
+    () => warehouses.filter((w) => w.active),
+    [warehouses]
+  )
+  const defaultWarehouse = useMemo(
+    () => activeWarehouses.find((w) => w.isDefault) || activeWarehouses[0] || warehouses[0],
+    [activeWarehouses, warehouses]
+  )
+
+  const [targetWarehouseId, setTargetWarehouseId] = useState<string>(defaultWarehouse?.id || '')
+  const [targetLocationBin, setTargetLocationBin] = useState<string>('Recepción 01')
+
+  useEffect(() => {
+    if (initialSearchQuery) {
+      setSearchQuery(initialSearchQuery)
+      setSelectedType('all')
+      setSelectedCategory('all')
+      setSelectedStatus('all')
+      onClearInitialSearch?.()
+    }
+  }, [initialSearchQuery, onClearInitialSearch])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -222,10 +269,22 @@ export function ProductsAndServices({
   // Modals state
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create')
+  const [editingOriginalItem, setEditingOriginalItem] = useState<ProductServiceItem | null>(null)
   const [formData, setFormData] = useState<ProductFormData>(emptyFormData)
   const [viewingItem, setViewingItem] = useState<ProductServiceItem | null>(null)
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  // Map each product id to its live warehouse breakdown
+  const inventoryByProductId = useMemo(() => {
+    const map = new Map<string, InventoryItemLocation[]>()
+    for (const item of items) {
+      if (item.type !== 'product') continue
+      const rows = inventory.filter((inv) => matchesProductInventoryRow(inv, item))
+      map.set(item.id, rows)
+    }
+    return map
+  }, [items, inventory])
 
   // Filtered and sorted items (instant live filter by name, SKU, or category)
   const filteredItems = useMemo(() => {
@@ -360,9 +419,16 @@ export function ProductsAndServices({
   const productsCount = items.filter((i) => i.type === 'product').length
   const servicesCount = items.filter((i) => i.type === 'service').length
   const activeCount = items.filter((i) => i.status === 'Activo').length
-  const totalInventoryValue = items
-    .filter((i) => i.type === 'product' && i.stock)
-    .reduce((sum, item) => sum + (item.cost || item.unitPrice * 0.7) * (item.stock || 0), 0)
+  const totalInventoryValue =
+    inventory.length > 0
+      ? inventory.reduce((sum, row) => sum + row.cost * row.stock, 0)
+      : items
+          .filter((i) => i.type === 'product' && i.stock)
+          .reduce((sum, item) => sum + (item.cost || item.unitPrice * 0.7) * (item.stock || 0), 0)
+  const totalStockUnits = items
+    .filter((i) => i.type === 'product')
+    .reduce((sum, item) => sum + (item.stock || 0), 0)
+  const coveredWarehousesCount = new Set(inventory.map((row) => row.warehouseId)).size
   const avgPrice = items.reduce((sum, item) => sum + item.unitPrice, 0) / (totalCount || 1)
 
   // Helper to generate a sensible SKU suggestion
@@ -376,17 +442,25 @@ export function ProductsAndServices({
 
   const handleOpenCreate = () => {
     setModalMode('create')
+    setEditingOriginalItem(null)
     setConfirmingDelete(false)
     setFormData({
       ...emptyFormData,
       sku: generateSkuSuggestion('product', 'Hardware', ''),
     })
+    setTargetWarehouseId(defaultWarehouse?.id || '')
+    setTargetLocationBin(defaultWarehouse ? `Recepción ${defaultWarehouse.code}` : 'Recepción 01')
     setIsModalOpen(true)
   }
 
   const handleOpenEdit = (item: ProductServiceItem) => {
     setModalMode('edit')
+    setEditingOriginalItem(item)
     setConfirmingDelete(false)
+    const matchedRows = inventoryByProductId.get(item.id) || []
+    const primaryWhId = matchedRows[0]?.warehouseId || defaultWarehouse?.id || ''
+    setTargetWarehouseId(primaryWhId)
+    setTargetLocationBin(matchedRows[0]?.locationBin || 'Recepción 01')
     setFormData({
       id: item.id,
       sku: item.sku,
@@ -399,48 +473,34 @@ export function ProductsAndServices({
       taxRate: item.taxRate,
       unitOfMeasure: item.unitOfMeasure,
       status: item.status,
-      stock: item.stock,
-      minStock: item.minStock,
-      cost: item.cost,
-      billingModel: item.billingModel,
-      leadTimeDays: item.leadTimeDays,
+      stock: item.stock ?? 0,
+      minStock: item.minStock ?? 2,
+      cost: item.cost ?? 0,
+      billingModel: item.billingModel || 'Precio fijo',
+      leadTimeDays: item.leadTimeDays ?? 1,
     })
     setActiveMenuId(null)
     setIsModalOpen(true)
   }
 
   const handleDuplicate = (item: ProductServiceItem) => {
-    const newItem: ProductServiceItem = {
-      ...item,
-      id: `prod_${Date.now()}`,
-      sku: `${item.sku}-COPIA`,
-      name: `${item.name} (Copia)`,
-      lastUpdated: 'Hoy',
-    }
-    setItems((prev) => [newItem, ...prev])
+    onDuplicateItem(item)
     setActiveMenuId(null)
-    toast.success(`Se duplicó el artículo "${item.name}".`, 'Artículo duplicado')
   }
 
   const handleToggleStatus = (item: ProductServiceItem) => {
-    const nextStatus = item.status === 'Activo' ? 'Inactivo' : 'Activo'
-    setItems((prev) =>
-      prev.map((i) => (i.id === item.id ? { ...i, status: nextStatus, lastUpdated: 'Hoy' } : i))
-    )
+    onToggleStatus(item)
     setActiveMenuId(null)
-    toast.info(`El artículo ahora está ${nextStatus.toLowerCase()}.`, 'Estado actualizado')
   }
 
   const handleConfirmDeleteItem = (itemId: string) => {
     const target = items.find((i) => i.id === itemId)
-    setItems((prev) => prev.filter((i) => i.id !== itemId))
     if (viewingItem?.id === itemId) setViewingItem(null)
     if (isModalOpen && formData.id === itemId) setIsModalOpen(false)
     setActiveMenuId(null)
     setConfirmingDelete(false)
     if (target) {
-      onItemDeleted?.(target)
-      toast.info(`"${target.name}" fue eliminado del catálogo.`, 'Artículo eliminado')
+      onDeleteItem(target)
     }
   }
 
@@ -460,16 +520,17 @@ export function ProductsAndServices({
       return
     }
 
+    const normalizedSku = formData.sku.trim().toUpperCase()
+
     if (modalMode === 'create') {
-      // Check duplicate SKU
-      if (items.some((i) => i.sku.toLowerCase() === formData.sku.trim().toLowerCase())) {
-        toast.error(`Ya existe un artículo con el código SKU ${formData.sku}.`, 'SKU duplicado')
+      if (items.some((i) => i.sku.trim().toUpperCase() === normalizedSku)) {
+        toast.error(`Ya existe un artículo con el código SKU ${normalizedSku}.`, 'SKU duplicado')
         return
       }
 
       const newItem: ProductServiceItem = {
         id: `prod_${Date.now()}`,
-        sku: formData.sku.trim().toUpperCase(),
+        sku: normalizedSku,
         name: formData.name.trim(),
         type: formData.type,
         category: formData.category,
@@ -479,43 +540,52 @@ export function ProductsAndServices({
         taxRate: formData.taxRate,
         unitOfMeasure: formData.unitOfMeasure,
         status: formData.status,
-        stock: formData.type === 'product' ? Number(formData.stock || 0) : undefined,
-        minStock: formData.type === 'product' ? Number(formData.minStock || 0) : undefined,
-        cost: formData.type === 'product' ? Number(formData.cost || 0) : undefined,
+        stock: formData.type === 'product' ? Math.max(0, Number(formData.stock || 0)) : undefined,
+        minStock: formData.type === 'product' ? Math.max(0, Number(formData.minStock || 0)) : undefined,
+        cost: formData.type === 'product' ? Math.max(0, Number(formData.cost || 0)) : undefined,
         billingModel: formData.type === 'service' ? formData.billingModel : undefined,
         leadTimeDays: formData.type === 'service' ? Number(formData.leadTimeDays || 1) : undefined,
         lastUpdated: 'Hoy',
       }
 
-      setItems((prev) => [newItem, ...prev])
-      toast.success(`"${newItem.name}" se guardó en el catálogo de ventas.`, 'Artículo registrado')
-    } else {
-      setItems((prev) =>
-        prev.map((i) =>
-          i.id === formData.id
-            ? {
-                ...i,
-                sku: formData.sku.trim().toUpperCase(),
-                name: formData.name.trim(),
-                type: formData.type,
-                category: formData.category,
-                description: formData.description.trim(),
-                unitPrice: Number(formData.unitPrice),
-                currency: formData.currency,
-                taxRate: formData.taxRate,
-                unitOfMeasure: formData.unitOfMeasure,
-                status: formData.status,
-                stock: formData.type === 'product' ? Number(formData.stock || 0) : undefined,
-                minStock: formData.type === 'product' ? Number(formData.minStock || 0) : undefined,
-                cost: formData.type === 'product' ? Number(formData.cost || 0) : undefined,
-                billingModel: formData.type === 'service' ? formData.billingModel : undefined,
-                leadTimeDays: formData.type === 'service' ? Number(formData.leadTimeDays || 1) : undefined,
-                lastUpdated: 'Hoy',
-              }
-            : i
+      onCreateItem(newItem, {
+        warehouseId: targetWarehouseId || defaultWarehouse?.id,
+        locationBin: targetLocationBin,
+      })
+    } else if (editingOriginalItem) {
+      if (
+        items.some(
+          (i) => i.id !== editingOriginalItem.id && i.sku.trim().toUpperCase() === normalizedSku
         )
-      )
-      toast.success(`Los cambios en "${formData.name}" fueron guardados.`, 'Artículo actualizado')
+      ) {
+        toast.error(`Ya existe otro artículo con el código SKU ${normalizedSku}.`, 'SKU duplicado')
+        return
+      }
+
+      const updatedItem: ProductServiceItem = {
+        ...editingOriginalItem,
+        sku: normalizedSku,
+        name: formData.name.trim(),
+        type: formData.type,
+        category: formData.category,
+        description: formData.description.trim(),
+        unitPrice: Number(formData.unitPrice),
+        currency: formData.currency,
+        taxRate: formData.taxRate,
+        unitOfMeasure: formData.unitOfMeasure,
+        status: formData.status,
+        stock: formData.type === 'product' ? Math.max(0, Number(formData.stock ?? 0)) : undefined,
+        minStock: formData.type === 'product' ? Math.max(0, Number(formData.minStock ?? 0)) : undefined,
+        cost: formData.type === 'product' ? Math.max(0, Number(formData.cost ?? 0)) : undefined,
+        billingModel: formData.type === 'service' ? formData.billingModel : undefined,
+        leadTimeDays: formData.type === 'service' ? Number(formData.leadTimeDays || 1) : undefined,
+        lastUpdated: 'Hoy',
+      }
+
+      onUpdateItem(updatedItem, editingOriginalItem, {
+        warehouseId: targetWarehouseId || defaultWarehouse?.id,
+        locationBin: targetLocationBin,
+      })
     }
 
     setIsModalOpen(false)
@@ -579,12 +649,16 @@ export function ProductsAndServices({
 
         <article className="catalog-kpi-card">
           <div className="catalog-kpi-header">
-            <span>Valor inventario estimado</span>
+            <span>Valor inventario sincronizado</span>
             <span className="kpi-icon icon-green"><Package size={16} /></span>
           </div>
           <div className="catalog-kpi-val tabular-nums">{formatMoney(totalInventoryValue)}</div>
           <div className="catalog-kpi-sub">
-            <span>En artículos físicos de hardware</span>
+            <span className="tabular-nums">{totalStockUnits} uds.</span>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">
+              {coveredWarehousesCount} {coveredWarehousesCount === 1 ? 'almacén' : 'almacenes'}
+            </span>
           </div>
         </article>
 
@@ -972,12 +1046,38 @@ export function ProductsAndServices({
                 </td>
                 <td>
                   {item.type === 'product' ? (
-                    <div className="catalog-stock-indicator">
-                      <span className={`stock-number font-mono tabular-nums ${(item.stock ?? 0) <= (item.minStock ?? 2) ? 'stock-low' : ''}`}>
-                        {item.stock ?? 0} {item.unitOfMeasure}
-                      </span>
-                      <small className="text-muted">en almacén</small>
-                    </div>
+                    (() => {
+                      const rows = inventoryByProductId.get(item.id) || []
+                      const totalStock =
+                        rows.length > 0
+                          ? rows.reduce((s, r) => s + r.stock, 0)
+                          : (item.stock ?? 0)
+                      const totalReserved = rows.reduce((s, r) => s + r.reserved, 0)
+                      const hasLowWarehouse =
+                        rows.length > 0
+                          ? rows.some((r) => r.stock <= r.minStock)
+                          : totalStock <= (item.minStock ?? 2)
+
+                      return (
+                        <div className="catalog-stock-indicator">
+                          <span
+                            className={`stock-number font-mono tabular-nums ${
+                              hasLowWarehouse ? 'stock-low' : ''
+                            }`}
+                          >
+                            {totalStock} {item.unitOfMeasure}
+                          </span>
+                          <small className="text-muted catalog-stock-submeta tabular-nums">
+                            {rows.length > 0
+                              ? `${rows.length} ${rows.length === 1 ? 'almacén' : 'almacenes'}${
+                                  totalReserved > 0 ? ` · ${totalReserved} res.` : ''
+                                }`
+                              : 'Sin almacén asignado'}
+                            {hasLowWarehouse ? ' · Stock bajo' : ''}
+                          </small>
+                        </div>
+                      )
+                    })()
                   ) : (
                     <div className="catalog-service-model">
                       <span>{item.billingModel || 'Precio fijo'}</span>
@@ -1310,17 +1410,17 @@ export function ProductsAndServices({
               {/* Conditional section: Product vs Service specific attributes */}
               {formData.type === 'product' ? (
                 <>
-                  <div className="form-section-divider">CONTROL DE EXISTENCIAS Y COSTOS</div>
+                  <div className="form-section-divider">CONTROL DE EXISTENCIAS, ALMACÉN Y COSTOS</div>
                   <div className="form-grid form-grid-3">
                     <label className="form-field">
-                      <span>Existencia actual</span>
+                      <span>{modalMode === 'create' ? 'Existencia inicial' : 'Existencia total sincronizada'}</span>
                       <input
                         type="number"
                         min="0"
                         className="font-mono tabular-nums"
                         value={formData.stock ?? 0}
                         onChange={(e) =>
-                          setFormData({ ...formData, stock: parseInt(e.target.value) || 0 })
+                          setFormData({ ...formData, stock: Math.max(0, parseInt(e.target.value, 10) || 0) })
                         }
                       />
                     </label>
@@ -1333,7 +1433,7 @@ export function ProductsAndServices({
                         className="font-mono tabular-nums"
                         value={formData.minStock ?? 2}
                         onChange={(e) =>
-                          setFormData({ ...formData, minStock: parseInt(e.target.value) || 0 })
+                          setFormData({ ...formData, minStock: Math.max(0, parseInt(e.target.value, 10) || 0) })
                         }
                       />
                     </label>
@@ -1356,6 +1456,64 @@ export function ProductsAndServices({
                       </div>
                     </label>
                   </div>
+
+                  {warehouses.length > 0 && (
+                    <div className="form-grid">
+                      <label className="form-field">
+                        <span>
+                          {modalMode === 'create'
+                            ? 'Almacén inicial de ingreso'
+                            : 'Almacén objetivo para ajustes de stock'}
+                        </span>
+                        <select
+                          value={targetWarehouseId}
+                          onChange={(e) => {
+                            const nextWhId = e.target.value
+                            setTargetWarehouseId(nextWhId)
+                            const whObj = warehouses.find((w) => w.id === nextWhId)
+                            if (modalMode === 'create' && whObj) {
+                              setTargetLocationBin(`Recepción ${whObj.code}`)
+                            }
+                          }}
+                        >
+                          {warehouses.map((w) => (
+                            <option key={w.id} value={w.id}>
+                              {w.name} ({w.code}){!w.active ? ' · Inactiva' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {modalMode === 'create' ? (
+                        <label className="form-field">
+                          <span>Ubicación / Rack inicial</span>
+                          <input
+                            type="text"
+                            placeholder="Ej. Rack A-01"
+                            value={targetLocationBin}
+                            onChange={(e) => setTargetLocationBin(e.target.value)}
+                          />
+                        </label>
+                      ) : (
+                        <div className="form-field">
+                          <span>Distribución actual en almacenes</span>
+                          <div className="catalog-wh-sync-hint tabular-nums">
+                            {(() => {
+                              const rows = editingOriginalItem
+                                ? inventoryByProductId.get(editingOriginalItem.id) || []
+                                : []
+                              if (rows.length === 0) {
+                                return 'Se creará el registro de almacén al guardar.'
+                              }
+                              return rows
+                                .map((r) => `${r.warehouseName}: ${r.stock} ${r.unitOfMeasure}`)
+                                .join(' · ')
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {calculatedMargin && (
                     <div className="margin-indicator-banner">
@@ -1636,6 +1794,77 @@ export function ProductsAndServices({
                   </div>
                 </div>
               </div>
+
+              {viewingItem.type === 'product' && (
+                <div className="detail-section">
+                  <div className="catalog-detail-wh-header">
+                    <h3>Existencias sincronizadas por almacén</h3>
+                    {onNavigateToInventory && (
+                      <button
+                        type="button"
+                        className="text-subtle-action catalog-jump-inv-btn"
+                        onClick={() => {
+                          const targetSku = viewingItem.sku
+                          setViewingItem(null)
+                          onNavigateToInventory(targetSku)
+                        }}
+                      >
+                        Ver en Inventario <ArrowUpRight size={13} />
+                      </button>
+                    )}
+                  </div>
+                  {(() => {
+                    const whRows = inventoryByProductId.get(viewingItem.id) || []
+                    if (whRows.length === 0) {
+                      return (
+                        <div className="catalog-wh-empty">
+                          <span>Este SKU aún no tiene existencias registradas en ningún almacén.</span>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div className="catalog-wh-table-wrap">
+                        <table className="catalog-wh-table">
+                          <thead>
+                            <tr>
+                              <th>Almacén</th>
+                              <th>Rack</th>
+                              <th className="text-right">Disp.</th>
+                              <th className="text-right">Res.</th>
+                              <th className="text-right">Tráns.</th>
+                              <th className="text-right">Mín.</th>
+                              <th>Estado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {whRows.map((row) => {
+                              const isLow = row.stock <= row.minStock
+                              return (
+                                <tr key={row.id}>
+                                  <td>{row.warehouseName}</td>
+                                  <td className="font-mono">{row.locationBin}</td>
+                                  <td className="text-right font-mono tabular-nums">
+                                    <strong>{row.stock}</strong>
+                                  </td>
+                                  <td className="text-right font-mono tabular-nums">{row.reserved}</td>
+                                  <td className="text-right font-mono tabular-nums">{row.inTransit}</td>
+                                  <td className="text-right font-mono tabular-nums">{row.minStock}</td>
+                                  <td>
+                                    <span className={`catalog-wh-status ${isLow ? 'is-low' : 'is-ok'}`}>
+                                      {isLow && <AlertTriangle size={11} />}
+                                      {isLow ? 'Stock bajo' : 'Abastecido'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
             </div>
 
             <div className={`create-modal-actions ${canDelete ? 'has-delete-action' : ''}`}>

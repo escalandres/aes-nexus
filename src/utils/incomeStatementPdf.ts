@@ -1,6 +1,13 @@
 import { jsPDF } from 'jspdf'
 import autoTable, { type RowInput } from 'jspdf-autotable'
 import type { ComputedIncomeStatement } from '../components/IncomeStatementReport'
+import { getStoredAccountCountryProfile } from '../data/countryLocalization'
+import {
+  convertCurrency,
+  getRateSummaryLabel,
+  getStoredReportingCurrency,
+  normalizeCurrencyCode,
+} from '../services/currencyService'
 
 export interface CompanyBrandSnapshot {
   workspaceName: string
@@ -216,17 +223,24 @@ async function resolveBrandLogoPng(brand: CompanyBrandSnapshot): Promise<{
   })
 }
 
-const formatMxn = (val: number) =>
-  new Intl.NumberFormat('es-MX', {
-    style: 'currency',
-    currency: 'MXN',
-    maximumFractionDigits: 0,
-  }).format(val)
+const formatReportCur = (val: number, currency: string = 'MXN') => {
+  const code = normalizeCurrencyCode(currency)
+  try {
+    return new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(val)
+  } catch {
+    return `${code} ${Math.round(val)}`
+  }
+}
 
 export interface ExportIncomeStatementPdfOptions {
   data: ComputedIncomeStatement
   compareYoY: boolean
   activeScopeSummary: string
+  displayCurrency?: string
   generatedAt?: Date
 }
 
@@ -234,8 +248,11 @@ export async function exportIncomeStatementPdf({
   data,
   compareYoY,
   activeScopeSummary,
+  displayCurrency,
   generatedAt = new Date(),
 }: ExportIncomeStatementPdfOptions): Promise<{ filename: string; rowCount: number }> {
+  const activeCurrency = normalizeCurrencyCode(displayCurrency || getStoredReportingCurrency())
+  const formatMxn = (val: number) => formatReportCur(val, activeCurrency)
   const brand = loadCompanyBrandSnapshot()
   const logo = await resolveBrandLogoPng(brand)
 
@@ -303,7 +320,8 @@ export async function exportIncomeStatementPdf({
   doc.setFontSize(8.2)
   doc.setTextColor(...mutedText)
   doc.text(brand.legalName, textStartX, cursorY + 23)
-  doc.text(`RFC: ${brand.rfc}  ·  ${brand.taxRegime}`, textStartX, cursorY + 34)
+  const taxShortLabel = getStoredAccountCountryProfile().taxId.shortLabel
+  doc.text(`${taxShortLabel}: ${brand.rfc}  ·  ${brand.taxRegime}`, textStartX, cursorY + 34)
   doc.text(brand.fiscalAddress, textStartX, cursorY + 45)
 
   // Report title + Current date right-aligned
@@ -334,9 +352,14 @@ export async function exportIncomeStatementPdf({
     cursorY + 35,
     { align: 'right' }
   )
-  doc.text('Moneda base: MXN (Cifras en pesos mexicanos)', pageWidth - marginX, cursorY + 46, {
-    align: 'right',
-  })
+  doc.text(
+    `Moneda de reporte: ${activeCurrency}${
+      activeCurrency !== 'MXN' ? ` (${getRateSummaryLabel(activeCurrency)})` : ' (Base operativa)'
+    }`,
+    pageWidth - marginX,
+    cursorY + 46,
+    { align: 'right' }
+  )
 
   cursorY += 58
 
@@ -428,8 +451,8 @@ export async function exportIncomeStatementPdf({
   cursorY += 6
 
   const pnlHead = compareYoY
-    ? [['Signo', 'Concepto Contable', 'Origen en ERP', 'Importe (MXN)', '% Ing.', 'Periodo Ant.', 'YoY %']]
-    : [['Signo', 'Concepto Contable', 'Origen en ERP', 'Importe (MXN)', '% Ing.']]
+    ? [['Signo', 'Concepto Contable', 'Origen en ERP', `Importe (${activeCurrency})`, '% Ing.', 'Periodo Ant.', 'YoY %']]
+    : [['Signo', 'Concepto Contable', 'Origen en ERP', `Importe (${activeCurrency})`, '% Ing.']]
 
   const pnlBody: RowInput[] = data.lines.map((row) => {
     const amountText =
@@ -721,8 +744,13 @@ export async function exportIncomeStatementPdf({
     autoTable(doc, {
       startY: nextY,
       margin: { left: marginX, right: marginX, bottom: 52 },
-      head: [['Código', 'Cuenta Contable', 'Grupo P&L', 'Saldo']],
-      body: usedAccounts.map((acc) => [acc.code, acc.name, acc.type, formatMxn(acc.balance)]),
+      head: [['Código', 'Cuenta Contable', 'Grupo P&L', `Saldo (${activeCurrency})`]],
+      body: usedAccounts.map((acc) => [
+        acc.code,
+        acc.name,
+        acc.type,
+        formatMxn(convertCurrency(acc.balance, 'MXN', activeCurrency)),
+      ]),
       theme: 'plain',
       styles: {
         font: 'helvetica',
@@ -789,7 +817,7 @@ export async function exportIncomeStatementPdf({
     doc.setFontSize(7.4)
     doc.setTextColor(...mutedText)
     doc.text(
-      `${brand.tradeName} · RFC ${brand.rfc} · Estado de Resultados (${formattedDateLong})`,
+      `${brand.tradeName} · ${taxShortLabel} ${brand.rfc} · Estado de Resultados (${formattedDateLong})`,
       marginX,
       footerY
     )

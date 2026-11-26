@@ -52,6 +52,7 @@ import {
   Minus,
   Layers,
   ArrowRight,
+  Database,
 } from 'lucide-react'
 import { useToast } from './Toast'
 import CountryDropdown from './CountryDropdown'
@@ -62,6 +63,11 @@ import type { SupportedLocale } from '../i18n/types'
 import type { InventoryItemLocation, Warehouse } from '../data/operations'
 import { PRODUCT_CATALOG_CATEGORIES, type ProductServiceItem } from '../data/products'
 import type { PhysicalLocationRecord, LocationType } from './AdministrationSection'
+import {
+  ERP_PERSISTENCE_CHANGED_EVENT,
+  getErpPersistenceSummary,
+  type ErpPersistenceSummary,
+} from '../utils/erpPersistence'
 import {
   AUDIT_CHANGED_EVENT,
   CATEGORY_STOCK_THRESHOLDS_CHANGED_EVENT,
@@ -226,6 +232,8 @@ export interface SettingsSectionProps {
   activeSectionAccess?: RoleSectionPermissions
   isFullAdmin?: boolean
   isAccountActive?: boolean
+  onResetTransactionalData?: () => void
+  onResetAllWorkspaceData?: () => void
 }
 
 const WORKSPACE_AVATAR_SWATCHES = ['#456a61', '#3f6f9f', '#7860a6', '#b96e56', '#2d4739'] as const
@@ -256,6 +264,8 @@ export function SettingsSection({
   activeSectionAccess,
   isFullAdmin = true,
   isAccountActive = true,
+  onResetTransactionalData,
+  onResetAllWorkspaceData,
 }: SettingsSectionProps) {
   const toast = useToast()
   const {
@@ -263,6 +273,8 @@ export function SettingsSection({
     updateRegional,
     mainCountry,
     mainCountryName,
+    countryProfile,
+    reportingCurrency,
     countryTimezones,
     updateGeneralLocalization,
     t,
@@ -291,6 +303,14 @@ export function SettingsSection({
       avatarColor: '#456a61',
     }
   })
+
+  useEffect(() => {
+    setGeneral((prev) =>
+      prev.reportingCurrency === reportingCurrency
+        ? prev
+        : { ...prev, reportingCurrency }
+    )
+  }, [reportingCurrency])
 
   // 2. ORGANIZATION SETTINGS
   const [org, setOrg] = useState<OrganizationSettings>(() => {
@@ -1305,6 +1325,41 @@ export function SettingsSection({
   }
 
   const [logoPreviewError, setLogoPreviewError] = useState(false)
+  const [persistenceSummary, setPersistenceSummary] = useState<ErpPersistenceSummary>(() =>
+    getErpPersistenceSummary()
+  )
+  const [confirmResetMode, setConfirmResetMode] = useState<null | 'transactional' | 'all'>(null)
+
+  useEffect(() => {
+    if (activeSetting === 'General') {
+      setPersistenceSummary(getErpPersistenceSummary())
+    }
+    const refreshSummary = () => setPersistenceSummary(getErpPersistenceSummary())
+    window.addEventListener(ERP_PERSISTENCE_CHANGED_EVENT, refreshSummary)
+    window.addEventListener('storage', refreshSummary)
+    return () => {
+      window.removeEventListener(ERP_PERSISTENCE_CHANGED_EVENT, refreshSummary)
+      window.removeEventListener('storage', refreshSummary)
+    }
+  }, [activeSetting])
+
+  const canResetWorkspace =
+    isFullAdmin ||
+    canEditInSection('Configuración', 'General', activeSectionAccess, isFullAdmin, isAccountActive)
+
+  const formatPersistenceSavedTime = (iso: string | null) => {
+    if (!iso) return 'Sin cambios pendientes'
+    try {
+      return new Intl.DateTimeFormat('es-MX', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date(iso))
+    } catch {
+      return iso
+    }
+  }
 
   const persistAndBroadcastOrg = (next: OrganizationSettings) => {
     localStorage.setItem(STORAGE_KEYS.org, JSON.stringify(next))
@@ -3244,7 +3299,7 @@ export function SettingsSection({
     e.preventDefault()
     const cleanLast4 = paymentDraft.paymentLast4.replace(/\D/g, '').slice(-4)
     if (cleanLast4.length !== 4) {
-      toast.warning('Ingresa los últimos 4 dígitos de la tarjeta o cuenta CLABE.', 'Método de pago')
+      toast.warning(`Ingresa los últimos 4 dígitos de la tarjeta o ${countryProfile.bank.routingShortLabel}.`, 'Método de pago')
       return
     }
     const cleanEmail = paymentDraft.billingEmail.trim()
@@ -3256,7 +3311,7 @@ export function SettingsSection({
       ...planSettings,
       paymentBrand: paymentDraft.paymentBrand,
       paymentLast4: cleanLast4,
-      paymentExpiry: paymentDraft.paymentBrand === 'SPEI' ? 'Cuenta STP' : paymentDraft.paymentExpiry.trim() || '09/2028',
+      paymentExpiry: paymentDraft.paymentBrand === 'SPEI' ? `Cuenta ${countryProfile.bank.networkName}` : paymentDraft.paymentExpiry.trim() || '09/2028',
       paymentHolder: paymentDraft.paymentHolder.trim() || org.legalRep,
       billingEmail: cleanEmail,
     }
@@ -3279,21 +3334,21 @@ export function SettingsSection({
       'COMPROBANTE FISCAL DE SUSCRIPCIÓN · AES NEXUS ERP',
       '======================================================',
       `Folio:             ${inv.folio}`,
-      `UUID Fiscal:       ${inv.cfdiUuid}`,
+      `${countryProfile.fiscalDoc.uuidLabel}: ${inv.cfdiUuid}`,
       `Fecha de emisión:  ${formatDate(new Date(inv.dateIso))}`,
       `Periodo cubierto:  ${inv.periodLabel}`,
       `Estado:            ${inv.status === 'paid' ? 'PAGADA' : 'PENDIENTE'}`,
       '------------------------------------------------------',
       `Receptor:          ${org.legalName}`,
-      `RFC:               ${org.rfc}`,
+      `${countryProfile.taxId.shortLabel}:               ${org.rfc}`,
       `Régimen Fiscal:    ${org.taxRegime}`,
-      `Domicilio Fiscal:  ${org.fiscalStreet}, CP ${org.fiscalZip}, ${org.fiscalCity}`,
+      `Domicilio Fiscal:  ${org.fiscalStreet}, ${countryProfile.territory.postalShortLabel} ${org.fiscalZip}, ${org.fiscalCity}`,
       `Correo de envío:   ${planSettings.billingEmail}`,
       '------------------------------------------------------',
       `Concepto:          ${inv.concept}`,
       `Método de pago:    ${inv.paymentMethod}`,
       `Subtotal:          ${formatCurrency(inv.subtotalMxn, general.reportingCurrency)}`,
-      `IVA (16%):         ${formatCurrency(inv.taxMxn, general.reportingCurrency)}`,
+      `${countryProfile.vat.label} (${countryProfile.vat.standardRatePct}%):         ${formatCurrency(inv.taxMxn, general.reportingCurrency)}`,
       `Total:             ${formatCurrency(inv.amountMxn, general.reportingCurrency)}`,
       '======================================================',
     ].join('\n')
@@ -3884,6 +3939,7 @@ export function SettingsSection({
                         <option value="MXN">{t('settings.general.currency.MXN')}</option>
                         <option value="USD">{t('settings.general.currency.USD')}</option>
                         <option value="EUR">{t('settings.general.currency.EUR')}</option>
+                        <option value="VES">VES — Bolívar venezolano</option>
                         <option value="COP">{t('settings.general.currency.COP')}</option>
                         <option value="BRL">{t('settings.general.currency.BRL')}</option>
                       </select>
@@ -3938,6 +3994,114 @@ export function SettingsSection({
                       </div>
                     </div>
                   </div>
+                </div>
+
+                {/* Almacenamiento local y restablecimiento demo */}
+                <div className="settings-section-card">
+                  <div className="card-header-row">
+                    <div>
+                      <h3>Persistencia local y datos de demostración</h3>
+                      <p>
+                        Los cambios en Ventas, Compras, Catálogo, Inventario, Finanzas, Gastos, Nómina y CRM se guardan automáticamente en este navegador entre recargas.
+                      </p>
+                    </div>
+                    <Database size={18} className="settings-persistence-icon" aria-hidden="true" />
+                  </div>
+
+                  <div className="settings-persistence-grid">
+                    <div className="settings-persistence-stat">
+                      <span>Módulos persistidos</span>
+                      <strong>{persistenceSummary.transactionalDatasetsCount} / 25</strong>
+                    </div>
+                    <div className="settings-persistence-stat">
+                      <span>Claves activas</span>
+                      <strong>{persistenceSummary.totalAppKeysCount}</strong>
+                    </div>
+                    <div className="settings-persistence-stat">
+                      <span>Espacio utilizado</span>
+                      <strong>{persistenceSummary.estimatedSizeKb} KB</strong>
+                    </div>
+                    <div className="settings-persistence-stat">
+                      <span>Último guardado</span>
+                      <strong>{formatPersistenceSavedTime(persistenceSummary.lastSavedIso)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="settings-persistence-actions">
+                    <div className="settings-persistence-copy">
+                      <strong>Restaurar escenario de pruebas</strong>
+                      <span>
+                        Reinicia cotizaciones, pedidos, inventario, movimientos, finanzas, gastos y directorios sin perder usuarios ni configuración, o reinicia todo el entorno desde cero.
+                      </span>
+                    </div>
+                    <div className="settings-persistence-buttons">
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        disabled={!canResetWorkspace || !onResetTransactionalData}
+                        onClick={() => setConfirmResetMode('transactional')}
+                      >
+                        <RotateCcw size={14} /> Restablecer transacciones
+                      </button>
+                      <button
+                        type="button"
+                        className="button button-danger-outline"
+                        disabled={!canResetWorkspace || !onResetAllWorkspaceData}
+                        onClick={() => setConfirmResetMode('all')}
+                      >
+                        <RefreshCw size={14} /> Reinicio completo
+                      </button>
+                    </div>
+                  </div>
+
+                  {confirmResetMode && (
+                    <div className="settings-persistence-confirm" role="alert">
+                      <div>
+                        <strong>
+                          {confirmResetMode === 'all'
+                            ? 'Confirmar reinicio completo del entorno'
+                            : 'Confirmar restablecimiento de datos operativos y comerciales'}
+                        </strong>
+                        <p>
+                          {confirmResetMode === 'all'
+                            ? 'Se eliminarán todos los registros, usuarios personalizados, roles, tema visual y configuraciones guardadas en este navegador, recargando el sistema con valores iniciales.'
+                            : 'Se restaurarán los registros demo de Ventas, Compras, Catálogo, Inventario, Devoluciones, Finanzas, Gastos, Nómina y CRM. Tu empresa, usuarios, roles y apariencia permanecerán intactos.'}
+                        </p>
+                      </div>
+                      <div className="settings-persistence-confirm-actions">
+                        <button
+                          type="button"
+                          className="button button-secondary"
+                          onClick={() => setConfirmResetMode(null)}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          className={`button ${
+                            confirmResetMode === 'all' ? 'button-danger-solid' : 'button-primary'
+                          }`}
+                          onClick={() => {
+                            const mode = confirmResetMode
+                            setConfirmResetMode(null)
+                            if (mode === 'all') {
+                              onResetAllWorkspaceData?.()
+                            } else {
+                              onResetTransactionalData?.()
+                              setPersistenceSummary(getErpPersistenceSummary())
+                              window.setTimeout(() => {
+                                setPersistenceSummary(getErpPersistenceSummary())
+                              }, 60)
+                            }
+                          }}
+                        >
+                          {confirmResetMode === 'all'
+                            ? 'Sí, reiniciar todo'
+                            : 'Sí, restablecer datos'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -4077,12 +4241,14 @@ export function SettingsSection({
                     </div>
 
                     <div className="form-field">
-                      <label>{t('settings.org.rfcLabel')}</label>
+                      <label>{countryProfile.taxId.label}</label>
                       <input
                         type="text"
                         value={org.rfc}
+                        placeholder={countryProfile.taxId.placeholder}
                         onChange={(e) => setOrg({ ...org, rfc: e.target.value.toUpperCase() })}
                       />
+                      <small>{countryProfile.taxId.formatHint}</small>
                     </div>
                   </div>
 
@@ -4093,9 +4259,14 @@ export function SettingsSection({
                         value={org.taxRegime}
                         onChange={(e) => setOrg({ ...org, taxRegime: e.target.value })}
                       >
-                        <option value="601 - General de Ley Personas Morales">{t('settings.org.regime601')}</option>
-                        <option value="626 - Régimen Simplificado de Confianza (RESICO)">{t('settings.org.regime626')}</option>
-                        <option value="603 - Personas Morales con Fines no Lucrativos">{t('settings.org.regime603')}</option>
+                        {!countryProfile.regimes.some((r) => r.value === org.taxRegime) && org.taxRegime && (
+                          <option value={org.taxRegime}>{org.taxRegime}</option>
+                        )}
+                        {countryProfile.regimes.map((reg) => (
+                          <option key={reg.value} value={reg.value}>
+                            {reg.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -4130,7 +4301,7 @@ export function SettingsSection({
                     </div>
 
                     <div className="form-field">
-                      <label>{t('settings.org.colonyLabel')}</label>
+                      <label>{countryProfile.territory.districtLabel}</label>
                       <input
                         type="text"
                         value={org.fiscalColony}
@@ -4141,10 +4312,11 @@ export function SettingsSection({
 
                   <div className="form-grid-3" style={{ marginTop: '12px' }}>
                     <div className="form-field">
-                      <label>{t('settings.org.zipLabel')}</label>
+                      <label>{countryProfile.territory.postalLabel}</label>
                       <input
                         type="text"
                         value={org.fiscalZip}
+                        placeholder={countryProfile.territory.postalPlaceholder}
                         onChange={(e) => setOrg({ ...org, fiscalZip: e.target.value })}
                       />
                     </div>
@@ -4159,7 +4331,7 @@ export function SettingsSection({
                     </div>
 
                     <div className="form-field">
-                      <label>{t('settings.org.stateLabel')}</label>
+                      <label>{countryProfile.territory.stateLabel}</label>
                       <input
                         type="text"
                         value={org.fiscalState}
@@ -6395,7 +6567,7 @@ export function SettingsSection({
                             <span className="integ-section-kicker">01. Marketplace de conectores comerciales</span>
                             <h3 id="integ-sec-commercial">Marketplace de Integraciones</h3>
                             <p>
-                              Conecta plataformas comerciales externas para que AES Nexus consulte automáticamente pedidos, inventario, timbres CFDI y conciliaciones. Instala cada conector, configura sus credenciales y define su intervalo de sincronización.
+                              Conecta plataformas comerciales externas para que AES Nexus consulte automáticamente pedidos, inventario, documentos fiscales ({countryProfile.fiscalDoc.documentShort}) y conciliaciones. Instala cada conector, configura sus credenciales y define su intervalo de sincronización.
                             </p>
                           </div>
 
@@ -6957,7 +7129,7 @@ export function SettingsSection({
                             >
                               <option value="Ecommerce">Ecommerce / Tienda en Línea</option>
                               <option value="BI / Analítica">BI / Analítica / Data Warehouse</option>
-                              <option value="Contabilidad Externa">Contabilidad Externa / SAT</option>
+                              <option value="Contabilidad Externa">{countryProfile.fiscalDoc.externalAccountingLabel}</option>
                               <option value="WMS / Logística">WMS / Logística / 3PL</option>
                               <option value="Webhook / Middleware">Middleware / iPaaS / Zapier</option>
                               <option value="ERP / Legacy">ERP / Sistema Legacy</option>
@@ -7781,7 +7953,7 @@ export function SettingsSection({
                               </div>
                               <span className="stat-sub">
                                 {activeTierSpec.monthlyCfdiLimit
-                                  ? 'Timbres CFDI 4.0 del periodo'
+                                  ? `Emisiones ${countryProfile.fiscalDoc.documentShort} del periodo`
                                   : t('settings.plan.cfdiSub')}
                               </span>
                             </div>
@@ -7973,7 +8145,7 @@ export function SettingsSection({
                       <div className="card-header-row" style={{ flexWrap: 'wrap', gap: '10px' }}>
                         <div>
                           <h3>Datos Fiscales de Facturación</h3>
-                          <p>Receptor CFDI 4.0 vinculado automáticamente con tu perfil de Organización.</p>
+                          <p>Receptor {countryProfile.fiscalDoc.documentName} vinculado automáticamente con tu perfil de Organización.</p>
                         </div>
                         <button
                           type="button"
@@ -7990,7 +8162,7 @@ export function SettingsSection({
                           <strong>{org.legalName}</strong>
                         </div>
                         <div className="plan-fiscal-row">
-                          <span>RFC</span>
+                          <span>{countryProfile.taxId.label}</span>
                           <strong className="mono">{org.rfc}</strong>
                         </div>
                         <div className="plan-fiscal-row">
@@ -8000,12 +8172,12 @@ export function SettingsSection({
                         <div className="plan-fiscal-row">
                           <span>Domicilio Fiscal</span>
                           <strong>
-                            {org.fiscalStreet}, CP {org.fiscalZip}, {org.fiscalCity}
+                            {org.fiscalStreet}, {countryProfile.territory.postalShortLabel} {org.fiscalZip}, {org.fiscalCity}
                           </strong>
                         </div>
                         <div className="plan-fiscal-row">
-                          <span>Uso CFDI predeterminado</span>
-                          <strong>G03 - Gastos en general</strong>
+                          <span>{countryProfile.fiscalDoc.usageLabel} predeterminado</span>
+                          <strong>{countryProfile.fiscalDoc.defaultUsageCode}</strong>
                         </div>
                       </div>
 
@@ -8182,7 +8354,7 @@ export function SettingsSection({
                                       <button
                                         type="button"
                                         className="button-icon-action"
-                                        title="Descargar comprobante CFDI"
+                                        title={`Descargar comprobante ${countryProfile.fiscalDoc.documentShort}`}
                                         onClick={() =>
                                           handleDownloadInvoiceReceipt({
                                             ...inv,
@@ -8832,7 +9004,7 @@ export function SettingsSection({
               <div>
                 <div className="panel-kicker">FACTURACIÓN DE SUSCRIPCIÓN</div>
                 <h2 id="payment-modal-title">Actualizar Método de Pago</h2>
-                <p>Configura la tarjeta corporativa o cuenta STP SPEI para cargos de renovación.</p>
+                <p>Configura la tarjeta corporativa o cuenta {countryProfile.bank.networkName} para cargos de renovación.</p>
               </div>
               <button
                 type="button"
@@ -8861,7 +9033,7 @@ export function SettingsSection({
                     <option value="VISA">Tarjeta VISA</option>
                     <option value="Mastercard">Mastercard</option>
                     <option value="AMEX">American Express</option>
-                    <option value="SPEI">Transferencia SPEI STP</option>
+                    <option value="SPEI">{countryProfile.bank.defaultTransferMethod}</option>
                   </select>
                 </div>
 
@@ -8892,7 +9064,7 @@ export function SettingsSection({
                     type="text"
                     placeholder="09/2028"
                     disabled={paymentDraft.paymentBrand === 'SPEI'}
-                    value={paymentDraft.paymentBrand === 'SPEI' ? 'Cuenta STP' : paymentDraft.paymentExpiry}
+                    value={paymentDraft.paymentBrand === 'SPEI' ? `Cuenta ${countryProfile.bank.networkName}` : paymentDraft.paymentExpiry}
                     onChange={(e) =>
                       setPaymentDraft({ ...paymentDraft, paymentExpiry: e.target.value })
                     }
@@ -8914,7 +9086,7 @@ export function SettingsSection({
               </div>
 
               <div className="form-field" style={{ marginTop: '12px' }}>
-                <label htmlFor="plan-pay-email">Correo de envío de facturas CFDI</label>
+                <label htmlFor="plan-pay-email">{countryProfile.fiscalDoc.billingEmailLabel}</label>
                 <input
                   id="plan-pay-email"
                   type="email"
@@ -8961,7 +9133,7 @@ export function SettingsSection({
           >
             <div className="create-modal-heading">
               <div>
-                <div className="panel-kicker">COMPROBANTE FISCAL DIGITAL · CFDI 4.0</div>
+                <div className="panel-kicker">{countryProfile.fiscalDoc.documentKicker}</div>
                 <h2 id="billing-invoice-modal-title">Factura {selectedBillingInvoice.folio}</h2>
                 <p>{selectedBillingInvoice.periodLabel}</p>
               </div>
@@ -8982,15 +9154,15 @@ export function SettingsSection({
                   <strong>{org.legalName}</strong>
                 </div>
                 <div className="plan-fiscal-row">
-                  <span>RFC Receptor</span>
+                  <span>{countryProfile.taxId.label} Receptor</span>
                   <strong className="mono">{org.rfc}</strong>
                 </div>
                 <div className="plan-fiscal-row">
-                  <span>Folio Fiscal (UUID)</span>
+                  <span>{countryProfile.fiscalDoc.uuidLabel}</span>
                   <strong className="mono" style={{ fontSize: '9.5px' }}>{selectedBillingInvoice.cfdiUuid}</strong>
                 </div>
                 <div className="plan-fiscal-row">
-                  <span>Fecha de Timbrado</span>
+                  <span>Fecha de Emisión</span>
                   <strong className="tabular-nums">{formatDate(new Date(selectedBillingInvoice.dateIso))}</strong>
                 </div>
                 <div className="plan-fiscal-row">
@@ -9009,7 +9181,7 @@ export function SettingsSection({
                   <span className="mono">{formatCurrency(selectedBillingInvoice.subtotalMxn, general.reportingCurrency)}</span>
                 </div>
                 <div className="plan-cost-row">
-                  <span>IVA (16%)</span>
+                  <span>{countryProfile.vat.label} ({countryProfile.vat.standardRatePct}%)</span>
                   <span className="mono">{formatCurrency(selectedBillingInvoice.taxMxn, general.reportingCurrency)}</span>
                 </div>
                 <div className="plan-cost-row is-total">
@@ -9103,7 +9275,7 @@ export function SettingsSection({
                   >
                     <option value="Ecommerce">Ecommerce / Tienda en Línea</option>
                     <option value="BI / Analítica">BI / Analítica / Data Warehouse</option>
-                    <option value="Contabilidad Externa">Contabilidad Externa / SAT</option>
+                    <option value="Contabilidad Externa">{countryProfile.fiscalDoc.externalAccountingLabel}</option>
                     <option value="WMS / Logística">WMS / Logística / 3PL</option>
                     <option value="Webhook / Middleware">Middleware / iPaaS / Zapier</option>
                     <option value="ERP / Legacy">ERP / Sistema Legacy</option>

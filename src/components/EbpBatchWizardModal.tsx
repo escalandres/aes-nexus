@@ -38,6 +38,7 @@ import {
 } from '../data/ebp'
 import { SupplierBankAccountsManager } from './SupplierBankAccountsManager'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 export interface EbpWizardCandidateLine {
   sourceLineId: string
@@ -114,6 +115,15 @@ export function EbpBatchWizardModal({
   onCreateBatch,
 }: EbpBatchWizardModalProps) {
   const toast = useToast()
+  const { countryProfile } = useI18n()
+  const validateRoutingForAccount = (routingValue: string) => {
+    const clean = (routingValue || '').replace(/\s+/g, '')
+    if (countryProfile.code === 'MX' || /^\d{18}$/.test(clean)) {
+      return validateClabeMod10(clean)
+    }
+    const res = countryProfile.bank.validateRouting(clean)
+    return { valid: res.valid, reason: res.reason, bankLabel: undefined as string | undefined }
+  }
   const isVendorBatch = batchType === 'Proveedores'
 
   const effectiveCurrency: EbpCurrency = useMemo(() => {
@@ -418,9 +428,9 @@ export function EbpBatchWizardModal({
           )
         }
 
-        const clabeRes = validateClabeMod10(clabe)
+        const clabeRes = validateRoutingForAccount(clabe)
         if (!clabeRes.valid) {
-          errors.push(clabeRes.reason || 'CLABE inválida')
+          errors.push(clabeRes.reason || `${countryProfile.bank.routingShortLabel} inválida`)
         }
         selectedPack.beneficiaryBankSchema.forEach((field) => {
           const err = validateEbpFieldValue(
@@ -597,9 +607,9 @@ export function EbpBatchWizardModal({
         )
       }
 
-      const clabeRes = validateClabeMod10(clabe)
+      const clabeRes = validateRoutingForAccount(clabe)
       if (!clabeRes.valid) {
-        errors.push(clabeRes.reason || 'CLABE inválida')
+        errors.push(clabeRes.reason || `${countryProfile.bank.routingShortLabel} inválida`)
       }
       selectedPack.beneficiaryBankSchema.forEach((field) => {
         const err = validateEbpFieldValue(
@@ -780,7 +790,7 @@ export function EbpBatchWizardModal({
               g.changes.push({
                 kind: 'bank',
                 title: `Cuenta cambiada (${base.billFolio})`,
-                detail: `"${base.alias}" → "${currentAlias}" (CLABE ••••${line.clabe.slice(-4)})`,
+                detail: `"${base.alias}" → "${currentAlias}" (${countryProfile.bank.routingShortLabel} ••••${line.clabe.slice(-4)})`,
               })
             }
             if (Math.abs(line.amount - base.amount) > 0.009) {
@@ -795,7 +805,7 @@ export function EbpBatchWizardModal({
               g.hasChanges = true
               g.changes.push({
                 kind: 'override',
-                title: `Ajuste manual CLABE / Pack (${base.billFolio})`,
+                title: `Ajuste manual ${countryProfile.bank.routingShortLabel} / Pack (${base.billFolio})`,
                 detail: `Se aplicaron valores personalizados para la dispersión.`,
               })
             }
@@ -849,8 +859,8 @@ export function EbpBatchWizardModal({
             g.hasChanges = true
             g.changes.push({
               kind: 'override',
-              title: 'Ajuste manual CLABE / Pack',
-              detail: `CLABE verificada: ${groupLine.clabe}`,
+              title: `Ajuste manual ${countryProfile.bank.routingShortLabel} / Pack`,
+              detail: `${countryProfile.bank.routingShortLabel} verificada: ${groupLine.clabe}`,
             })
           }
 
@@ -1558,14 +1568,14 @@ export function EbpBatchWizardModal({
                                   }
                                 >
                                   {availableAccounts.map((acc) => {
-                                    const clabeOk = validateClabeMod10(acc.clabe).valid
+                                    const clabeOk = validateRoutingForAccount(acc.clabe).valid
                                     return (
                                       <option key={acc.id} value={acc.id}>
                                         {acc.alias || acc.bankName} ({acc.bankName || 'Banco'} · ••••
                                         {acc.clabe.slice(-4) || acc.accountNumber || '0000'}) ·{' '}
                                         {acc.currency}
                                         {acc.isDefault ? ' ★ Predeterminada' : ''}
-                                        {!acc.active ? ' [Inactiva]' : !clabeOk ? ' [Revisar CLABE]' : ''}
+                                        {!acc.active ? ' [Inactiva]' : !clabeOk ? ` [Revisar ${countryProfile.bank.routingShortLabel}]` : ''}
                                       </option>
                                     )
                                   })}
@@ -1577,8 +1587,8 @@ export function EbpBatchWizardModal({
                               )}
                               <small className="mono ebp-field-hint">
                                 {chosenAccountObj ? `${chosenAccountObj.alias} · ` : ''}
-                                CLABE: {line.clabe || 'Sin capturar'} · {line.bankName} ·{' '}
-                                {line.isSameBank ? 'Mismo banco' : 'SPEI'}
+                                {countryProfile.bank.routingShortLabel}: {line.clabe || 'Sin capturar'} · {line.bankName} ·{' '}
+                                {line.isSameBank ? 'Mismo banco' : countryProfile.bank.sameBankOrLocalLabel}
                                 {line.reference ? ` · Ref: ${line.reference}` : ''}
                               </small>
                             </label>
@@ -1628,10 +1638,10 @@ export function EbpBatchWizardModal({
                             <div className="ebp-consolidated-inline-fix">
                               <div className="form-grid-3">
                                 <label className="form-field">
-                                  <span>CLABE destino (override)</span>
+                                  <span>{countryProfile.bank.routingShortLabel} destino (override)</span>
                                   <input
                                     className="mono"
-                                    maxLength={18}
+                                    maxLength={countryProfile.code === 'MX' ? 18 : 34}
                                     value={line.clabe}
                                     onChange={(e) =>
                                       setInlineOverrides((prev) => ({
@@ -1721,7 +1731,7 @@ export function EbpBatchWizardModal({
                               }
                             >
                               <SlidersHorizontal size={11} />{' '}
-                              {isEditing ? 'Cerrar ajuste' : 'Corregir CLABE / Pack'}
+                              {isEditing ? 'Cerrar ajuste' : `Corregir ${countryProfile.bank.routingShortLabel} / Pack`}
                             </button>
                           </div>
 
@@ -1810,7 +1820,7 @@ export function EbpBatchWizardModal({
                         <tr>
                           <th style={{ width: 32 }}>INC.</th>
                           <th>{isVendorBatch ? 'PROVEEDOR / FACTURA' : 'BENEFICIARIO'}</th>
-                          <th>{isVendorBatch ? 'CUENTA BANCARIA DESTINO' : 'CLABE / BANCO'}</th>
+                          <th>{isVendorBatch ? 'CUENTA BANCARIA DESTINO' : `${countryProfile.bank.routingShortLabel.toUpperCase()} / BANCO`}</th>
                           <th>{isVendorBatch ? 'MOTIVO / PACK' : 'CAMPOS DEL PACK'}</th>
                           <th style={{ textAlign: 'right' }}>IMPORTE</th>
                           <th>VALIDACIÓN</th>
@@ -1870,14 +1880,14 @@ export function EbpBatchWizardModal({
                                         }
                                       >
                                         {availableAccounts.map((acc) => {
-                                          const clabeOk = validateClabeMod10(acc.clabe).valid
+                                          const clabeOk = validateRoutingForAccount(acc.clabe).valid
                                           return (
                                             <option key={acc.id} value={acc.id}>
                                               {acc.alias || acc.bankName} ({acc.bankName || 'Banco'} · ••••
                                               {acc.clabe.slice(-4) || acc.accountNumber || '0000'}) ·{' '}
                                               {acc.currency}
                                               {acc.isDefault ? ' ★' : ''}
-                                              {!acc.active ? ' [Inactiva]' : !clabeOk ? ' [CLABE!]' : ''}
+                                              {!acc.active ? ' [Inactiva]' : !clabeOk ? ` [${countryProfile.bank.routingShortLabel}!]` : ''}
                                             </option>
                                           )
                                         })}
@@ -1890,9 +1900,9 @@ export function EbpBatchWizardModal({
                                     {isEditing && (
                                       <input
                                         className="ebp-inline-input mono"
-                                        placeholder="Override CLABE 18 dígitos"
+                                        placeholder={`Override ${countryProfile.bank.routingShortLabel} (${countryProfile.bank.routingFormatHint})`}
                                         value={line.clabe}
-                                        maxLength={18}
+                                        maxLength={countryProfile.code === 'MX' ? 18 : 34}
                                         onChange={(e) =>
                                           setInlineOverrides((prev) => ({
                                             ...prev,
@@ -1906,7 +1916,7 @@ export function EbpBatchWizardModal({
                                     )}
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                                       <small className="mono">
-                                        {line.clabe || 'Sin CLABE'} · {line.isSameBank ? 'Mismo banco' : 'SPEI'}
+                                        {line.clabe || `Sin ${countryProfile.bank.routingShortLabel}`} · {line.isSameBank ? 'Mismo banco' : countryProfile.bank.sameBankOrLocalLabel}
                                       </small>
                                       {onUpdateSupplierBankAccounts && cand && (
                                         <button
@@ -1930,7 +1940,7 @@ export function EbpBatchWizardModal({
                                   <input
                                     className="ebp-inline-input mono"
                                     value={line.clabe}
-                                    maxLength={18}
+                                    maxLength={countryProfile.code === 'MX' ? 18 : 34}
                                     onChange={(e) =>
                                       setInlineOverrides((prev) => ({
                                         ...prev,
@@ -1943,9 +1953,9 @@ export function EbpBatchWizardModal({
                                   />
                                 ) : (
                                   <div className="supplier-cell">
-                                    <strong className="mono">{line.clabe || 'Sin CLABE'}</strong>
+                                    <strong className="mono">{line.clabe || `Sin ${countryProfile.bank.routingShortLabel}`}</strong>
                                     <small>
-                                      {line.bankName} · {line.isSameBank ? 'Mismo banco' : 'SPEI'}
+                                      {line.bankName} · {line.isSameBank ? 'Mismo banco' : countryProfile.bank.sameBankOrLocalLabel}
                                     </small>
                                   </div>
                                 )}
@@ -2235,7 +2245,7 @@ export function EbpBatchWizardModal({
                         <div>
                           <strong>Verificación de detalles bancarios y resumen del pago</strong>
                           <small>
-                            Confirma el alias bancario seleccionado, banco receptor, CLABE, motivo del pago y facturas antes de generar el lote.
+                            Confirma el alias bancario seleccionado, banco receptor, {countryProfile.bank.routingShortLabel}, motivo del pago y facturas antes de generar el lote.
                           </small>
                         </div>
                         <div className="ebp-summary-total">
@@ -2278,11 +2288,11 @@ export function EbpBatchWizardModal({
                                   <div>
                                     <span>Banco / Canal</span>
                                     <strong>
-                                      {line.bankName} · {line.isSameBank ? 'Mismo banco' : 'SPEI'}
+                                      {line.bankName} · {line.isSameBank ? 'Mismo banco' : countryProfile.bank.sameBankOrLocalLabel}
                                     </strong>
                                   </div>
                                   <div>
-                                    <span>CLABE interbancaria</span>
+                                    <span>{countryProfile.bank.routingLabel}</span>
                                     <strong className="mono">{line.clabe}</strong>
                                   </div>
                                   <div>

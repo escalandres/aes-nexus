@@ -224,8 +224,10 @@ export function ExecutiveDashboard({
   onOpenCreateOpportunity,
 }: ExecutiveDashboardProps) {
   const toast = useToast()
-  const { locale, regional, t, formatCurrency } = useI18n()
-  const money = (val: number) => formatCurrency(val, undefined, 0)
+  const { locale, regional, t, reportingCurrency, convertAmount, formatCurrency, formatConvertedCurrency } = useI18n()
+  const money = (val: number) => formatCurrency(val, reportingCurrency, 0)
+  const moneySrc = (val: number, fromCurrency: string = 'MXN') =>
+    formatConvertedCurrency(val, fromCurrency, 0)
   const [period, setPeriod] = useState<'Este mes' | 'Este trimestre' | 'Año 2026'>('Este mes')
   const [purchasesPeriod, setPurchasesPeriod] = useState<PurchasesKpiPeriod>('Mensual')
   const [showAlertHub, setShowAlertHub] = useState(true)
@@ -787,9 +789,9 @@ export function ExecutiveDashboard({
 
   // Top Sales KPIs (Ventas, Margen, Clientes, Oportunidades)
   const monthlySales = useMemo(() => {
-    const sum = orders.reduce((acc, o) => acc + (o.total || 0), 0)
-    return Math.max(sum, 284500)
-  }, [orders])
+    const sum = orders.reduce((acc, o) => acc + convertAmount(o.total || 0, o.currency || 'MXN'), 0)
+    return Math.max(sum, convertAmount(284500, 'MXN'))
+  }, [orders, convertAmount])
 
   const grossMarginPercent = 38.4
   const grossMarginValue = useMemo(() => {
@@ -800,25 +802,25 @@ export function ExecutiveDashboard({
   const totalClientsActive = 14
 
   const wonOpportunitiesCount = 8
-  const wonOpportunitiesValue = 194200
+  const wonOpportunitiesValue = convertAmount(194200, 'MXN')
 
   // Finance KPIs
   const totalReceivableBalance = useMemo(() => {
-    return receivables.reduce((acc, r) => acc + (r.balance || 0), 0)
-  }, [receivables])
+    return receivables.reduce((acc, r) => acc + convertAmount(r.balance || 0, r.currency || 'MXN'), 0)
+  }, [receivables, convertAmount])
 
   const totalCashInBanks = useMemo(() => {
-    return bankAccounts.reduce((acc, b) => acc + b.balance, 0)
-  }, [bankAccounts])
+    return bankAccounts.reduce((acc, b) => acc + convertAmount(b.balance, b.currency || 'MXN'), 0)
+  }, [bankAccounts, convertAmount])
 
   const monthlyExpensesTotal = useMemo(() => {
-    return expenses.reduce((acc, e) => acc + (e.total || 0), 0)
-  }, [expenses])
+    return expenses.reduce((acc, e) => acc + convertAmount(e.total || 0, 'MXN'), 0)
+  }, [expenses, convertAmount])
 
   // Operations KPIs
   const totalInventoryValue = useMemo(() => {
-    return inventory.reduce((acc, item) => acc + item.stock * item.cost, 0)
-  }, [inventory])
+    return inventory.reduce((acc, item) => acc + convertAmount(item.stock * item.cost, 'MXN'), 0)
+  }, [inventory, convertAmount])
 
   const lowStockItems = useMemo(() => {
     return effectiveInventory.filter((item) => item.stock <= item.minStock)
@@ -841,8 +843,8 @@ export function ExecutiveDashboard({
   }, [requisitions])
 
   const pendingRequisitionsTotal = useMemo(() => {
-    return pendingRequisitionsList.reduce((acc, r) => acc + r.estimatedTotal, 0)
-  }, [pendingRequisitionsList])
+    return pendingRequisitionsList.reduce((acc, r) => acc + convertAmount(r.estimatedTotal, 'MXN'), 0)
+  }, [pendingRequisitionsList, convertAmount])
 
   const awaitingApprovalReqsCount = useMemo(() => {
     return pendingRequisitionsList.filter((r) => r.status === 'Pendiente').length
@@ -855,8 +857,8 @@ export function ExecutiveDashboard({
   }, [purchaseOrders])
 
   const transitPurchaseOrdersTotal = useMemo(() => {
-    return transitPurchaseOrders.reduce((acc, po) => acc + po.total, 0)
-  }, [transitPurchaseOrders])
+    return transitPurchaseOrders.reduce((acc, po) => acc + convertAmount(po.total, po.currency || 'MXN'), 0)
+  }, [transitPurchaseOrders, convertAmount])
 
   const transitPendingUnits = useMemo(() => {
     return transitPurchaseOrders.reduce(
@@ -881,8 +883,8 @@ export function ExecutiveDashboard({
   }, [payables])
 
   const expiringVendorBillsBalance = useMemo(() => {
-    return expiringVendorBills.reduce((acc, b) => acc + b.balance, 0)
-  }, [expiringVendorBills])
+    return expiringVendorBills.reduce((acc, b) => acc + convertAmount(b.balance, b.currency || 'MXN'), 0)
+  }, [expiringVendorBills, convertAmount])
 
   const overdueVendorBillsCount = useMemo(() => {
     return expiringVendorBills.filter((b) => b.status === 'Vencida').length
@@ -903,7 +905,7 @@ export function ExecutiveDashboard({
     const reqsInPeriod = requisitions.filter((r) =>
       isDateInPurchasesPeriod(r.date, purchasesPeriod, now)
     )
-    const reqsTotal = reqsInPeriod.reduce((sum, r) => sum + r.estimatedTotal, 0)
+    const reqsTotal = reqsInPeriod.reduce((sum, r) => sum + convertAmount(r.estimatedTotal, 'MXN'), 0)
     const reqsConverted = reqsInPeriod.filter((r) => r.status === 'Convertida a OC').length
     const reqsPending = reqsInPeriod.filter(
       (r) => r.status === 'Pendiente' || r.status === 'Aprobada'
@@ -912,16 +914,16 @@ export function ExecutiveDashboard({
     const posInPeriod = purchaseOrders.filter(
       (po) => po.status !== 'Cancelada' && isDateInPurchasesPeriod(po.date, purchasesPeriod, now)
     )
-    const posTotal = posInPeriod.reduce((sum, po) => sum + po.total, 0)
+    const posTotal = posInPeriod.reduce((sum, po) => sum + convertAmount(po.total, po.currency || 'MXN'), 0)
     const posReceived = posInPeriod.filter((po) => po.status === 'Recibida').length
     const posOpen = posInPeriod.filter((po) => po.status !== 'Recibida').length
 
     const billsInPeriod = payables.filter((b) =>
       isDateInPurchasesPeriod(b.issueDate, purchasesPeriod, now)
     )
-    const billsTotal = billsInPeriod.reduce((sum, b) => sum + b.total, 0)
-    const billsPaid = billsInPeriod.reduce((sum, b) => sum + b.paidAmount, 0)
-    const billsBalance = billsInPeriod.reduce((sum, b) => sum + b.balance, 0)
+    const billsTotal = billsInPeriod.reduce((sum, b) => sum + convertAmount(b.total, b.currency || 'MXN'), 0)
+    const billsPaid = billsInPeriod.reduce((sum, b) => sum + convertAmount(b.paidAmount, b.currency || 'MXN'), 0)
+    const billsBalance = billsInPeriod.reduce((sum, b) => sum + convertAmount(b.balance, b.currency || 'MXN'), 0)
 
     return {
       periodTag,
@@ -938,7 +940,7 @@ export function ExecutiveDashboard({
       billsPaid,
       billsBalance,
     }
-  }, [requisitions, purchaseOrders, payables, purchasesPeriod])
+  }, [requisitions, purchaseOrders, payables, purchasesPeriod, convertAmount])
 
   const warehouseBreakdown = useMemo(() => {
     const map = new Map<
@@ -962,11 +964,11 @@ export function ExecutiveDashboard({
       current.skus += 1
       current.units += item.stock
       if (item.stock <= item.minStock) current.critical += 1
-      current.value += item.stock * item.cost
+      current.value += convertAmount(item.stock * item.cost, 'MXN')
       map.set(item.warehouseName, current)
     }
     return Array.from(map.values())
-  }, [effectiveInventory])
+  }, [effectiveInventory, convertAmount])
 
   const inventoryChartData = useMemo(() => {
     return [...effectiveInventory]
@@ -995,8 +997,8 @@ export function ExecutiveDashboard({
   }, [payables])
 
   const totalPayablesBalance = useMemo(() => {
-    return pendingPayablesCount.reduce((s, p) => s + p.balance, 0)
-  }, [pendingPayablesCount])
+    return pendingPayablesCount.reduce((s, p) => s + convertAmount(p.balance, p.currency || 'MXN'), 0)
+  }, [pendingPayablesCount, convertAmount])
 
   // Alert Cards visible to active role
   const showAlertReceivables = canViewReceivables
@@ -1537,7 +1539,7 @@ export function ExecutiveDashboard({
                           <span>
                             {overdueInvoices.length > 0
                               ? `${money(
-                                  overdueInvoices.reduce((sum, r) => sum + r.balance, 0)
+                                  overdueInvoices.reduce((sum, r) => sum + convertAmount(r.balance, r.currency || 'MXN'), 0)
                                 )} requieren gestión inmediata.`
                               : 'Todos los clientes mantienen sus pagos al corriente.'}
                           </span>
@@ -1753,7 +1755,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(monthlySales)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">{orders.length} pedidos confirmados este mes</p>
                     <div className="kpi-foot">
@@ -1885,7 +1887,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(totalReceivableBalance)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">
                       {receivables.filter((r) => r.balance > 0).length} facturas pendientes de
@@ -1927,7 +1929,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(totalCashInBanks)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">
                       {bankAccounts.length} cuentas bancarias conciliadas
@@ -1960,7 +1962,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(totalPayablesBalance)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">
                       {pendingPayablesCount.length} documentos pendientes a proveedores
@@ -1998,7 +2000,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(monthlyExpensesTotal)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">
                       {expenses.length} comprobantes operativos contabilizados
@@ -2031,7 +2033,7 @@ export function ExecutiveDashboard({
                     </div>
                     <div className="kpi-value">
                       {money(totalInventoryValue)}
-                      <span className="kpi-currency"> MXN</span>
+                      <span className="kpi-currency"> {reportingCurrency}</span>
                     </div>
                     <p className="kpi-subtext">
                       {inventory.length} ubicaciones SKU en {warehouseBreakdown.length} almacenes
@@ -2513,7 +2515,7 @@ export function ExecutiveDashboard({
                               Cobro {inv.status.toLowerCase()} · Vence {inv.dueDate}
                             </span>
                           </div>
-                          <time>{money(inv.balance)}</time>
+                          <time>{moneySrc(inv.balance, inv.currency)}</time>
                         </div>
                       ))}
                     {canViewPayables &&
@@ -2528,7 +2530,7 @@ export function ExecutiveDashboard({
                             </strong>
                             <span>Pago a proveedor · Vence {bill.dueDate}</span>
                           </div>
-                          <time>{money(bill.balance)}</time>
+                          <time>{moneySrc(bill.balance, bill.currency)}</time>
                         </div>
                       ))}
                   </div>
@@ -2776,7 +2778,7 @@ export function ExecutiveDashboard({
                                   </span>
                                 </div>
                                 <div className="purchases-exec-item-end tabular-nums">
-                                  <strong>{money(req.estimatedTotal)}</strong>
+                                  <strong>{moneySrc(req.estimatedTotal, 'MXN')}</strong>
                                   <small>{req.priority}</small>
                                 </div>
                               </div>
@@ -2843,7 +2845,7 @@ export function ExecutiveDashboard({
                                     </span>
                                   </div>
                                   <div className="purchases-exec-item-end tabular-nums">
-                                    <strong>{money(po.total)}</strong>
+                                    <strong>{moneySrc(po.total, po.currency)}</strong>
                                     <small>{pendingU} pzas pend.</small>
                                   </div>
                                 </div>
@@ -2917,7 +2919,7 @@ export function ExecutiveDashboard({
                                   </span>
                                 </div>
                                 <div className="purchases-exec-item-end tabular-nums">
-                                  <strong>{money(bill.balance)}</strong>
+                                  <strong>{moneySrc(bill.balance, bill.currency)}</strong>
                                   <small>{bill.status}</small>
                                 </div>
                               </div>
@@ -2961,7 +2963,7 @@ export function ExecutiveDashboard({
                         <span className="bank-mini-name">
                           {acc.bankName} · {acc.accountNumber}
                         </span>
-                        <span className="bank-mini-balance">{money(acc.balance)}</span>
+                        <span className="bank-mini-balance">{moneySrc(acc.balance, acc.currency)}</span>
                       </div>
                     ))}
                   </div>
@@ -3016,7 +3018,7 @@ export function ExecutiveDashboard({
                                 {opportunity.stage}
                               </span>
                             </td>
-                            <td className="money-cell">{money(opportunity.value)}</td>
+                            <td className="money-cell">{moneySrc(opportunity.value, 'MXN')}</td>
                             <td className="date-cell">{opportunity.date}</td>
                             <td style={{ textAlign: 'right' }}>
                               <button

@@ -31,6 +31,7 @@ import type {
 } from '../data/operations'
 import type { BillPayable } from '../data/finance'
 import { useToast } from './Toast'
+import { useI18n } from '../i18n/I18nContext'
 
 interface SupplierOption {
   name: string
@@ -379,14 +380,19 @@ export function OperationsPurchases({
     return filteredOrders.filter((po) => po.status === 'Emitida' || po.status === 'Recepción parcial').length
   }, [filteredOrders])
 
+  const { countryProfile, reportingCurrency } = useI18n()
+  const standardVatPct = countryProfile.vat.standardRatePct
+  const standardVatRate = standardVatPct / 100
+  const displayCurrency = reportingCurrency || countryProfile.defaultCurrency
+
   // Helpers for line calculation
   const newPOSubtotal = useMemo(() => {
     return newItems.reduce((acc, it) => acc + it.quantity * it.unitCost, 0)
   }, [newItems])
 
   const newPOTax = useMemo(() => {
-    return newPOSubtotal * 0.16
-  }, [newPOSubtotal])
+    return newPOSubtotal * standardVatRate
+  }, [newPOSubtotal, standardVatRate])
 
   const newPOTotal = newPOSubtotal + newPOTax
 
@@ -412,7 +418,7 @@ export function OperationsPurchases({
         name: prod.name,
         quantity: lineQty,
         unitCost: cost,
-        taxRate: '16%',
+        taxRate: (standardVatPct === 8 ? '8%' : standardVatPct === 0 ? '0%' : '16%') as '16%' | '8%' | '0%',
       },
     ])
 
@@ -451,7 +457,7 @@ export function OperationsPurchases({
 
     const orderItems: PurchaseOrderItem[] = newItems.map((item, idx) => {
       const sub = item.quantity * item.unitCost
-      const tax = sub * 0.16
+      const tax = sub * standardVatRate
       return {
         id: `poi_${Date.now()}_${idx}`,
         sku: item.sku,
@@ -1418,12 +1424,12 @@ export function OperationsPurchases({
                     <strong>{money(newPOSubtotal)}</strong>
                   </div>
                   <div className="po-totals-row">
-                    <span>IVA (16%):</span>
+                    <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
                     <strong>{money(newPOTax)}</strong>
                   </div>
                   <div className="po-totals-row grand">
                     <span>Total de la orden:</span>
-                    <strong>{money(newPOTotal)} MXN</strong>
+                    <strong>{money(newPOTotal)} {displayCurrency}</strong>
                   </div>
                 </div>
               </div>
@@ -1635,12 +1641,12 @@ export function OperationsPurchases({
                 <strong>{money(selectedOrder.subtotal)}</strong>
               </div>
               <div className="po-totals-row">
-                <span>IVA (16%):</span>
+                <span>{countryProfile.vat.label} ({standardVatPct}%):</span>
                 <strong>{money(selectedOrder.taxTotal)}</strong>
               </div>
               <div className="po-totals-row grand">
                 <span>Total:</span>
-                <strong>{money(selectedOrder.total)} MXN</strong>
+                <strong>{money(selectedOrder.total)} {displayCurrency}</strong>
               </div>
             </div>
 
