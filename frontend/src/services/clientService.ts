@@ -1,3 +1,5 @@
+import { buildAuthHeaders, getApiBaseUrl } from './apiClient'
+
 /**
  * Servicio de Clientes para AES Nexus (CRM/ERP).
  * 
@@ -66,7 +68,7 @@ export interface ClientApiResponse<T> {
 }
 
 // Configuración de endpoint base con fallback a variable de entorno de Vite
-const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) || '/api/v1'
+const API_BASE_URL = getApiBaseUrl()
 
 /**
  * Genera iniciales y color para la tarjeta visual del cliente
@@ -127,21 +129,13 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
   }
 
   try {
-    console.info(`[AES Nexus API] Enviando POST a ${endpoint}...`, payload)
-    
     // Controlador de timeout a 4 segundos para evitar que la interfaz se congele si la red no responde
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 4000)
 
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        // Encabezados listos para arquitectura H1 (multi-tenancy y sesión)
-        'X-Organization-Id': 'org_brujula_default',
-        'X-Client-App': 'aes-nexus-frontend',
-      },
+      headers: buildAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
       signal: controller.signal,
     })
@@ -150,7 +144,6 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
 
     if (response.ok) {
       const json = await response.json()
-      console.info('[AES Nexus API] Cliente creado con éxito en backend:', json)
       return {
         success: true,
         data: json.data || json || localClient,
@@ -159,7 +152,6 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
         statusHttp: response.status,
       }
     } else {
-      console.warn(`[AES Nexus API] El backend respondió con código ${response.status}. Usando fallback local.`)
       return {
         success: true,
         data: localClient,
@@ -168,17 +160,12 @@ export async function createClientApi(dto: CreateClientDTO): Promise<ClientApiRe
         statusHttp: response.status,
       }
     }
-  } catch (error) {
-    // Si no hay backend levantado (Connection Refused / Failed to fetch / Abort)
-    console.info(
-      `[AES Nexus API] Backend en ${endpoint} no disponible aún (${(error as Error).message}). Guardando en sesión demo de forma transparente.`,
-      payload
-    )
+  } catch {
     return {
       success: true,
       data: localClient,
       isMock: true,
-      message: `Petición HTTP a "${endpoint}" preparada. Registrado en la sesión demo.`,
+      message: `Petición HTTP a "${endpoint}" preparada. Registrado en la sesión local.`,
     }
   }
 }
@@ -192,10 +179,7 @@ export async function getClientsApi(): Promise<ClientApiResponse<ClientRecord[]>
   try {
     const response = await fetch(endpoint, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'X-Organization-Id': 'org_brujula_default',
-      },
+      headers: buildAuthHeaders(),
     })
 
     if (response.ok) {
@@ -207,8 +191,8 @@ export async function getClientsApi(): Promise<ClientApiResponse<ClientRecord[]>
         message: 'Clientes cargados del servidor.',
       }
     }
-  } catch (error) {
-    console.info(`[AES Nexus API] No se pudo conectar a ${endpoint}. Se mantienen los datos locales demo.`)
+  } catch {
+    // Fallback local silencioso si no hay conexión al endpoint
   }
 
   return {

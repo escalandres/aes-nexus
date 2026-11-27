@@ -23,6 +23,13 @@ import {
 import { CrmActivitiesSection } from './components/CrmActivitiesSection'
 import { ExecutiveDashboard } from './components/ExecutiveDashboard'
 import { createClientApi, type ClientAddress } from './services/clientService'
+import {
+  clearInMemoryAuthSession,
+  getInMemoryAuthSession,
+  setInMemoryAuthSession,
+  type AuthSession,
+} from './services/authService'
+import { LoginView } from './components/LoginView'
 import CountryDropdown, { countries, findCountry } from './components/CountryDropdown'
 import { CountryFlag } from './components/CountryFlag'
 import { ToastProvider, useToast } from './components/Toast'
@@ -605,7 +612,7 @@ const isDateInCurrentMonth = (rawDate: string, reference: Date): boolean => {
 }
 
 const pageRoutes: Record<string, string> = {
-  Inicio: '/',
+  Inicio: '/app',
   CRM: '/crm',
   Ventas: '/sales',
   Compras: '/purchases',
@@ -652,6 +659,7 @@ const pageFromPath = (pathname: string) => {
     return 'Centro de ayuda'
   }
   const normalized = pathname.replace(/\/$/, '') || '/'
+  if (normalized === '/app') return 'Inicio'
   return Object.entries(pageRoutes).find(([, route]) => route === normalized)?.[0] ?? 'Inicio'
 }
 
@@ -782,7 +790,12 @@ const subsidiaryIdFromPath = (pathname: string): string | null => {
   return null
 }
 
-function AppContent() {
+interface AppContentProps {
+  authSession: AuthSession
+  onLogout: () => void
+}
+
+function AppContent({ authSession, onLogout }: AppContentProps) {
   const toast = useToast()
   const { t, countryProfile, reportingCurrency, setReportingCurrencyCode } = useI18n()
   const activeCurrency = reportingCurrency || countryProfile.defaultCurrency
@@ -1494,13 +1507,7 @@ function AppContent() {
   const [workspaceUsers, setWorkspaceUsers] = useState<WorkspaceUserRecord[]>(() =>
     loadStoredWorkspaceUsers()
   )
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    try {
-      return window.localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY) || 'user:usr_1'
-    } catch {
-      return 'user:usr_1'
-    }
-  })
+  const [activeSessionId, setActiveSessionId] = useState<string>('auth:current')
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [isTopbarRoleMenuOpen, setIsTopbarRoleMenuOpen] = useState(false)
@@ -1573,6 +1580,26 @@ function AppContent() {
 
   const activeSessionProfile = useMemo(() => {
     const validRoleIds = new Set(roleDefinitions.map((r) => r.id))
+
+    if (activeSessionId === 'auth:current') {
+      const assignedRoles = authSession.activeRoleIds.filter((id) => validRoleIds.has(id))
+      const resolvedRoles: RoleKey[] =
+        assignedRoles.length > 0 ? assignedRoles : ['Administrador']
+      return {
+        key: `auth:${authSession.user.id}`,
+        kind: 'user' as const,
+        baseUserId: authSession.user.id,
+        activeRoleId: (resolvedRoles.length === 1 ? resolvedRoles[0] : 'COMBINED') as
+          | RoleKey
+          | 'COMBINED',
+        name: authSession.user.fullName,
+        initials: authSession.user.avatarInitials,
+        roles: resolvedRoles,
+        isActive: true,
+        statusLabel: 'Activo',
+        subtitle: resolvedRoles.map(getRoleDisplayName).join(', '),
+      }
+    }
 
     if (activeSessionId.startsWith('userrole:')) {
       const rest = activeSessionId.slice('userrole:'.length)
@@ -1668,7 +1695,7 @@ function AppContent() {
       statusLabel: isActive ? 'Activo' : 'Suspendido',
       subtitle: !isActive ? 'Suspendido' : rolesText,
     }
-  }, [activeSessionId, employees, workspaceUsers, roleDefinitions])
+  }, [activeSessionId, employees, workspaceUsers, roleDefinitions, authSession])
 
   const activeActorUserId = useMemo(() => {
     if (activeSessionProfile.kind === 'employee') {
@@ -4915,7 +4942,7 @@ function AppContent() {
       )
       if (first) setActiveSetting(first)
     }
-    const route = pageRoutes[page] ?? '/'
+    const route = pageRoutes[page] ?? '/app'
     if (window.location.pathname !== route) window.history.pushState({}, '', route)
   }
 
@@ -6982,6 +7009,34 @@ function AppContent() {
                   })
                 })()}
               </div>
+
+              <div className="profile-switcher-group">
+                {activeSessionId !== 'auth:current' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="profile-switcher-open-login-btn"
+                    onClick={() => {
+                      setActiveSessionId('auth:current')
+                      setIsProfileMenuOpen(false)
+                      toast.info(`Sesión restaurada a ${authSession.user.fullName}.`, 'Cuenta autenticada')
+                    }}
+                  >
+                    <UserCheck size={12} /> Volver a mi cuenta ({authSession.user.fullName})
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="profile-switcher-open-login-btn"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false)
+                    onLogout()
+                  }}
+                >
+                  <LogOut size={12} /> Cerrar sesión
+                </button>
+              </div>
             </div>
           )}
 
@@ -7467,6 +7522,20 @@ function AppContent() {
                   </div>
 
                   <div className="topbar-role-popover-footer">
+                    {activeSessionId !== 'auth:current' && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="topbar-role-footer-btn"
+                        onClick={() => {
+                          setIsTopbarRoleMenuOpen(false)
+                          setActiveSessionId('auth:current')
+                          toast.info(`Sesión restaurada a ${authSession.user.fullName}.`, 'Cuenta autenticada')
+                        }}
+                      >
+                        <UserCheck size={13} /> Volver a mi cuenta autenticada
+                      </button>
+                    )}
                     <button
                       type="button"
                       role="menuitem"
@@ -7484,10 +7553,10 @@ function AppContent() {
                       className="topbar-role-footer-btn danger"
                       onClick={() => {
                         setIsTopbarRoleMenuOpen(false)
-                        setRoleLoginDialogMode('gate')
+                        onLogout()
                       }}
                     >
-                      <LogOut size={13} /> Cerrar sesión y seleccionar rol
+                      <LogOut size={13} /> Cerrar sesión
                     </button>
                   </div>
                 </div>
@@ -11170,11 +11239,82 @@ function AppContent() {
   )
 }
 
+function AuthGate() {
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() =>
+    getInMemoryAuthSession()
+  )
+  const [redirectTarget, setRedirectTarget] = useState<string | null>(() => {
+    const current = window.location.pathname || '/'
+    return current !== '/' ? `${current}${window.location.search}` : null
+  })
+
+  useEffect(() => {
+    if (!authSession) {
+      if (window.location.pathname !== '/') {
+        const attempted = `${window.location.pathname}${window.location.search}`
+        setRedirectTarget(attempted)
+        window.history.replaceState({}, '', '/')
+      }
+      return
+    }
+
+    if (window.location.pathname === '/' || window.location.pathname === '') {
+      window.history.replaceState({}, '', '/app')
+    }
+  }, [authSession])
+
+  useEffect(() => {
+    const handleGatePopState = () => {
+      const path = window.location.pathname || '/'
+      if (!authSession) {
+        if (path !== '/') {
+          setRedirectTarget(`${path}${window.location.search}`)
+          window.history.replaceState({}, '', '/')
+        }
+      } else if (path === '/' || path === '') {
+        window.history.replaceState({}, '', '/app')
+      }
+    }
+
+    window.addEventListener('popstate', handleGatePopState)
+    return () => window.removeEventListener('popstate', handleGatePopState)
+  }, [authSession])
+
+  const handleAuthenticated = (session: AuthSession) => {
+    const target =
+      redirectTarget && redirectTarget !== '/' && redirectTarget !== ''
+        ? redirectTarget
+        : '/app'
+    setInMemoryAuthSession(session)
+    setRedirectTarget(null)
+    window.history.pushState({}, '', target)
+    setAuthSession(session)
+  }
+
+  const handleLogout = () => {
+    clearInMemoryAuthSession()
+    setRedirectTarget(null)
+    setAuthSession(null)
+    window.history.pushState({}, '', '/')
+  }
+
+  if (!authSession) {
+    return (
+      <LoginView
+        onAuthenticated={handleAuthenticated}
+        redirectedFromPath={redirectTarget}
+      />
+    )
+  }
+
+  return <AppContent authSession={authSession} onLogout={handleLogout} />
+}
+
 export default function App() {
   return (
     <ToastProvider>
       <I18nProvider>
-        <AppContent />
+        <AuthGate />
       </I18nProvider>
     </ToastProvider>
   )
