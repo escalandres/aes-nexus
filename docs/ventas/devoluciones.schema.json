@@ -1,0 +1,573 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/ventas/devoluciones.schema.json",
+  "title": "Ventas - Devoluciones de Clientes (RMA)",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Devoluciones de Clientes (/api/v1/sales/returns).",
+  "$defs": {
+    "ReturnReason": {
+      "type": "string",
+      "enum": [
+        "Defecto de fábrica",
+        "Daño en tránsito",
+        "Error en surtido",
+        "No cumple especificaciones",
+        "Excedente / cambio comercial",
+        "Garantía"
+      ]
+    },
+    "CustomerReturnResolution": {
+      "type": "string",
+      "enum": [
+        "Nota de crédito (CxC)",
+        "Reembolso",
+        "Reposición sin costo"
+      ],
+      "default": "Nota de crédito (CxC)"
+    },
+    "CustomerReturnStatus": {
+      "type": "string",
+      "enum": [
+        "Solicitada",
+        "En tránsito a almacén",
+        "Recibida en almacén",
+        "Nota de crédito emitida",
+        "Rechazada"
+      ]
+    },
+    "ReturnItemCondition": {
+      "type": "string",
+      "enum": [
+        "Sellado / intacto",
+        "Empaque abierto",
+        "Dañado / defectuoso"
+      ]
+    },
+    "ReturnDisposition": {
+      "type": "string",
+      "enum": [
+        "Reingreso a almacén",
+        "Cuarentena / revisión",
+        "Merma / baja definitiva",
+        "Reposición con proveedor"
+      ]
+    },
+    "ReturnApprovalStatus": {
+      "type": "string",
+      "enum": [
+        "not_required",
+        "pending",
+        "approved",
+        "rejected"
+      ]
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD"
+      ],
+      "default": "MXN"
+    },
+    "TaxRate": {
+      "type": "string",
+      "enum": [
+        "16%",
+        "8%",
+        "0%",
+        "Exento"
+      ],
+      "default": "16%"
+    },
+    "ReturnLineItemInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sku",
+        "name",
+        "quantity",
+        "unitAmount",
+        "taxRate",
+        "unitOfMeasure",
+        "condition",
+        "disposition"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unitAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "taxRate": {
+          "$ref": "#/$defs/TaxRate"
+        },
+        "unitOfMeasure": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "condition": {
+          "$ref": "#/$defs/ReturnItemCondition"
+        },
+        "disposition": {
+          "$ref": "#/$defs/ReturnDisposition"
+        }
+      }
+    },
+    "ReturnLineItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sku",
+        "name",
+        "quantity",
+        "unitAmount",
+        "taxRate",
+        "unitOfMeasure",
+        "subtotal",
+        "taxAmount",
+        "total",
+        "condition",
+        "disposition"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "unitAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "taxRate": {
+          "$ref": "#/$defs/TaxRate"
+        },
+        "unitOfMeasure": {
+          "type": "string"
+        },
+        "subtotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "taxAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "condition": {
+          "$ref": "#/$defs/ReturnItemCondition"
+        },
+        "disposition": {
+          "$ref": "#/$defs/ReturnDisposition"
+        }
+      }
+    },
+    "ReturnWorkflowHistoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "timestampIso",
+        "toStatus",
+        "actor",
+        "action"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "timestampIso": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fromStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toStatus": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "created",
+            "transition",
+            "approval_requested",
+            "approved",
+            "approval_rejected"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CreateCustomerReturnDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clientCompany",
+        "warehouseId",
+        "reason",
+        "resolution",
+        "items"
+      ],
+      "properties": {
+        "orderId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "orderFolio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "default": "DIRECTA"
+        },
+        "invoiceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "invoiceFolio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "clientCompany": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "warehouseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "reason": {
+          "$ref": "#/$defs/ReturnReason"
+        },
+        "resolution": {
+          "$ref": "#/$defs/CustomerReturnResolution"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ReturnLineItemInput"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "TransitionCustomerReturnDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nextStatus"
+      ],
+      "properties": {
+        "nextStatus": {
+          "$ref": "#/$defs/CustomerReturnStatus"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        }
+      }
+    },
+    "RejectApprovalDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "CustomerReturnRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "orderFolio",
+        "clientCompany",
+        "clientName",
+        "warehouseId",
+        "warehouseName",
+        "reason",
+        "resolution",
+        "status",
+        "items",
+        "subtotal",
+        "taxTotal",
+        "total",
+        "currency",
+        "createdBy",
+        "updatedAtIso"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "orderId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "orderFolio": {
+          "type": "string"
+        },
+        "invoiceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "invoiceFolio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clientCompany": {
+          "type": "string"
+        },
+        "clientName": {
+          "type": "string"
+        },
+        "warehouseId": {
+          "type": "string"
+        },
+        "warehouseName": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/ReturnReason"
+        },
+        "resolution": {
+          "$ref": "#/$defs/CustomerReturnResolution"
+        },
+        "status": {
+          "$ref": "#/$defs/CustomerReturnStatus"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ReturnLineItem"
+          }
+        },
+        "subtotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "taxTotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "inventoryApplied": {
+          "type": "boolean"
+        },
+        "financeApplied": {
+          "type": "boolean"
+        },
+        "creditNoteFolio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "updatedAtIso": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approvalStatus": {
+          "$ref": "#/$defs/ReturnApprovalStatus"
+        },
+        "pendingTargetStatus": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CustomerReturnStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvalRequestedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approvalRequestedAtIso": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "approvedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approvedAtIso": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "rejectionReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workflowHistory": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReturnWorkflowHistoryEntry"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

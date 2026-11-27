@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/operaciones/traslados.schema.json",
+  "title": "Operaciones - Traslados entre Almacenes",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Traslados (/api/v1/operations/transfers).",
+  "$defs": {
+    "TransferStatus": {
+      "type": "string",
+      "enum": [
+        "En tránsito",
+        "Completado",
+        "Cancelado"
+      ]
+    },
+    "TransferMode": {
+      "type": "string",
+      "enum": [
+        "immediate",
+        "in_transit"
+      ],
+      "default": "in_transit"
+    },
+    "TransferItemInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inventoryItemId",
+        "quantity"
+      ],
+      "properties": {
+        "inventoryItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetBin": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "InventoryTransferItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "inventoryItemId",
+        "productId",
+        "sku",
+        "name",
+        "unitOfMeasure",
+        "quantity",
+        "unitCost",
+        "sourceBin",
+        "targetBin"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "inventoryItemId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "productId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "unitOfMeasure": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unitCost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sourceBin": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "targetBin": {
+          "type": "string",
+          "maxLength": 80
+        }
+      }
+    },
+    "CreateTransferDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceWarehouseId",
+        "targetWarehouseId",
+        "carrierOrMethod",
+        "items"
+      ],
+      "properties": {
+        "sourceWarehouseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "targetWarehouseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "transferMode": {
+          "$ref": "#/$defs/TransferMode"
+        },
+        "carrierOrMethod": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "responsibleUser": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "expectedArrival": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/TransferItemInput"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "InventoryTransferRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "sourceWarehouseId",
+        "sourceWarehouseName",
+        "targetWarehouseId",
+        "targetWarehouseName",
+        "items",
+        "totalUnits",
+        "totalValue",
+        "status",
+        "carrierOrMethod",
+        "responsibleUser"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "expectedArrival": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "completedDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "sourceWarehouseId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sourceWarehouseName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "targetWarehouseId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "targetWarehouseName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/InventoryTransferItem"
+          }
+        },
+        "totalUnits": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "totalValue": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/TransferStatus"
+        },
+        "carrierOrMethod": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "responsibleUser": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

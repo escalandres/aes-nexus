@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/compras/recepciones.schema.json",
+  "title": "Compras - Recepciones de Mercancía",
+  "description": "Esquema JSON de campos obligatorios, rangos y movimientos generados para Recepciones (/api/v1/purchases/receptions).",
+  "$defs": {
+    "ReceptionLineInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orderItemId",
+        "quantityReceived"
+      ],
+      "properties": {
+        "orderItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "quantityReceived": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "ReceivePurchaseOrderDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purchaseOrderId",
+        "items"
+      ],
+      "properties": {
+        "purchaseOrderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "locationBin": {
+          "type": "string",
+          "maxLength": 64,
+          "default": "Andén Recepción"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ReceptionLineInput"
+          }
+        }
+      }
+    },
+    "StockMovementEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "type",
+        "sku",
+        "productName",
+        "quantity",
+        "targetWarehouse",
+        "referenceDoc",
+        "reason",
+        "user"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "folio": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "Entrada"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "productName": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "targetWarehouse": {
+          "type": "string"
+        },
+        "referenceDoc": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      }
+    },
+    "ReceptionConfirmationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purchaseOrderId",
+        "purchaseOrderFolio",
+        "newOrderStatus",
+        "totalUnitsReceived",
+        "warehouseId",
+        "warehouseName",
+        "movementsCreated"
+      ],
+      "properties": {
+        "purchaseOrderId": {
+          "type": "string"
+        },
+        "purchaseOrderFolio": {
+          "type": "string"
+        },
+        "newOrderStatus": {
+          "type": "string",
+          "enum": [
+            "Recepción parcial",
+            "Recibida"
+          ]
+        },
+        "totalUnitsReceived": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "warehouseId": {
+          "type": "string"
+        },
+        "warehouseName": {
+          "type": "string"
+        },
+        "movementsCreated": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/StockMovementEntry"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

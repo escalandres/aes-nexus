@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/compras/facturas.schema.json",
+  "title": "Compras - Facturas de Proveedor (CxP)",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Facturas de Proveedor (/api/v1/purchases/invoices).",
+  "$defs": {
+    "BillPayableStatus": {
+      "type": "string",
+      "enum": [
+        "Pendiente",
+        "Pagada",
+        "Parcial",
+        "Vencida"
+      ],
+      "default": "Pendiente"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD"
+      ],
+      "default": "MXN"
+    },
+    "CreateSupplierBillDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supplierCompany",
+        "subtotal"
+      ],
+      "properties": {
+        "purchaseOrderFolio": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "supplierCompany": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "supplierContact": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 180
+        },
+        "dueDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentMethod": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "subtotal": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "BillPayableRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "supplierCompany",
+        "supplierContact",
+        "issueDate",
+        "dueDate",
+        "subtotal",
+        "tax",
+        "total",
+        "paidAmount",
+        "balance",
+        "status",
+        "currency"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string"
+        },
+        "purchaseOrderFolio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supplierCompany": {
+          "type": "string"
+        },
+        "supplierContact": {
+          "type": "string"
+        },
+        "issueDate": {
+          "type": "string"
+        },
+        "dueDate": {
+          "type": "string"
+        },
+        "subtotal": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "tax": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "paidAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "balance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/BillPayableStatus"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentMethod": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

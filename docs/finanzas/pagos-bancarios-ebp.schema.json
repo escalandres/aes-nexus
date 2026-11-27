@@ -1,0 +1,692 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/finanzas/pagos-bancarios-ebp.schema.json",
+  "title": "Finanzas - Pagos Bancarios EBP",
+  "description": "Esquema JSON de campos obligatorios, validadores dinámicos y lotes de dispersión bancaria (/api/v1/finance/ebp/*).",
+  "$defs": {
+    "EbpOperationType": {
+      "type": "string",
+      "enum": [
+        "payroll",
+        "vendor_payment",
+        "both"
+      ]
+    },
+    "EbpChannel": {
+      "type": "string",
+      "enum": [
+        "same_bank",
+        "interbank_spei",
+        "mixed"
+      ]
+    },
+    "EbpEncoding": {
+      "type": "string",
+      "enum": [
+        "UTF-8",
+        "UTF-8-BOM",
+        "ISO-8859-1",
+        "ASCII"
+      ]
+    },
+    "EbpCurrency": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD",
+        "EUR"
+      ],
+      "default": "MXN"
+    },
+    "EbpAggregationMode": {
+      "type": "string",
+      "enum": [
+        "individual",
+        "consolidated"
+      ]
+    },
+    "EbpBatchStatus": {
+      "type": "string",
+      "enum": [
+        "Validado",
+        "Archivo generado",
+        "Aplicado en banco",
+        "Rechazado"
+      ]
+    },
+    "EbpDynamicFieldSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "label",
+        "type",
+        "validators"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "number",
+            "select_catalog"
+          ]
+        },
+        "catalogRef": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "placeholder": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "helpText": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "defaultValue": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "validators": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "minLength": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxLength": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "digitsOnly": {
+              "type": "boolean"
+            },
+            "clabeMod10": {
+              "type": "boolean"
+            },
+            "regex": {
+              "type": "string"
+            },
+            "regexHint": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "BankFormatPack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "packCode",
+        "version",
+        "name",
+        "bankName",
+        "country",
+        "operationType",
+        "channel",
+        "description",
+        "companyBankSchema",
+        "beneficiaryBankSchema",
+        "embeddedCatalogs",
+        "templateBody",
+        "encoding",
+        "outputExtension",
+        "lineEnding",
+        "filenamePattern",
+        "supportedCurrencies",
+        "licenseTier",
+        "priceLabel",
+        "installed",
+        "licenseActive"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "packCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "bankName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "operationType": {
+          "$ref": "#/$defs/EbpOperationType"
+        },
+        "channel": {
+          "$ref": "#/$defs/EbpChannel"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "companyBankSchema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EbpDynamicFieldSchema"
+          }
+        },
+        "beneficiaryBankSchema": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EbpDynamicFieldSchema"
+          }
+        },
+        "embeddedCatalogs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "title",
+              "options"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "label"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "templateBody": {
+          "type": "string",
+          "minLength": 1
+        },
+        "encoding": {
+          "$ref": "#/$defs/EbpEncoding"
+        },
+        "outputExtension": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "lineEnding": {
+          "type": "string",
+          "enum": [
+            "CRLF",
+            "LF"
+          ]
+        },
+        "filenamePattern": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "supportedCurrencies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/EbpCurrency"
+          }
+        },
+        "licenseTier": {
+          "type": "string",
+          "enum": [
+            "included",
+            "promo",
+            "paid"
+          ]
+        },
+        "promoBadge": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "priceLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "licenseActive": {
+          "type": "boolean"
+        },
+        "changelog": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 400
+        },
+        "isCustomPack": {
+          "type": "boolean"
+        }
+      }
+    },
+    "EbpBillAllocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "billId",
+        "billFolio",
+        "currency",
+        "originalBalance",
+        "amountToPay"
+      ],
+      "properties": {
+        "billId": {
+          "type": "string"
+        },
+        "billFolio": {
+          "type": "string"
+        },
+        "purchaseOrderFolio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dueDate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/EbpCurrency"
+        },
+        "originalBalance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "amountToPay": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "ElectronicPaymentBatchLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sourceLineId",
+        "beneficiaryName",
+        "beneficiaryCode",
+        "bankName",
+        "clabe",
+        "amount",
+        "reference",
+        "concept",
+        "isSameBank",
+        "customValues",
+        "validationErrors",
+        "included"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sourceLineId": {
+          "type": "string"
+        },
+        "beneficiaryName": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "beneficiaryCode": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "clabe": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "concept": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "isSameBank": {
+          "type": "boolean"
+        },
+        "customValues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "validationErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "included": {
+          "type": "boolean"
+        },
+        "aggregationMode": {
+          "$ref": "#/$defs/EbpAggregationMode"
+        },
+        "selectedBankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selectedBankAlias": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paymentReason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "billAllocations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EbpBillAllocation"
+          }
+        }
+      }
+    },
+    "CreateEbpBatchDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "batchType",
+        "packId",
+        "bankAccountId",
+        "sourceRefId",
+        "sourceFolio",
+        "executionDate",
+        "lines"
+      ],
+      "properties": {
+        "batchType": {
+          "type": "string",
+          "enum": [
+            "Nómina",
+            "Proveedores"
+          ]
+        },
+        "aggregationMode": {
+          "$ref": "#/$defs/EbpAggregationMode"
+        },
+        "packId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "bankAccountId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "currency": {
+          "$ref": "#/$defs/EbpCurrency"
+        },
+        "sourceRefId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "sourceFolio": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "executionDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ElectronicPaymentBatchLine"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "ElectronicPaymentBatchRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "batchType",
+        "packId",
+        "packName",
+        "packVersion",
+        "bankAccountId",
+        "bankAccountName",
+        "currency",
+        "sourceRefId",
+        "sourceFolio",
+        "executionDate",
+        "operationsCount",
+        "totalAmount",
+        "status",
+        "generatedFilename",
+        "generatedContent",
+        "encoding",
+        "createdAt",
+        "lines"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "batchType": {
+          "type": "string",
+          "enum": [
+            "Nómina",
+            "Proveedores"
+          ]
+        },
+        "aggregationMode": {
+          "$ref": "#/$defs/EbpAggregationMode"
+        },
+        "packId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "packName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "packVersion": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "bankAccountId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "bankAccountName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "currency": {
+          "$ref": "#/$defs/EbpCurrency"
+        },
+        "sourceRefId": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "sourceFolio": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "executionDate": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "operationsCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "totalAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/EbpBatchStatus"
+        },
+        "generatedFilename": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "generatedContent": {
+          "type": "string"
+        },
+        "encoding": {
+          "$ref": "#/$defs/EbpEncoding"
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "appliedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ElectronicPaymentBatchLine"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

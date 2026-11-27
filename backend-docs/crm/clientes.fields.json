@@ -1,0 +1,432 @@
+{
+  "module": "CRM",
+  "entity": "Clientes",
+  "resourcePath": "/api/v1/crm/customers",
+  "databaseTables": {
+    "primary": "crm_customers",
+    "children": ["crm_customer_addresses"]
+  },
+  "requiredHeaders": [
+    {
+      "name": "X-Organization-Id",
+      "type": "string",
+      "required": true,
+      "example": "org_brujula_default",
+      "purpose": "Aislamiento multi-tenant por organización."
+    },
+    {
+      "name": "X-Client-App",
+      "type": "string",
+      "required": false,
+      "example": "aes-nexus-frontend",
+      "purpose": "Trazabilidad de aplicación origen."
+    }
+  ],
+  "recordFields": [
+    {
+      "field": "id",
+      "dbColumn": "id",
+      "type": "string (uuid)",
+      "direction": "output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "serverGenerated": true,
+      "description": "Identificador único interno del cliente."
+    },
+    {
+      "field": "clientCode",
+      "dbColumn": "client_code",
+      "type": "string",
+      "maxLength": 40,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim",
+      "uniqueScope": ["organization_id", "client_code"],
+      "description": "Código de catálogo o migración externa (ej. CLI-001)."
+    },
+    {
+      "field": "entityType",
+      "dbColumn": "entity_type",
+      "type": "enum",
+      "allowedValues": ["company", "individual"],
+      "default": "company",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "description": "Naturaleza jurídica del cliente."
+    },
+    {
+      "field": "company",
+      "dbColumn": "company",
+      "type": "string",
+      "maxLength": 180,
+      "direction": "input_output",
+      "requiredOnCreate": true,
+      "requiredOnUpdate": false,
+      "normalization": "trim (fallback a name si individual)",
+      "description": "Razón social o nombre comercial."
+    },
+    {
+      "field": "name",
+      "dbColumn": "name",
+      "type": "string",
+      "maxLength": 150,
+      "direction": "input_output",
+      "requiredOnCreate": true,
+      "requiredOnUpdate": false,
+      "normalization": "trim",
+      "description": "Nombre del contacto principal."
+    },
+    {
+      "field": "email",
+      "dbColumn": "email",
+      "type": "string (email)",
+      "maxLength": 180,
+      "direction": "input_output",
+      "requiredOnCreate": true,
+      "requiredOnUpdate": false,
+      "normalization": "trim_lowercase",
+      "description": "Correo electrónico principal para comunicación y facturación."
+    },
+    {
+      "field": "phone",
+      "dbColumn": "phone",
+      "type": "string",
+      "maxLength": 40,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "default": "",
+      "normalization": "trim",
+      "description": "Teléfono de contacto."
+    },
+    {
+      "field": "rfc",
+      "dbColumn": "tax_id",
+      "type": "string",
+      "maxLength": 24,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim_uppercase",
+      "countryDependentValidation": true,
+      "description": "Identificador fiscal según país (RFC en MX, NIF/CIF en ES, RIF en VE, Tax ID en GLOBAL)."
+    },
+    {
+      "field": "status",
+      "dbColumn": "status",
+      "type": "enum",
+      "allowedValues": ["Activo", "Prospecto", "Inactivo"],
+      "default": "Activo",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "description": "Estado comercial del cliente."
+    },
+    {
+      "field": "country",
+      "dbColumn": "country",
+      "type": "string (ISO-3166-1 alpha-2 | GLOBAL)",
+      "maxLength": 8,
+      "default": "MX",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim_uppercase",
+      "description": "País fiscal/operativo principal del cliente."
+    },
+    {
+      "field": "currency",
+      "dbColumn": "currency",
+      "type": "enum (ISO-4217)",
+      "allowedValues": ["MXN", "USD", "EUR", "VES", "COP", "BRL"],
+      "frontendCurrentSelector": ["MXN", "USD"],
+      "default": "MXN",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "description": "Moneda preferida de operación."
+    },
+    {
+      "field": "paymentTerms",
+      "dbColumn": "payment_terms",
+      "type": "enum",
+      "allowedValues": ["Contado", "Crédito 15 días", "Crédito 30 días", "Crédito 60 días"],
+      "default": "Contado",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "description": "Condiciones de crédito/pago acordadas."
+    },
+    {
+      "field": "city",
+      "dbColumn": "city",
+      "type": "string",
+      "maxLength": 120,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim (sincronizar con addresses[0].city)",
+      "description": "Ciudad principal del cliente."
+    },
+    {
+      "field": "state",
+      "dbColumn": "state",
+      "type": "string",
+      "maxLength": 120,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim (sincronizar con addresses[0].state)",
+      "description": "Estado o provincia principal del cliente."
+    },
+    {
+      "field": "notes",
+      "dbColumn": "notes",
+      "type": "string (text)",
+      "maxLength": 2000,
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "normalization": "trim",
+      "description": "Acuerdos comerciales y observaciones."
+    },
+    {
+      "field": "initials",
+      "dbColumn": "initials",
+      "type": "string",
+      "maxLength": 4,
+      "direction": "output",
+      "serverGenerated": true,
+      "generationRule": "Primeras letras de las 2 primeras palabras de company (o name), o primeros 2 caracteres en mayúscula.",
+      "description": "Iniciales para avatar."
+    },
+    {
+      "field": "color",
+      "dbColumn": "color",
+      "type": "enum",
+      "allowedValues": ["lilac", "peach", "sage", "blue", "amber"],
+      "direction": "output",
+      "serverGenerated": true,
+      "description": "Color de avatar determinístico o asignado."
+    },
+    {
+      "field": "lastActivity",
+      "dbColumn": "last_activity_at",
+      "type": "string",
+      "direction": "output",
+      "serverGenerated": true,
+      "description": "Timestamp/etiqueta de última actividad del cliente."
+    },
+    {
+      "field": "createdAt",
+      "dbColumn": "created_at",
+      "type": "string (ISO-8601 date-time)",
+      "direction": "output",
+      "serverGenerated": true
+    },
+    {
+      "field": "updatedAt",
+      "dbColumn": "updated_at",
+      "type": "string (ISO-8601 date-time)",
+      "direction": "output",
+      "serverGenerated": true
+    },
+    {
+      "field": "addresses",
+      "dbTable": "crm_customer_addresses",
+      "type": "array<ClientAddress>",
+      "direction": "input_output",
+      "requiredOnCreate": false,
+      "requiredOnUpdate": false,
+      "itemFields": [
+        {
+          "field": "id",
+          "dbColumn": "id",
+          "type": "string",
+          "serverGeneratedIfOmitted": true
+        },
+        {
+          "field": "street",
+          "dbColumn": "street",
+          "type": "string",
+          "maxLength": 200,
+          "normalization": "trim"
+        },
+        {
+          "field": "colony",
+          "dbColumn": "colony",
+          "type": "string",
+          "maxLength": 140,
+          "normalization": "trim",
+          "countryLocalizedLabel": {
+            "MX": "Colonia / Alcaldía",
+            "ES": "Barrio / Distrito",
+            "VE": "Parroquia / Urbanización",
+            "GLOBAL": "Distrito / Zona"
+          }
+        },
+        {
+          "field": "city",
+          "dbColumn": "city",
+          "type": "string",
+          "maxLength": 120,
+          "normalization": "trim"
+        },
+        {
+          "field": "state",
+          "dbColumn": "state",
+          "type": "string",
+          "maxLength": 120,
+          "normalization": "trim",
+          "countryLocalizedLabel": {
+            "MX": "Estado",
+            "ES": "Provincia / Comunidad",
+            "VE": "Estado",
+            "GLOBAL": "Estado / Región"
+          }
+        },
+        {
+          "field": "zipCode",
+          "dbColumn": "zip_code",
+          "type": "string",
+          "maxLength": 20,
+          "normalization": "trim",
+          "countryLocalizedLabel": {
+            "MX": "Código postal",
+            "ES": "Código postal",
+            "VE": "Zona postal",
+            "GLOBAL": "Código postal"
+          }
+        },
+        {
+          "field": "country",
+          "dbColumn": "country",
+          "type": "string (ISO-3166-1 alpha-2 | GLOBAL)",
+          "maxLength": 8,
+          "defaultFromParent": "customer.country"
+        },
+        {
+          "field": "isShipping",
+          "dbColumn": "is_shipping",
+          "type": "boolean",
+          "default": true
+        },
+        {
+          "field": "isBilling",
+          "dbColumn": "is_billing",
+          "type": "boolean",
+          "default": true
+        }
+      ]
+    }
+  ],
+  "countryValidationRules": {
+    "MX": {
+      "countryName": "México",
+      "taxIdLabel": "RFC",
+      "taxIdRegex": "^[A-ZÑ&]{3,4}\\d{6}[A-Z0-9]{3}$",
+      "taxIdLengths": [12, 13],
+      "defaultCurrency": "MXN"
+    },
+    "ES": {
+      "countryName": "España",
+      "taxIdLabel": "NIF / CIF",
+      "taxIdRegex": "^([A-HJNPQRSUVW]\\d{7}[0-9A-J]|\\d{8}[A-Z]|[XYZ]\\d{7}[A-Z])$",
+      "taxIdLengths": [9],
+      "defaultCurrency": "EUR"
+    },
+    "VE": {
+      "countryName": "Venezuela",
+      "taxIdLabel": "RIF",
+      "taxIdRegex": "^[JGVEPC]-?\\d{8}-?\\d$",
+      "defaultCurrency": "VES"
+    },
+    "GLOBAL": {
+      "countryName": "Global",
+      "taxIdLabel": "Tax ID",
+      "taxIdRegex": "^[A-Z0-9-]{5,24}$",
+      "defaultCurrency": "USD"
+    }
+  },
+  "examples": {
+    "createRequest": {
+      "clientCode": "CLI-006",
+      "entityType": "company",
+      "company": "Distribuidora del Norte S.A. de C.V.",
+      "name": "Alejandro Valdés",
+      "email": "alejandro@distribuidoranorte.mx",
+      "phone": "55 4120 8890",
+      "rfc": "DNO200415KL9",
+      "status": "Activo",
+      "country": "MX",
+      "currency": "MXN",
+      "paymentTerms": "Crédito 30 días",
+      "city": "Ciudad de México",
+      "state": "CDMX",
+      "notes": "Cliente corporativo con entrega en dos sucursales.",
+      "addresses": [
+        {
+          "street": "Av. Insurgentes Sur 1602, Piso 4",
+          "colony": "Crédito Constructor",
+          "city": "Benito Juárez",
+          "state": "Ciudad de México",
+          "zipCode": "03940",
+          "country": "MX",
+          "isShipping": true,
+          "isBilling": true
+        }
+      ]
+    },
+    "createResponse": {
+      "success": true,
+      "message": "Cliente creado y sincronizado con el backend exitosamente.",
+      "data": {
+        "id": "b7f5f2e6-8a42-4c7a-9b7a-120b9f4e2a11",
+        "clientCode": "CLI-006",
+        "entityType": "company",
+        "company": "Distribuidora del Norte S.A. de C.V.",
+        "name": "Alejandro Valdés",
+        "email": "alejandro@distribuidoranorte.mx",
+        "phone": "55 4120 8890",
+        "rfc": "DNO200415KL9",
+        "status": "Activo",
+        "lastActivity": "Ahora",
+        "initials": "DN",
+        "color": "blue",
+        "country": "MX",
+        "currency": "MXN",
+        "paymentTerms": "Crédito 30 días",
+        "city": "Benito Juárez",
+        "state": "Ciudad de México",
+        "notes": "Cliente corporativo con entrega en dos sucursales.",
+        "address": {
+          "id": "e4c19a21-319f-4e11-a2b4-7821b92044c2",
+          "street": "Av. Insurgentes Sur 1602, Piso 4",
+          "colony": "Crédito Constructor",
+          "city": "Benito Juárez",
+          "state": "Ciudad de México",
+          "zipCode": "03940",
+          "country": "MX",
+          "isShipping": true,
+          "isBilling": true
+        },
+        "addresses": [
+          {
+            "id": "e4c19a21-319f-4e11-a2b4-7821b92044c2",
+            "street": "Av. Insurgentes Sur 1602, Piso 4",
+            "colony": "Crédito Constructor",
+            "city": "Benito Juárez",
+            "state": "Ciudad de México",
+            "zipCode": "03940",
+            "country": "MX",
+            "isShipping": true,
+            "isBilling": true
+          }
+        ],
+        "createdAt": "2026-11-26T15:00:00.000Z"
+      }
+    }
+  }
+}

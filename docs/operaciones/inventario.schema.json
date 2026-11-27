@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/operaciones/inventario.schema.json",
+  "title": "Operaciones - Inventario por Almacén",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para existencias por almacén (/api/v1/operations/inventory).",
+  "$defs": {
+    "ThresholdSource": {
+      "type": "string",
+      "enum": [
+        "sku",
+        "category"
+      ],
+      "default": "sku"
+    },
+    "EffectiveThresholdSource": {
+      "type": "string",
+      "enum": [
+        "sku",
+        "category_inherit",
+        "category_override"
+      ]
+    },
+    "AddSkuToWarehouseDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "warehouseId"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "catalog",
+            "new"
+          ],
+          "default": "catalog"
+        },
+        "warehouseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 80,
+          "default": "Hardware"
+        },
+        "unitOfMeasure": {
+          "type": "string",
+          "maxLength": 32,
+          "default": "Pza"
+        },
+        "initialStock": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 5
+        },
+        "minStock": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 2
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "locationBin": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "catalog"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "productId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "new"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sku",
+              "name"
+            ]
+          }
+        }
+      ]
+    },
+    "AdjustInventoryDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adjustmentType",
+        "quantity"
+      ],
+      "properties": {
+        "adjustmentType": {
+          "type": "string",
+          "enum": [
+            "Ajuste positivo",
+            "Ajuste negativo"
+          ]
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "Ajuste de inventario físico verificado"
+        },
+        "referenceDoc": {
+          "type": "string",
+          "maxLength": 80,
+          "default": "AJUSTE-MANUAL"
+        }
+      }
+    },
+    "UpdateThresholdDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minStock"
+      ],
+      "properties": {
+        "minStock": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "InventoryItemLocationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "productId",
+        "sku",
+        "name",
+        "warehouseId",
+        "warehouseName",
+        "stock",
+        "reserved",
+        "inTransit",
+        "minStock",
+        "cost",
+        "unitOfMeasure",
+        "locationBin"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "productId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "warehouseId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "warehouseName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "stock": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reserved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inTransit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minStock": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "thresholdSource": {
+          "$ref": "#/$defs/ThresholdSource"
+        },
+        "effectiveMinStock": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "effectiveThresholdSource": {
+          "$ref": "#/$defs/EffectiveThresholdSource"
+        },
+        "cost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unitOfMeasure": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "locationBin": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

@@ -9063,6 +9063,8 @@ function AppContent() {
                   movements={movements}
                   purchaseOrders={purchaseOrders}
                   shipments={shipments}
+                  orders={orders}
+                  products={syncedProducts}
                   onNavigateSection={(sec) => navigateToOperationsSection(sec)}
                   onNavigatePurchases={() => navigateToPurchasesSection('Órdenes de compra')}
                 />

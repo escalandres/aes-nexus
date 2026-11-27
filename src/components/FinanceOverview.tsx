@@ -16,6 +16,7 @@ import {
   RotateCcw,
   AlertTriangle,
   CheckCircle2,
+  Download,
 } from 'lucide-react'
 import {
   ResponsiveContainer,
@@ -43,6 +44,7 @@ import type { PayrollRunRecord } from '../data/payroll'
 import { computeIncomeStatementData } from './IncomeStatementReport'
 import { useI18n } from '../i18n/I18nContext'
 import { getCurrencySymbol } from '../services/currencyService'
+import { useToast } from './Toast'
 
 interface FinanceOverviewProps {
   bankAccounts: BankAccount[]
@@ -122,6 +124,14 @@ function formatCompactAxis(val: number, symbol: string): string {
   return `${sign}${symbol}${Math.round(abs)}`
 }
 
+function escapeCsvCell(value: string | number | undefined | null): string {
+  const str = String(value ?? '')
+  if (/[",\n\r]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
 export function FinanceOverview({
   bankAccounts,
   receivables,
@@ -137,6 +147,7 @@ export function FinanceOverview({
   onNavigateIncomeStatement,
 }: FinanceOverviewProps) {
   const { countryProfile, reportingCurrency, convertAmount, formatCurrency } = useI18n()
+  const toast = useToast()
   const money = (val: number) => formatCurrency(val, reportingCurrency, 0)
   const currencySymbol = getCurrencySymbol(reportingCurrency)
 
@@ -472,6 +483,74 @@ export function FinanceOverview({
     },
   ]
 
+  const handleExportSimulationCsv = () => {
+    const todayIso = new Date().toISOString().slice(0, 10)
+    const activePreset = SIMULATOR_PRESETS.find(
+      (preset) =>
+        preset.salesVolumeDeltaPct === salesVolumeDeltaPct &&
+        preset.variableCogsDeltaPct === variableCogsDeltaPct &&
+        opexDeltaPct === preset.opexDeltaPct &&
+        cashCollectionPct === preset.cashCollectionPct
+    )
+    const scenarioName = activePreset ? activePreset.label : 'Personalizado'
+    const roundAmount = (n: number) => Number(n.toFixed(2))
+
+    const csvRows: Array<Array<string | number>> = [
+      ['Simulador de Gastos y Flujo de Caja Operativo', '', '', '', ''],
+      ['Fecha de exportación', todayIso, 'Moneda de reporte', reportingCurrency, ''],
+      ['Escenario', scenarioName, '', '', ''],
+      ['', '', '', '', ''],
+      ['PARÁMETROS DE SIMULACIÓN', 'VALOR ACTUAL', 'DETALLE', '', ''],
+      ['Volumen de ventas (%)', formatDeltaPct(salesVolumeDeltaPct), `Base ${roundAmount(simulation.baseRevenue)} -> Proy. ${roundAmount(simulation.simRevenue)}`, '', ''],
+      ['Costo de ventas variable (%)', formatDeltaPct(variableCogsDeltaPct), `Ratio COGS sobre ventas: ${simulation.simCogsRatioPct.toFixed(1)}% (Base: ${simulation.baseCogsRatioPct.toFixed(1)}%)`, '', ''],
+      ['Gastos operativos OpEx (%)', formatDeltaPct(opexDeltaPct), `Base ${roundAmount(simulation.baseOpex)} -> Proy. ${roundAmount(simulation.simOpex)}`, '', ''],
+      ['Cobranza en efectivo (%)', `${cashCollectionPct}%`, `Cobro efectivo ${roundAmount(simulation.simCollectedCash)} / CxC retenida ${roundAmount(simulation.simCollectionHoldback)}`, '', ''],
+      ['', '', '', '', ''],
+      ['PUENTE DE ESTADO DE RESULTADOS Y FLUJO DE CAJA', `BASE (${reportingCurrency})`, `SIMULADO (${reportingCurrency})`, `VARIACIÓN (${reportingCurrency})`, 'ESTADO'],
+      ...pnlComparisonRows.map((row) => {
+        const diff = row.sim - row.base
+        const isFavorable = row.inverseGood ? diff <= 0 : diff >= 0
+        return [
+          row.label,
+          roundAmount(row.base),
+          roundAmount(row.sim),
+          roundAmount(diff),
+          Math.abs(diff) < 0.01 ? 'Sin cambio' : isFavorable ? 'Favorable' : 'Desfavorable',
+        ]
+      }),
+      ['Caja actual disponible', roundAmount(totalCash), roundAmount(totalCash), 0, 'Referencia'],
+      [
+        'Caja proyectada al cierre (Caja + FCO)',
+        roundAmount(totalCash + simulation.baseOperatingCashFlow),
+        roundAmount(simulation.projectedClosingCash),
+        roundAmount(simulation.ocfDelta),
+        simulation.ocfDelta >= 0 ? 'Favorable' : 'Desfavorable',
+      ],
+      ['Punto de equilibrio operativo', roundAmount(baselinePnl.breakEvenSales), roundAmount(simulation.simBreakEvenSales), roundAmount(simulation.simBreakEvenSales - baselinePnl.breakEvenSales), 'Referencia'],
+      ['', '', '', '', ''],
+      ['MÁRGENES DEL ESTADO DE RESULTADOS', 'MARGEN BASE (%)', 'MARGEN SIMULADO (%)', 'VARIACIÓN (PTS)', `IMPORTE SIMULADO (${reportingCurrency})`],
+      ...marginRows.map((m) => [
+        m.label,
+        `${m.basePct.toFixed(2)}%`,
+        `${m.simPct.toFixed(2)}%`,
+        formatPtsDelta(m.simPct - m.basePct),
+        roundAmount(m.simAmount),
+      ]),
+    ]
+
+    const csvContent = csvRows.map((row) => row.map(escapeCsvCell).join(',')).join('\r\n')
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `proyeccion_flujo_caja_${reportingCurrency.toLowerCase()}_${todayIso}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast.success(`Proyección de flujo de caja exportada en ${reportingCurrency}.`, 'Exportación CSV')
+  }
+
   return (
     <div className="operations-overview-container">
       {/* KPI Top Cards */}
@@ -733,6 +812,15 @@ export function FinanceOverview({
                 <RotateCcw size={12} /> Restablecer
               </button>
             )}
+
+            <button
+              type="button"
+              className="fin-sim-reset-btn"
+              onClick={handleExportSimulationCsv}
+              title="Descargar proyección de flujo de caja operativo y márgenes en CSV"
+            >
+              <Download size={12} /> Exportar CSV
+            </button>
 
             {onNavigateIncomeStatement && (
               <button

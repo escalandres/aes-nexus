@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/gastos/polizas-gastos.schema.json",
+  "title": "Gastos - Registro y Pólizas",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Pólizas de Gastos (/api/v1/expenses/policies).",
+  "$defs": {
+    "ExpenseCategory": {
+      "type": "string",
+      "enum": [
+        "Arrendamiento",
+        "Servicios",
+        "Nómina y honorarios",
+        "Logística y fletes",
+        "Software y herramientas",
+        "Impuestos y derechos",
+        "Viáticos y representación",
+        "Comisiones e intereses"
+      ]
+    },
+    "CompanyExpenseCategory": {
+      "type": "string",
+      "enum": [
+        "Gastos administrativos",
+        "Gastos operativos",
+        "Gastos financieros"
+      ]
+    },
+    "ExpenseNature": {
+      "type": "string",
+      "enum": [
+        "Administrativo",
+        "Operativo",
+        "Financiero",
+        "Costo de venta",
+        "Impuestos"
+      ]
+    },
+    "ExpenseStatus": {
+      "type": "string",
+      "enum": [
+        "Pendiente",
+        "Aprobado",
+        "Pagado",
+        "Cancelado"
+      ],
+      "default": "Pagado"
+    },
+    "CostBehavior": {
+      "type": "string",
+      "enum": [
+        "Fijo",
+        "Variable"
+      ],
+      "default": "Fijo"
+    },
+    "CreateExpenseDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "beneficiary",
+        "description",
+        "amount",
+        "expenseNature",
+        "category",
+        "paymentMethod"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "expenseNature": {
+          "$ref": "#/$defs/ExpenseNature"
+        },
+        "category": {
+          "$ref": "#/$defs/ExpenseCategory"
+        },
+        "status": {
+          "$ref": "#/$defs/ExpenseStatus"
+        },
+        "costBehavior": {
+          "$ref": "#/$defs/CostBehavior"
+        },
+        "departmentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "departmentName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "locationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "accountCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 16
+        },
+        "bankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "beneficiary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "taxMode": {
+          "type": "string",
+          "enum": [
+            "16",
+            "0",
+            "custom"
+          ],
+          "default": "16"
+        },
+        "customTaxAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "paymentMethod": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "referenceDoc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "issuerRfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "TransitionExpenseStatusDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ExpenseStatus"
+        },
+        "bankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        }
+      }
+    },
+    "ExpenseRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "category",
+        "description",
+        "beneficiary",
+        "amount",
+        "tax",
+        "total",
+        "paymentMethod",
+        "user"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "category": {
+          "$ref": "#/$defs/ExpenseCategory"
+        },
+        "companyCategory": {
+          "$ref": "#/$defs/CompanyExpenseCategory"
+        },
+        "expenseNature": {
+          "$ref": "#/$defs/ExpenseNature"
+        },
+        "status": {
+          "$ref": "#/$defs/ExpenseStatus"
+        },
+        "costBehavior": {
+          "$ref": "#/$defs/CostBehavior"
+        },
+        "departmentId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "departmentName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "costCenter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 32
+        },
+        "locationId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "locationName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "accountCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 16
+        },
+        "accountName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 180
+        },
+        "bankAccountName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "beneficiary": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tax": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "paymentMethod": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "referenceDoc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "issuerRfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "isRecurring": {
+          "type": "boolean"
+        },
+        "recurrenceId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

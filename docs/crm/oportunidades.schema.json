@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/oportunidades.schema.json",
+  "title": "CRM - Oportunidades",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y derivación de etapas para la entidad Oportunidades (/api/v1/crm/opportunities).",
+  "$defs": {
+    "OpportunityStage": {
+      "type": "string",
+      "enum": [
+        "Calificada",
+        "Propuesta",
+        "Negociación",
+        "Ganada",
+        "Perdida"
+      ],
+      "default": "Calificada"
+    },
+    "StageTone": {
+      "type": "string",
+      "enum": [
+        "blue",
+        "amber",
+        "green"
+      ],
+      "description": "amber = Negociación; green = Calificada | Ganada; blue = Propuesta | Perdida."
+    },
+    "AvatarColor": {
+      "type": "string",
+      "enum": [
+        "lilac",
+        "peach",
+        "sage",
+        "blue",
+        "amber"
+      ]
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD",
+        "EUR",
+        "VES",
+        "COP",
+        "BRL"
+      ],
+      "default": "MXN"
+    },
+    "CreateOpportunityDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "company"
+      ],
+      "properties": {
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "person": {
+          "type": "string",
+          "maxLength": 150,
+          "default": "Sin contacto"
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "stage": {
+          "$ref": "#/$defs/OpportunityStage"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40,
+          "default": "Ahora"
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateOpportunityDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "person": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "stage": {
+          "$ref": "#/$defs/OpportunityStage"
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "OpportunityRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "company",
+        "person",
+        "initials",
+        "color",
+        "value",
+        "stage",
+        "stageTone",
+        "date"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "company": {
+          "type": "string"
+        },
+        "person": {
+          "type": "string"
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4
+        },
+        "color": {
+          "$ref": "#/$defs/AvatarColor"
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "stage": {
+          "$ref": "#/$defs/OpportunityStage"
+        },
+        "stageTone": {
+          "$ref": "#/$defs/StageTone"
+        },
+        "date": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

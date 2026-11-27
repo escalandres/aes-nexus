@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/gastos/presupuestos-alertas.schema.json",
+  "title": "Gastos - Presupuestos y Alertas",
+  "description": "Esquema JSON de reglas presupuestales mensuales y umbrales de alerta (/api/v1/expenses/budgets).",
+  "$defs": {
+    "ExpenseNature": {
+      "type": "string",
+      "enum": [
+        "Administrativo",
+        "Operativo",
+        "Financiero",
+        "Costo de venta",
+        "Impuestos"
+      ]
+    },
+    "UpsertExpenseBudgetDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nature",
+        "monthlyLimit"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "nature": {
+          "$ref": "#/$defs/ExpenseNature"
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "departmentName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "monthlyLimit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "warningThresholdPct": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 98,
+          "default": 80
+        },
+        "criticalThresholdPct": {
+          "type": "number",
+          "minimum": 11,
+          "maximum": 100,
+          "default": 95
+        },
+        "alertsEnabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "active": {
+          "type": "boolean",
+          "default": true
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateGlobalBudgetThresholdsDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "warningThresholdPct",
+        "criticalThresholdPct",
+        "alertsEnabled"
+      ],
+      "properties": {
+        "warningThresholdPct": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 98
+        },
+        "criticalThresholdPct": {
+          "type": "number",
+          "minimum": 11,
+          "maximum": 100
+        },
+        "alertsEnabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ExpenseBudgetRuleRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "nature",
+        "monthlyLimit",
+        "warningThresholdPct",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "nature": {
+          "$ref": "#/$defs/ExpenseNature"
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "departmentName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "monthlyLimit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "warningThresholdPct": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 98
+        },
+        "criticalThresholdPct": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 11,
+          "maximum": 100
+        },
+        "alertsEnabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

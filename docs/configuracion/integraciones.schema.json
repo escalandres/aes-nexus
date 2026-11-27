@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/configuracion/integraciones.schema.json",
+  "title": "Configuración - Integraciones y API Externa",
+  "description": "Esquema JSON de conectores nativos, integraciones comerciales de marketplace y llaves API externas.",
+  "$defs": {
+    "IntegrationId": {
+      "type": "string",
+      "enum": ["cfdi", "spei", "workspace", "webhooks"]
+    },
+    "IntegrationConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "enabled", "environment", "endpointOrAccount", "credentialMask", "syncMode", "lastSyncAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/IntegrationId" },
+        "enabled": { "type": "boolean" },
+        "environment": { "type": "string", "enum": ["production", "sandbox"] },
+        "endpointOrAccount": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "credentialMask": { "type": "string", "maxLength": 120 },
+        "syncMode": { "type": "string", "enum": ["realtime", "15m", "hourly"] },
+        "lastSyncAt": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "ExternalApiAction": {
+      "type": "string",
+      "enum": ["read", "create", "update", "delete"]
+    },
+    "ExternalApiResource": {
+      "type": "string",
+      "enum": ["clientes", "productos", "ventas", "compras", "finanzas", "rrhh"]
+    },
+    "ExternalSystemType": {
+      "type": "string",
+      "enum": [
+        "Ecommerce",
+        "BI / Analítica",
+        "Contabilidad Externa",
+        "WMS / Logística",
+        "Webhook / Middleware",
+        "ERP / Legacy",
+        "Otro"
+      ]
+    },
+    "ExternalIntegrationLog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "method", "resource", "statusCode", "summary", "timestampIso"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE"] },
+        "resource": { "$ref": "#/$defs/ExternalApiResource" },
+        "moduleName": { "type": "string" },
+        "sectionName": { "type": "string" },
+        "endpoint": { "type": "string" },
+        "statusCode": { "type": "integer", "enum": [200, 201, 400, 401, 403, 404, 429, 500] },
+        "latencyMs": { "type": "integer", "minimum": 0 },
+        "summary": { "type": "string", "maxLength": 400 },
+        "responsePayload": { "type": "string" },
+        "timestampIso": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ExternalIntegrationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "systemType",
+        "description",
+        "environment",
+        "status",
+        "roleId",
+        "apiKeyPrefix",
+        "apiKeySecret",
+        "webhookCallbackUrl",
+        "ipAllowlist",
+        "rateLimitPerMin",
+        "permissions",
+        "createdAtIso",
+        "lastUsedAtIso",
+        "requestsCount",
+        "recentLogs"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "systemType": { "$ref": "#/$defs/ExternalSystemType" },
+        "origin": { "type": "string", "enum": ["commercial", "custom"] },
+        "description": { "type": "string", "maxLength": 400 },
+        "environment": { "type": "string", "enum": ["production", "sandbox"] },
+        "status": { "type": "string", "enum": ["active", "paused", "revoked"] },
+        "roleId": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "apiKeyPrefix": { "type": "string", "minLength": 8, "maxLength": 24 },
+        "apiKeySecret": { "type": "string", "pattern": "^nexus_(live|sbx)_[A-Za-z0-9]+$" },
+        "webhookCallbackUrl": { "type": "string", "maxLength": 300 },
+        "ipAllowlist": { "type": "string", "maxLength": 300 },
+        "rateLimitPerMin": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clientes", "productos", "ventas", "compras", "finanzas", "rrhh"],
+          "properties": {
+            "clientes": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true },
+            "productos": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true },
+            "ventas": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true },
+            "compras": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true },
+            "finanzas": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true },
+            "rrhh": { "type": "array", "items": { "$ref": "#/$defs/ExternalApiAction" }, "uniqueItems": true }
+          }
+        },
+        "createdAtIso": { "type": "string", "format": "date-time" },
+        "lastUsedAtIso": { "type": "string", "maxLength": 40 },
+        "requestsCount": { "type": "integer", "minimum": 0 },
+        "recentLogs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExternalIntegrationLog" }
+        }
+      }
+    },
+    "CommercialSyncInterval": {
+      "type": "string",
+      "enum": ["5m", "15m", "30m", "1h", "6h", "24h", "manual"]
+    },
+    "CommercialCategory": {
+      "type": "string",
+      "enum": ["PAC Fiscal", "Ecommerce", "Banca & Pagos", "Productividad"]
+    },
+    "CommercialIntegrationRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "marketplaceId",
+        "name",
+        "vendor",
+        "category",
+        "description",
+        "enabled",
+        "environment",
+        "syncInterval",
+        "endpointLabel",
+        "endpointUrl",
+        "apiKeyLabel",
+        "apiKey",
+        "apiSecretLabel",
+        "apiSecret",
+        "dataSyncedLabel",
+        "lastSyncAtIso",
+        "lastSyncStatus",
+        "installedAtIso",
+        "recentLogs"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "marketplaceId": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "vendor": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "$ref": "#/$defs/CommercialCategory" },
+        "description": { "type": "string", "maxLength": 500 },
+        "enabled": { "type": "boolean" },
+        "environment": { "type": "string", "enum": ["production", "sandbox"] },
+        "syncInterval": { "$ref": "#/$defs/CommercialSyncInterval" },
+        "endpointLabel": { "type": "string" },
+        "endpointUrl": { "type": "string", "maxLength": 300 },
+        "apiKeyLabel": { "type": "string" },
+        "apiKey": { "type": "string", "maxLength": 300 },
+        "apiSecretLabel": { "type": "string" },
+        "apiSecret": { "type": "string", "maxLength": 300 },
+        "dataSyncedLabel": { "type": "string" },
+        "lastSyncAtIso": { "type": "string", "maxLength": 40 },
+        "lastSyncStatus": { "type": "string", "enum": ["idle", "success", "error"] },
+        "installedAtIso": { "type": "string", "format": "date-time" },
+        "recentLogs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExternalIntegrationLog" }
+        }
+      }
+    }
+  }
+}

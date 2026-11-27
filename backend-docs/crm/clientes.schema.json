@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/clientes.schema.json",
+  "title": "AES Nexus - CRM Clientes (Contratos de Registro y Validación)",
+  "description": "Esquemas JSON para procesar altas, actualizaciones, cambios de estado y respuestas de clientes en /api/v1/crm/customers.",
+  "$defs": {
+    "ClientStatus": {
+      "type": "string",
+      "enum": ["Activo", "Prospecto", "Inactivo"],
+      "default": "Activo"
+    },
+    "EntityType": {
+      "type": "string",
+      "enum": ["company", "individual"],
+      "default": "company",
+      "description": "company = Persona Moral / Sociedad / Jurídica; individual = Persona Física / Autónomo / Natural."
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": ["MXN", "USD", "EUR", "VES", "COP", "BRL"],
+      "default": "MXN",
+      "description": "Código ISO-4217. El frontend actual expone MXN y USD en selector de cliente; el backend soporta multimoneda H3."
+    },
+    "PaymentTerms": {
+      "type": "string",
+      "enum": ["Contado", "Crédito 15 días", "Crédito 30 días", "Crédito 60 días"],
+      "default": "Contado"
+    },
+    "AvatarColor": {
+      "type": "string",
+      "enum": ["lilac", "peach", "sage", "blue", "amber"]
+    },
+    "ClientAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "UUID o identificador temporal del registro de dirección."
+        },
+        "street": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Calle, número exterior/interior y referencias."
+        },
+        "colony": {
+          "type": "string",
+          "maxLength": 140,
+          "description": "Subdivisión territorial localizada: Colonia/Alcaldía (MX), Barrio/Distrito (ES), Parroquia/Urbanización (VE), Distrito/Zona (GLOBAL)."
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Estado (MX/VE), Provincia/Comunidad (ES) o Región (GLOBAL)."
+        },
+        "zipCode": {
+          "type": "string",
+          "maxLength": 20,
+          "description": "Código postal (MX/ES/GLOBAL) o Zona postal (VE)."
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX",
+          "description": "Código ISO-3166-1 alpha-2 (ej. MX, ES, VE, US) o GLOBAL."
+        },
+        "isShipping": {
+          "type": "boolean",
+          "default": true
+        },
+        "isBilling": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "anyOf": [
+        { "required": ["street"] },
+        { "required": ["city"] },
+        { "required": ["zipCode"] }
+      ]
+    },
+    "CreateClientDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "company", "email"],
+      "properties": {
+        "clientCode": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Código de catálogo o migración (ej. CLI-006)."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150,
+          "description": "Nombre del contacto principal."
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180,
+          "description": "Razón social o nombre de la empresa."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": "string",
+          "maxLength": 24,
+          "description": "Identificador fiscal normalizado a mayúsculas (RFC en MX, NIF/CIF en ES, RIF en VE, Tax ID en GLOBAL)."
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        }
+      }
+    },
+    "UpdateClientDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "clientCode": {
+          "type": ["string", "null"],
+          "maxLength": 40
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": ["string", "null"],
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": ["string", "null"],
+          "maxLength": 24
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": ["string", "null"],
+          "maxLength": 120
+        },
+        "state": {
+          "type": ["string", "null"],
+          "maxLength": 120
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8
+        },
+        "notes": {
+          "type": ["string", "null"],
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        }
+      }
+    },
+    "StatusChangeDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        }
+      }
+    },
+    "ClientRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "company", "email", "phone", "status", "lastActivity", "initials", "color"],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "clientCode": {
+          "type": ["string", "null"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "lastActivity": {
+          "type": "string",
+          "description": "Etiqueta legible o fecha ISO de última interacción comercial."
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4
+        },
+        "color": {
+          "$ref": "#/$defs/AvatarColor"
+        },
+        "rfc": {
+          "type": ["string", "null"]
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": ["string", "null"]
+        },
+        "state": {
+          "type": ["string", "null"]
+        },
+        "country": {
+          "type": ["string", "null"]
+        },
+        "address": {
+          "$ref": "#/$defs/ClientAddress",
+          "description": "Dirección primaria de conveniencia (addresses[0])."
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        },
+        "notes": {
+          "type": ["string", "null"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

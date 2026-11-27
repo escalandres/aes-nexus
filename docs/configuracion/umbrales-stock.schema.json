@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/configuracion/umbrales-stock.schema.json",
+  "title": "Configuración - Umbrales de Stock por Categoría",
+  "description": "Esquema JSON de reglas de stock mínimo por categoría y precedencia sobre SKUs.",
+  "$defs": {
+    "CategoryThresholdMode": {
+      "type": "string",
+      "enum": [
+        "inherit_default",
+        "override_sku"
+      ],
+      "default": "inherit_default"
+    },
+    "EffectiveThresholdSource": {
+      "type": "string",
+      "enum": [
+        "category_override",
+        "category_inherit",
+        "sku"
+      ]
+    },
+    "CategoryStockThresholdRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "minStock",
+        "enabled",
+        "mode",
+        "updatedAtIso"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "minStock": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "mode": {
+          "$ref": "#/$defs/CategoryThresholdMode"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "updatedAtIso": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "isCustom": {
+          "type": "boolean",
+          "default": false
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    },
+    "UpsertCategoryThresholdDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "minStock",
+        "enabled",
+        "mode"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "minStock": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/CategoryThresholdMode"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    }
+  }
+}
