@@ -4,24 +4,38 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 3000",
+    "dev": "tsx server.ts",
     "build": "tsc -b && vite build",
     "lint": "tsc -b",
-    "preview": "vite preview --host 0.0.0.0 --port 3000"
+    "preview": "vite preview --host 0.0.0.0 --port 3000",
+    "start": "node server.ts",
+    "db:migrate": "tsx backend/src/db/migrate.ts",
+    "prisma:generate": "prisma generate --schema=backend/prisma/schema.prisma"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.6.11",
+    "@types/pg": "^8.23.1",
     "@vitejs/plugin-react": "latest",
     "boneyard-js": "^1.10.0",
     "country-flag-icons": "^1.6.20",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.9",
     "lucide-react": "^0.468.0",
+    "pg": "^8.23.1",
+    "prisma": "^6.19.0",
     "react": "latest",
     "react-dom": "latest",
     "recharts": "^3.10.1",
+    "tsx": "^4.23.15",
     "typescript": "latest",
     "vite": "latest",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

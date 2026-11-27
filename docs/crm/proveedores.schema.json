@@ -1,0 +1,673 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/proveedores.schema.json",
+  "title": "CRM - Proveedores",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y cuentas bancarias EBP para la entidad Proveedores (/api/v1/crm/vendors).",
+  "$defs": {
+    "VendorStatus": {
+      "type": "string",
+      "enum": [
+        "Activo",
+        "Prospecto",
+        "Inactivo"
+      ],
+      "default": "Activo"
+    },
+    "EntityType": {
+      "type": "string",
+      "enum": [
+        "company",
+        "individual"
+      ],
+      "default": "company"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD",
+        "EUR",
+        "VES",
+        "COP",
+        "BRL"
+      ],
+      "default": "MXN"
+    },
+    "EbpCurrency": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD",
+        "EUR"
+      ],
+      "default": "MXN"
+    },
+    "PaymentTerms": {
+      "type": "string",
+      "enum": [
+        "Contado",
+        "Crédito 15 días",
+        "Crédito 30 días",
+        "Crédito 60 días"
+      ],
+      "default": "Contado"
+    },
+    "AvatarColor": {
+      "type": "string",
+      "enum": [
+        "lilac",
+        "peach",
+        "sage",
+        "blue",
+        "amber"
+      ]
+    },
+    "VendorAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "street": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "colony": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "zipCode": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX"
+        },
+        "isShipping": {
+          "type": "boolean",
+          "default": true
+        },
+        "isBilling": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "street"
+          ]
+        },
+        {
+          "required": [
+            "city"
+          ]
+        },
+        {
+          "required": [
+            "zipCode"
+          ]
+        }
+      ]
+    },
+    "BankPackValuesMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "description": "Mapa { [packId]: { [fieldKey]: value } } para parámetros dinámicos de dispersión EBP."
+    },
+    "SupplierBankAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "bankName",
+        "clabe",
+        "currency"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "alias": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "bankName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "clabe": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 34
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 34
+        },
+        "currency": {
+          "$ref": "#/$defs/EbpCurrency"
+        },
+        "defaultReference": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "isDefault": {
+          "type": "boolean",
+          "default": false
+        },
+        "active": {
+          "type": "boolean",
+          "default": true
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    },
+    "CreateVendorDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "company",
+        "email",
+        "country"
+      ],
+      "properties": {
+        "supplierCode": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "status": {
+          "$ref": "#/$defs/VendorStatus"
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VendorAddress"
+          }
+        },
+        "bankAccounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupplierBankAccount"
+          }
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "clabe": {
+          "type": "string",
+          "maxLength": 34
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 34
+        },
+        "defaultReference": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateVendorDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "supplierCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "status": {
+          "$ref": "#/$defs/VendorStatus"
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VendorAddress"
+          }
+        },
+        "bankAccounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupplierBankAccount"
+          }
+        },
+        "bankName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "clabe": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 34
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 34
+        },
+        "defaultReference": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "VendorRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "company",
+        "email",
+        "phone",
+        "status",
+        "lastActivity",
+        "initials",
+        "color"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "supplierCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "name": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/VendorStatus"
+        },
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4
+        },
+        "color": {
+          "$ref": "#/$defs/AvatarColor"
+        },
+        "lastActivity": {
+          "type": "string"
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VendorAddress"
+          }
+        },
+        "bankAccounts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupplierBankAccount"
+          }
+        },
+        "bankName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clabe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultReference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  },
+  "x-country-bank-routing-rules": {
+    "MX": {
+      "label": "CLABE interbancaria",
+      "algorithm": "banxico_mod10",
+      "length": 18,
+      "regex": "^\\d{18}$"
+    },
+    "ES": {
+      "label": "IBAN SEPA",
+      "regex": "^(ES\\d{22}|[A-Z]{2}\\d{2}[A-Z0-9]{11,30})$"
+    },
+    "VE": {
+      "label": "Cuenta bancaria 20 dígitos SUDEBAN",
+      "length": 20,
+      "regex": "^\\d{20}$"
+    },
+    "GLOBAL": {
+      "label": "IBAN / Cuenta / Routing",
+      "regex": "^[A-Z0-9-]{8,34}$"
+    }
+  }
+}

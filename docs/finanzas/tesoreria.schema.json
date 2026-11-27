@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/finanzas/tesoreria.schema.json",
+  "title": "Finanzas - Tesorería (Cuentas Bancarias y Transacciones)",
+  "description": "Esquema JSON para Cuentas Bancarias (/api/v1/finance/bank-accounts) y Transacciones de Tesorería (/api/v1/finance/transactions).",
+  "$defs": {
+    "BankAccountType": {
+      "type": "string",
+      "enum": [
+        "Cheques / Operativa",
+        "Concentradora",
+        "Caja chica"
+      ]
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD"
+      ],
+      "default": "MXN"
+    },
+    "TransactionType": {
+      "type": "string",
+      "enum": [
+        "Cobro de cliente",
+        "Pago a proveedor",
+        "Gasto operativo"
+      ]
+    },
+    "BankPackValuesMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "CreateBankAccountDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bankName",
+        "accountNumber",
+        "clabe",
+        "type"
+      ],
+      "properties": {
+        "bankName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "accountNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "clabe": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "balance": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "type": {
+          "$ref": "#/$defs/BankAccountType"
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "BankAccountRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "bankName",
+        "accountNumber",
+        "clabe",
+        "balance",
+        "currency",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "clabe": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "balance": {
+          "type": "number"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "type": {
+          "$ref": "#/$defs/BankAccountType"
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    },
+    "PaymentTransactionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "type",
+        "entityName",
+        "reference",
+        "amount",
+        "method",
+        "account"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "type": {
+          "$ref": "#/$defs/TransactionType"
+        },
+        "entityName": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "amount": {
+          "type": "number"
+        },
+        "method": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "account": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

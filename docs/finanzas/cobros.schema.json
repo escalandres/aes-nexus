@@ -1,0 +1,331 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/finanzas/cobros.schema.json",
+  "title": "Finanzas - Cobros (Cuentas por Cobrar)",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Cuentas por Cobrar (/api/v1/finance/receivables).",
+  "$defs": {
+    "ReceivableStatus": {
+      "type": "string",
+      "enum": [
+        "Pendiente",
+        "Parcial",
+        "Pagada",
+        "Vencida"
+      ],
+      "default": "Pendiente"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD"
+      ],
+      "default": "MXN"
+    },
+    "PaymentTermsPreset": {
+      "type": "string",
+      "enum": [
+        "Contado",
+        "15 días",
+        "30 días"
+      ],
+      "default": "30 días"
+    },
+    "CreateReceivableDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clientCompany",
+        "subtotal"
+      ],
+      "properties": {
+        "orderId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "orderFolio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "clientCompany": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "clientRfc": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTermsPreset"
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "cfdiUse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "billingPercentage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "subtotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "items": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "CollectReceivableDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "bankAccountId"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bankAccountId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "method": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "reference": {
+          "type": "string",
+          "maxLength": 120
+        }
+      }
+    },
+    "InvoiceReceivableRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "orderFolio",
+        "clientCompany",
+        "clientName",
+        "issueDate",
+        "dueDate",
+        "subtotal",
+        "tax",
+        "total",
+        "paidAmount",
+        "balance",
+        "status",
+        "currency"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "orderId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "orderFolio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "clientCompany": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "clientRfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "issueDate": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "subtotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "tax": {
+          "type": "number",
+          "minimum": 0
+        },
+        "total": {
+          "type": "number",
+          "minimum": 0
+        },
+        "paidAmount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "balance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/ReceivableStatus"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentMethod": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "paymentTerms": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "cfdiUse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "billingPercentage": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "items": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

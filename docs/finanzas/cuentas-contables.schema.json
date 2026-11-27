@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/finanzas/cuentas-contables.schema.json",
+  "title": "Finanzas - Cuentas Contables",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y reglas de numeración para Cuentas Contables (/api/v1/finance/chart-accounts).",
+  "$defs": {
+    "AccountType": {
+      "type": "string",
+      "enum": [
+        "Activo circulante",
+        "Activo no circulante",
+        "Pasivo a corto plazo",
+        "Pasivo a largo plazo",
+        "Capital contable",
+        "Ingresos",
+        "Costos",
+        "Gastos de operación",
+        "Gastos financieros",
+        "Otros ingresos"
+      ]
+    },
+    "AccountNature": {
+      "type": "string",
+      "enum": [
+        "Deudora",
+        "Acreedora"
+      ]
+    },
+    "AccountStatus": {
+      "type": "string",
+      "enum": [
+        "Activa",
+        "Inactiva"
+      ],
+      "default": "Activa"
+    },
+    "CreateChartAccountDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "name",
+        "type",
+        "nature"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[12345678]\\d{3}(?:-\\d{1,4})?$",
+          "maxLength": 16
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 180
+        },
+        "type": {
+          "$ref": "#/$defs/AccountType"
+        },
+        "nature": {
+          "$ref": "#/$defs/AccountNature"
+        },
+        "balance": {
+          "type": "number",
+          "default": 0
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateChartAccountDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[12345678]\\d{3}(?:-\\d{1,4})?$",
+          "maxLength": 16
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 180
+        },
+        "type": {
+          "$ref": "#/$defs/AccountType"
+        },
+        "nature": {
+          "$ref": "#/$defs/AccountNature"
+        },
+        "balance": {
+          "type": "number"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "ChartAccountRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "name",
+        "type",
+        "nature",
+        "balance",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^[12345678]\\d{3}(?:-\\d{1,4})?$",
+          "maxLength": 16
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "type": {
+          "$ref": "#/$defs/AccountType"
+        },
+        "nature": {
+          "$ref": "#/$defs/AccountNature"
+        },
+        "balance": {
+          "type": "number"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "status": {
+          "$ref": "#/$defs/AccountStatus"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

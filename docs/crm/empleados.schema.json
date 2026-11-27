@@ -1,0 +1,564 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/empleados.schema.json",
+  "title": "CRM - Empleados",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos, acceso como usuario y parámetros EBP para la entidad Empleados (/api/v1/crm/employees).",
+  "$defs": {
+    "EmployeeStatus": {
+      "type": "string",
+      "enum": [
+        "Activo",
+        "En licencia",
+        "Inactivo"
+      ],
+      "default": "Activo"
+    },
+    "ContractType": {
+      "type": "string",
+      "enum": [
+        "Tiempo completo",
+        "Medio tiempo",
+        "Por proyecto",
+        "Honorarios"
+      ],
+      "default": "Tiempo completo"
+    },
+    "PaymentFrequency": {
+      "type": "string",
+      "enum": [
+        "Quincenal",
+        "Semanal",
+        "Mensual"
+      ],
+      "default": "Quincenal"
+    },
+    "AvatarColor": {
+      "type": "string",
+      "enum": [
+        "sage",
+        "blue",
+        "peach",
+        "lilac",
+        "amber"
+      ]
+    },
+    "BankPackValuesMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    },
+    "CreateEmployeeDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "employeeCode",
+        "fullName",
+        "email",
+        "roleTitle"
+      ],
+      "properties": {
+        "employeeCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "roleTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "hasSystemAccess": {
+          "type": "boolean",
+          "default": false
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "departmentId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "locationId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "contractType": {
+          "$ref": "#/$defs/ContractType"
+        },
+        "hireDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/EmployeeStatus"
+        },
+        "rfc": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "curp": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "nss": {
+          "type": "string",
+          "maxLength": 30
+        },
+        "baseSalaryMonthly": {
+          "type": "number",
+          "minimum": 0,
+          "default": 25000
+        },
+        "paymentFrequency": {
+          "$ref": "#/$defs/PaymentFrequency"
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "clabe": {
+          "type": "string",
+          "maxLength": 34
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 34
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "emergencyContact": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      },
+      "if": {
+        "properties": {
+          "hasSystemAccess": {
+            "const": true
+          }
+        },
+        "required": [
+          "hasSystemAccess"
+        ]
+      },
+      "then": {
+        "required": [
+          "roles"
+        ],
+        "properties": {
+          "roles": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "UpdateEmployeeDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "employeeCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "roleTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "hasSystemAccess": {
+          "type": "boolean"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "departmentId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "locationId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "contractType": {
+          "$ref": "#/$defs/ContractType"
+        },
+        "hireDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/EmployeeStatus"
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "curp": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 30
+        },
+        "nss": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 30
+        },
+        "baseSalaryMonthly": {
+          "type": "number",
+          "minimum": 0
+        },
+        "paymentFrequency": {
+          "$ref": "#/$defs/PaymentFrequency"
+        },
+        "bankName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        },
+        "clabe": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 34
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 34
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "emergencyContact": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 180
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "EmployeeRolesUpdateDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hasSystemAccess",
+        "roles"
+      ],
+      "properties": {
+        "hasSystemAccess": {
+          "type": "boolean"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "if": {
+        "properties": {
+          "hasSystemAccess": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "roles": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "EmployeeRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "employeeCode",
+        "fullName",
+        "initials",
+        "avatarColor",
+        "email",
+        "phone",
+        "roleTitle",
+        "roles",
+        "departmentId",
+        "departmentName",
+        "locationId",
+        "locationName",
+        "contractType",
+        "hireDate",
+        "status",
+        "baseSalaryMonthly",
+        "paymentFrequency"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "employeeCode": {
+          "type": "string"
+        },
+        "fullName": {
+          "type": "string"
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4
+        },
+        "avatarColor": {
+          "$ref": "#/$defs/AvatarColor"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "roleTitle": {
+          "type": "string"
+        },
+        "hasSystemAccess": {
+          "type": "boolean"
+        },
+        "roles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "departmentId": {
+          "type": "string"
+        },
+        "departmentName": {
+          "type": "string"
+        },
+        "locationId": {
+          "type": "string"
+        },
+        "locationName": {
+          "type": "string"
+        },
+        "contractType": {
+          "$ref": "#/$defs/ContractType"
+        },
+        "hireDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/EmployeeStatus"
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "curp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nss": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseSalaryMonthly": {
+          "type": "number",
+          "minimum": 0
+        },
+        "paymentFrequency": {
+          "$ref": "#/$defs/PaymentFrequency"
+        },
+        "bankName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clabe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accountNumber": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bankPackValues": {
+          "$ref": "#/$defs/BankPackValuesMap"
+        },
+        "emergencyContact": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

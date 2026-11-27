@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/administracion/flujos-devoluciones.schema.json",
+  "title": "Administración - Flujos de Devoluciones",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para la configuración de Flujos de Devoluciones (/api/v1/admin/return-workflows).",
+  "$defs": {
+    "CustomerReturnStatus": {
+      "type": "string",
+      "enum": [
+        "Solicitada",
+        "En tránsito a almacén",
+        "Recibida en almacén",
+        "Nota de crédito emitida",
+        "Rechazada"
+      ]
+    },
+    "SupplierReturnStatus": {
+      "type": "string",
+      "enum": [
+        "Borrador",
+        "Autorizada por proveedor",
+        "Enviada a proveedor",
+        "Acreditada / compensada",
+        "Cancelada"
+      ]
+    },
+    "WorkflowApproverRole": {
+      "type": "string",
+      "enum": ["Cualquier editor", "Operaciones", "Finanzas", "Administrador"],
+      "default": "Cualquier editor"
+    },
+    "ReturnWorkflowPresetKey": {
+      "type": "string",
+      "enum": ["standard", "strict_final", "agile"]
+    },
+    "ApplyPresetDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preset"],
+      "properties": {
+        "preset": { "$ref": "#/$defs/ReturnWorkflowPresetKey" }
+      }
+    },
+    "CustomerWorkflowStepRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "enabled",
+        "isFinalState",
+        "requiresApproval",
+        "approverRole",
+        "approvalThresholdAmount",
+        "requireNotesOnEntry",
+        "allowedNextStatuses"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/CustomerReturnStatus" },
+        "enabled": { "type": "boolean" },
+        "isFinalState": { "type": "boolean" },
+        "requiresApproval": { "type": "boolean" },
+        "approverRole": { "$ref": "#/$defs/WorkflowApproverRole" },
+        "approvalThresholdAmount": { "type": "number", "minimum": 0 },
+        "requireNotesOnEntry": { "type": "boolean" },
+        "requireDocumentRefOnEntry": { "type": "boolean", "default": false },
+        "allowedNextStatuses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CustomerReturnStatus" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "SupplierWorkflowStepRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "enabled",
+        "isFinalState",
+        "requiresApproval",
+        "approverRole",
+        "approvalThresholdAmount",
+        "requireNotesOnEntry",
+        "allowedNextStatuses"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/SupplierReturnStatus" },
+        "enabled": { "type": "boolean" },
+        "isFinalState": { "type": "boolean" },
+        "requiresApproval": { "type": "boolean" },
+        "approverRole": { "$ref": "#/$defs/WorkflowApproverRole" },
+        "approvalThresholdAmount": { "type": "number", "minimum": 0 },
+        "requireNotesOnEntry": { "type": "boolean" },
+        "requireDocumentRefOnEntry": { "type": "boolean", "default": false },
+        "allowedNextStatuses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SupplierReturnStatus" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "CustomerEntityWorkflowConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initialStatus", "preventDeleteAfterSettlement", "steps"],
+      "properties": {
+        "initialStatus": { "$ref": "#/$defs/CustomerReturnStatus" },
+        "preventDeleteAfterSettlement": { "type": "boolean", "default": true },
+        "updatedAtIso": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 150 },
+        "steps": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/CustomerWorkflowStepRule" }
+        }
+      }
+    },
+    "SupplierEntityWorkflowConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initialStatus", "preventDeleteAfterSettlement", "steps"],
+      "properties": {
+        "initialStatus": { "$ref": "#/$defs/SupplierReturnStatus" },
+        "preventDeleteAfterSettlement": { "type": "boolean", "default": true },
+        "updatedAtIso": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "maxLength": 150 },
+        "steps": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/SupplierWorkflowStepRule" }
+        }
+      }
+    },
+    "UpdateReturnWorkflowsDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["customer", "supplier"],
+      "properties": {
+        "customer": { "$ref": "#/$defs/CustomerEntityWorkflowConfig" },
+        "supplier": { "$ref": "#/$defs/SupplierEntityWorkflowConfig" },
+        "summaryDetail": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "ReturnWorkflowsSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["customer", "supplier"],
+      "properties": {
+        "customer": { "$ref": "#/$defs/CustomerEntityWorkflowConfig" },
+        "supplier": { "$ref": "#/$defs/SupplierEntityWorkflowConfig" }
+      }
+    }
+  }
+}

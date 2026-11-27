@@ -1,0 +1,439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/ventas/catalogo.schema.json",
+  "title": "Ventas - Catálogo de Productos y Servicios",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Catálogo (/api/v1/sales/catalog).",
+  "$defs": {
+    "ItemType": {
+      "type": "string",
+      "enum": [
+        "product",
+        "service"
+      ]
+    },
+    "ItemCategory": {
+      "type": "string",
+      "enum": [
+        "Hardware",
+        "Software y Licencias",
+        "Consultoría",
+        "Diseño y Desarrollo",
+        "Mantenimiento",
+        "Capacitación"
+      ]
+    },
+    "TaxRate": {
+      "type": "string",
+      "enum": [
+        "16%",
+        "8%",
+        "0%",
+        "Exento"
+      ],
+      "default": "16%"
+    },
+    "UnitOfMeasure": {
+      "type": "string",
+      "enum": [
+        "Pza",
+        "Hrs",
+        "Servicio",
+        "Mes",
+        "Licencia",
+        "Paquete"
+      ],
+      "default": "Pza"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD"
+      ],
+      "default": "MXN"
+    },
+    "CatalogStatus": {
+      "type": "string",
+      "enum": [
+        "Activo",
+        "Inactivo"
+      ],
+      "default": "Activo"
+    },
+    "BillingModel": {
+      "type": "string",
+      "enum": [
+        "Por hora",
+        "Precio fijo",
+        "Recurrente"
+      ]
+    },
+    "CreateCatalogItemDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sku",
+        "name",
+        "type",
+        "category",
+        "unitPrice",
+        "currency",
+        "taxRate",
+        "unitOfMeasure"
+      ],
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "type": {
+          "$ref": "#/$defs/ItemType"
+        },
+        "category": {
+          "$ref": "#/$defs/ItemCategory"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": ""
+        },
+        "unitPrice": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "taxRate": {
+          "$ref": "#/$defs/TaxRate"
+        },
+        "unitOfMeasure": {
+          "$ref": "#/$defs/UnitOfMeasure"
+        },
+        "status": {
+          "$ref": "#/$defs/CatalogStatus"
+        },
+        "stock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minStock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "billingModel": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BillingModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leadTimeDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "warehouseId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "locationBin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateCatalogItemDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "type": {
+          "$ref": "#/$defs/ItemType"
+        },
+        "category": {
+          "$ref": "#/$defs/ItemCategory"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "unitPrice": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "taxRate": {
+          "$ref": "#/$defs/TaxRate"
+        },
+        "unitOfMeasure": {
+          "$ref": "#/$defs/UnitOfMeasure"
+        },
+        "status": {
+          "$ref": "#/$defs/CatalogStatus"
+        },
+        "stock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minStock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "billingModel": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BillingModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leadTimeDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "warehouseId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "locationBin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "CatalogItemRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sku",
+        "name",
+        "type",
+        "category",
+        "description",
+        "unitPrice",
+        "currency",
+        "taxRate",
+        "unitOfMeasure",
+        "status",
+        "lastUpdated"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sku": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/ItemType"
+        },
+        "category": {
+          "$ref": "#/$defs/ItemCategory"
+        },
+        "description": {
+          "type": "string"
+        },
+        "unitPrice": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "taxRate": {
+          "$ref": "#/$defs/TaxRate"
+        },
+        "unitOfMeasure": {
+          "$ref": "#/$defs/UnitOfMeasure"
+        },
+        "status": {
+          "$ref": "#/$defs/CatalogStatus"
+        },
+        "stock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "minStock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cost": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "billingModel": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/BillingModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leadTimeDays": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "lastUpdated": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

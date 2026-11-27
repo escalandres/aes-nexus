@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/configuracion/general-organizacion-regional.schema.json",
+  "title": "Configuración - General, Organización, Regional, Seguridad y Notificaciones",
+  "description": "Esquema JSON de validación para parámetros base del espacio de trabajo y preferencias de usuario.",
+  "$defs": {
+    "GeneralSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceName",
+        "slug",
+        "description",
+        "mainCountry",
+        "reportingCurrency",
+        "primaryEmail",
+        "phone",
+        "website",
+        "avatarColor"
+      ],
+      "properties": {
+        "workspaceName": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "slug": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 400 },
+        "mainCountry": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "reportingCurrency": { "type": "string", "minLength": 3, "maxLength": 8 },
+        "primaryEmail": { "type": "string", "format": "email", "maxLength": 180 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "website": { "type": "string", "maxLength": 240 },
+        "avatarColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+      }
+    },
+    "OrganizationBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "city", "address", "isMain"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "type": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "city": { "type": "string", "maxLength": 100 },
+        "address": { "type": "string", "maxLength": 250 },
+        "isMain": { "type": "boolean" }
+      }
+    },
+    "OrganizationSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "legalName",
+        "tradeName",
+        "rfc",
+        "taxRegime",
+        "fiscalStreet",
+        "fiscalColony",
+        "fiscalZip",
+        "fiscalCity",
+        "fiscalState",
+        "fiscalCountry",
+        "legalRep",
+        "certificateStatus",
+        "branches"
+      ],
+      "properties": {
+        "legalName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "tradeName": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "rfc": { "type": "string", "minLength": 12, "maxLength": 13 },
+        "taxRegime": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "fiscalStreet": { "type": "string", "maxLength": 180 },
+        "fiscalColony": { "type": "string", "maxLength": 120 },
+        "fiscalZip": { "type": "string", "maxLength": 12 },
+        "fiscalCity": { "type": "string", "maxLength": 100 },
+        "fiscalState": { "type": "string", "maxLength": 100 },
+        "fiscalCountry": { "type": "string", "maxLength": 80 },
+        "legalRep": { "type": "string", "maxLength": 160 },
+        "certificateStatus": { "type": "string", "enum": ["valid", "expiring", "none"] },
+        "logoDataUrl": { "type": "string" },
+        "logoFileName": { "type": "string", "maxLength": 180 },
+        "branches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OrganizationBranch" }
+        }
+      }
+    },
+    "RegionalSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "timezone", "dateFormat", "numberFormat", "firstDayOfWeek"],
+      "properties": {
+        "language": { "type": "string", "minLength": 2, "maxLength": 10 },
+        "timezone": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "dateFormat": { "type": "string", "enum": ["DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD"] },
+        "numberFormat": { "type": "string", "enum": ["comma_dot", "dot_comma"] },
+        "firstDayOfWeek": { "type": "string", "enum": ["monday", "sunday"] }
+      }
+    },
+    "SecuritySessionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "device", "browser", "ip", "location", "lastActive", "isCurrent"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "device": { "type": "string" },
+        "browser": { "type": "string" },
+        "ip": { "type": "string" },
+        "location": { "type": "string" },
+        "lastActive": { "type": "string" },
+        "isCurrent": { "type": "boolean" }
+      }
+    },
+    "SecuritySettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["twoFactorEnabled", "sessionTimeoutMinutes", "enforcePasswordExpiry", "recentSessions"],
+      "properties": {
+        "twoFactorEnabled": { "type": "boolean" },
+        "sessionTimeoutMinutes": { "type": "integer", "minimum": 5, "maximum": 1440 },
+        "enforcePasswordExpiry": { "type": "boolean" },
+        "recentSessions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SecuritySessionRecord" }
+        }
+      }
+    },
+    "AppearanceSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accentTheme", "darkMode"],
+      "properties": {
+        "accentTheme": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "darkMode": { "type": "boolean" }
+      }
+    },
+    "NotificationPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pushStockAlerts",
+        "emailStockAlerts",
+        "salesOrdersAlerts",
+        "receivablesAlerts",
+        "weeklySummaryEmail",
+        "audioChime"
+      ],
+      "properties": {
+        "pushStockAlerts": { "type": "boolean", "default": true },
+        "emailStockAlerts": { "type": "boolean", "default": true },
+        "salesOrdersAlerts": { "type": "boolean", "default": true },
+        "receivablesAlerts": { "type": "boolean", "default": true },
+        "weeklySummaryEmail": { "type": "boolean", "default": true },
+        "audioChime": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

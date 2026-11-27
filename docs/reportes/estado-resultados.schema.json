@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/reportes/estado-resultados.schema.json",
+  "title": "Reportes - Estado de Resultados (P&L)",
+  "description": "Esquema JSON de consulta y respuesta para el Estado de Resultados, Punto de Equilibrio y Centros de Costo (/api/v1/reports/income-statement).",
+  "$defs": {
+    "PnlSourceMode": {
+      "type": "string",
+      "enum": ["consolidated", "accounting"],
+      "default": "consolidated"
+    },
+    "DateRangePreset": {
+      "type": "string",
+      "enum": ["all", "this_month", "last_30", "this_quarter", "ytd", "custom"],
+      "default": "all"
+    },
+    "ReportFilterState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "searchQuery",
+        "datePreset",
+        "dateFrom",
+        "dateTo",
+        "locationId",
+        "departmentId",
+        "statusFilter",
+        "currencyFilter",
+        "compareYoY"
+      ],
+      "properties": {
+        "searchQuery": { "type": "string", "maxLength": 160 },
+        "datePreset": { "$ref": "#/$defs/DateRangePreset" },
+        "dateFrom": { "type": "string", "maxLength": 20 },
+        "dateTo": { "type": "string", "maxLength": 20 },
+        "locationId": { "type": "string", "maxLength": 64 },
+        "departmentId": { "type": "string", "maxLength": 64 },
+        "statusFilter": { "type": "string", "enum": ["Todos", "Pendiente", "Liquidado", "Alerta"] },
+        "currencyFilter": { "type": "string", "enum": ["Todas", "MXN", "USD"] },
+        "compareYoY": { "type": "boolean" }
+      }
+    },
+    "IncomeStatementQueryParams": {
+      "allOf": [
+        { "$ref": "#/$defs/ReportFilterState" },
+        {
+          "type": "object",
+          "properties": {
+            "sourceMode": { "$ref": "#/$defs/PnlSourceMode" },
+            "taxRate": { "type": "number", "minimum": 0, "maximum": 0.6, "default": 0.3 }
+          }
+        }
+      ]
+    },
+    "PnlLineItemRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "sign", "sourceLabel", "amount", "pctOfRevenue", "priorAmount", "yoyPct", "rowKind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "sign": { "type": "string", "enum": ["+", "−", "="] },
+        "sourceLabel": { "type": "string" },
+        "amount": { "type": "number" },
+        "pctOfRevenue": { "type": "number" },
+        "priorAmount": { "type": "number" },
+        "yoyPct": { "type": ["number", "null"] },
+        "rowKind": { "type": "string", "enum": ["main", "subtotal", "final", "detail"] },
+        "group": { "type": "string", "enum": ["opex", "revenue", "cogs", "financial", "other"] },
+        "negativeHighlight": { "type": "boolean" }
+      }
+    },
+    "MonthlyMarginTrendPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monthKey",
+        "monthLabel",
+        "fullMonthLabel",
+        "revenue",
+        "cogs",
+        "opex",
+        "grossProfit",
+        "operatingIncome",
+        "netIncome",
+        "grossMarginPct",
+        "operatingMarginPct",
+        "netMarginPct",
+        "isCurrentMonth",
+        "hasRecordedTransactions"
+      ],
+      "properties": {
+        "monthKey": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" },
+        "monthLabel": { "type": "string" },
+        "fullMonthLabel": { "type": "string" },
+        "revenue": { "type": "number" },
+        "cogs": { "type": "number" },
+        "opex": { "type": "number" },
+        "grossProfit": { "type": "number" },
+        "operatingIncome": { "type": "number" },
+        "netIncome": { "type": "number" },
+        "grossMarginPct": { "type": "number" },
+        "operatingMarginPct": { "type": "number" },
+        "netMarginPct": { "type": "number" },
+        "isCurrentMonth": { "type": "boolean" },
+        "hasRecordedTransactions": { "type": "boolean" }
+      }
+    },
+    "CostCenterBranchRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "name",
+        "revenue",
+        "fixedCosts",
+        "variableCosts",
+        "payrollCosts",
+        "operatingResult",
+        "breakEvenSales",
+        "coveragePct",
+        "expensesCount"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "name": { "type": "string" },
+        "revenue": { "type": "number" },
+        "fixedCosts": { "type": "number" },
+        "variableCosts": { "type": "number" },
+        "payrollCosts": { "type": "number" },
+        "operatingResult": { "type": "number" },
+        "breakEvenSales": { "type": "number", "minimum": 0 },
+        "coveragePct": { "type": "number" },
+        "expensesCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "CostCenterDepartmentRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "costCenter",
+        "name",
+        "leader",
+        "fixedExpenses",
+        "variableExpenses",
+        "payrollCosts",
+        "totalCost",
+        "sharePct",
+        "breakEvenSupportSales",
+        "expensesCount"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "costCenter": { "type": "string" },
+        "name": { "type": "string" },
+        "leader": { "type": "string" },
+        "fixedExpenses": { "type": "number" },
+        "variableExpenses": { "type": "number" },
+        "payrollCosts": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "sharePct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "breakEvenSupportSales": { "type": "number", "minimum": 0 },
+        "expensesCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ComputedIncomeStatement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceMode",
+        "taxRate",
+        "totalRevenue",
+        "cogs",
+        "grossProfit",
+        "grossMarginPct",
+        "adminExpenses",
+        "operatingExpenses",
+        "payrollAndChartOpEx",
+        "opAndAdminExpenses",
+        "operatingIncome",
+        "operatingMarginPct",
+        "financialExpenses",
+        "otherIncome",
+        "ebt",
+        "taxes",
+        "netIncome",
+        "netMarginPct",
+        "variableCosts",
+        "fixedCosts",
+        "contributionMargin",
+        "contributionMarginRatioPct",
+        "breakEvenSales",
+        "safetyMarginAmount",
+        "safetyMarginPct",
+        "coverageRatioPct",
+        "lines",
+        "waterfallData",
+        "breakEvenCurveData",
+        "monthlyMarginTrend",
+        "accountBreakdown",
+        "companyExpenseBreakdown"
+      ],
+      "properties": {
+        "sourceMode": { "$ref": "#/$defs/PnlSourceMode" },
+        "taxRate": { "type": "number", "minimum": 0, "maximum": 0.6 },
+        "totalRevenue": { "type": "number" },
+        "cogs": { "type": "number" },
+        "grossProfit": { "type": "number" },
+        "grossMarginPct": { "type": "number" },
+        "adminExpenses": { "type": "number" },
+        "operatingExpenses": { "type": "number" },
+        "payrollAndChartOpEx": { "type": "number" },
+        "opAndAdminExpenses": { "type": "number" },
+        "operatingIncome": { "type": "number" },
+        "operatingMarginPct": { "type": "number" },
+        "financialExpenses": { "type": "number" },
+        "otherIncome": { "type": "number" },
+        "ebt": { "type": "number" },
+        "taxes": { "type": "number" },
+        "netIncome": { "type": "number" },
+        "netMarginPct": { "type": "number" },
+        "variableCosts": { "type": "number" },
+        "fixedCosts": { "type": "number" },
+        "contributionMargin": { "type": "number" },
+        "contributionMarginRatioPct": { "type": "number" },
+        "breakEvenSales": { "type": "number" },
+        "safetyMarginAmount": { "type": "number" },
+        "safetyMarginPct": { "type": "number" },
+        "coverageRatioPct": { "type": "number" },
+        "lines": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PnlLineItemRow" }
+        },
+        "waterfallData": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "fill"],
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "number" },
+              "fill": { "type": "string" }
+            }
+          }
+        },
+        "breakEvenCurveData": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["volumeLabel", "sales", "totalCosts", "fixedCosts"],
+            "properties": {
+              "volumeLabel": { "type": "string" },
+              "sales": { "type": "number" },
+              "totalCosts": { "type": "number" },
+              "fixedCosts": { "type": "number" }
+            }
+          }
+        },
+        "monthlyMarginTrend": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MonthlyMarginTrendPoint" }
+        },
+        "accountBreakdown": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revenueAccounts", "cogsAccounts", "opExAccounts", "finExAccounts", "otherIncomeAccounts"],
+          "properties": {
+            "revenueAccounts": { "type": "array", "items": { "type": "object" } },
+            "cogsAccounts": { "type": "array", "items": { "type": "object" } },
+            "opExAccounts": { "type": "array", "items": { "type": "object" } },
+            "finExAccounts": { "type": "array", "items": { "type": "object" } },
+            "otherIncomeAccounts": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "companyExpenseBreakdown": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "adminCount",
+            "adminTotal",
+            "operatingCount",
+            "operatingTotal",
+            "cogsCount",
+            "cogsTotal",
+            "financialCount",
+            "financialTotal",
+            "taxesCount",
+            "taxesTotal",
+            "fixedTotal",
+            "variableTotal"
+          ],
+          "properties": {
+            "adminCount": { "type": "integer", "minimum": 0 },
+            "adminTotal": { "type": "number" },
+            "operatingCount": { "type": "integer", "minimum": 0 },
+            "operatingTotal": { "type": "number" },
+            "cogsCount": { "type": "integer", "minimum": 0 },
+            "cogsTotal": { "type": "number" },
+            "financialCount": { "type": "integer", "minimum": 0 },
+            "financialTotal": { "type": "number" },
+            "taxesCount": { "type": "integer", "minimum": 0 },
+            "taxesTotal": { "type": "number" },
+            "fixedTotal": { "type": "number" },
+            "variableTotal": { "type": "number" }
+          }
+        },
+        "branchBreakdown": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CostCenterBranchRow" }
+        },
+        "departmentBreakdown": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CostCenterDepartmentRow" }
+        }
+      }
+    }
+  }
+}

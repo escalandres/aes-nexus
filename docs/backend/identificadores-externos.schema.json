@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/backend/identificadores-externos.schema.json",
+  "title": "Backend - Identificadores Externos e Integraciones",
+  "description": "Esquema JSON transversal para externalId, externalSource, externalSyncedAt y la tabla polimórfica int_external_id_mappings.",
+  "$defs": {
+    "IntegrableEntityType": {
+      "type": "string",
+      "enum": [
+        "client",
+        "supplier",
+        "employee",
+        "payroll_run",
+        "opportunity",
+        "activity",
+        "subsidiary",
+        "department",
+        "location",
+        "product",
+        "quote",
+        "sales_order",
+        "sales_invoice",
+        "customer_return",
+        "purchase_requisition",
+        "purchase_order",
+        "reception",
+        "supplier_bill",
+        "supplier_return",
+        "warehouse",
+        "inventory_item",
+        "stock_movement",
+        "inventory_transfer",
+        "shipment",
+        "bank_account",
+        "receivable",
+        "payable",
+        "payment_transaction",
+        "ebp_batch",
+        "chart_account",
+        "expense",
+        "expense_budget",
+        "recurring_expense",
+        "workspace_user",
+        "role_definition",
+        "category_stock_threshold",
+        "support_ticket"
+      ]
+    },
+    "SyncDirection": {
+      "type": "string",
+      "enum": ["inbound", "outbound", "bidirectional"],
+      "default": "bidirectional"
+    },
+    "ExternalReferenceMixin": {
+      "type": "object",
+      "properties": {
+        "externalId": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Identificador único del registro en el sistema externo."
+        },
+        "externalSource": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave normalizada del sistema externo origen (ej. shopify, contpaqi, wms)."
+        },
+        "externalSyncedAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Marca de tiempo UTC de última sincronización confirmada."
+        }
+      },
+      "dependentRequired": {
+        "externalId": ["externalSource"]
+      }
+    },
+    "CreateExternalMappingDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "entityId", "externalSystem", "externalId"],
+      "properties": {
+        "entityType": { "$ref": "#/$defs/IntegrableEntityType" },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "externalSystem": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z0-9][a-z0-9_.-]*$" },
+        "externalId": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "externalUrl": { "type": ["string", "null"], "maxLength": 500 },
+        "syncDirection": { "$ref": "#/$defs/SyncDirection" },
+        "payloadHash": { "type": ["string", "null"], "maxLength": 64 },
+        "metadata": { "type": ["object", "null"] }
+      }
+    },
+    "ExternalIdMappingRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organizationId",
+        "entityType",
+        "entityId",
+        "externalSystem",
+        "externalId",
+        "syncDirection",
+        "lastSyncedAt"
+      ],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "organizationId": { "type": "string", "format": "uuid" },
+        "entityType": { "$ref": "#/$defs/IntegrableEntityType" },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "externalSystem": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "externalId": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "externalUrl": { "type": ["string", "null"], "maxLength": 500 },
+        "syncDirection": { "$ref": "#/$defs/SyncDirection" },
+        "lastSyncedAt": { "type": "string", "format": "date-time" },
+        "payloadHash": { "type": ["string", "null"], "maxLength": 64 },
+        "metadata": { "type": ["object", "null"] }
+      }
+    },
+    "ExternalLookupResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "entityId", "externalSystem", "externalId", "lastSyncedAt"],
+      "properties": {
+        "entityType": { "$ref": "#/$defs/IntegrableEntityType" },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "externalSystem": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "externalId": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "lastSyncedAt": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}

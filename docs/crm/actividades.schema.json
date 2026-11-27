@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/actividades.schema.json",
+  "title": "CRM - Actividades",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y derivación visual para la entidad Actividades (/api/v1/crm/activities).",
+  "$defs": {
+    "ActivityStatus": {
+      "type": "string",
+      "enum": [
+        "Pendiente",
+        "Completada",
+        "Reprogramada"
+      ],
+      "default": "Pendiente"
+    },
+    "ActivityIcon": {
+      "type": "string",
+      "enum": [
+        "send",
+        "phone",
+        "check"
+      ],
+      "default": "check",
+      "description": "send = Envío/Correo; phone = Llamada; check = Revisión/Reunión/Tarea."
+    },
+    "ActivityTone": {
+      "type": "string",
+      "enum": [
+        "blue",
+        "amber",
+        "green"
+      ],
+      "description": "blue = send; amber = phone; green = check."
+    },
+    "CreateActivityDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "date",
+        "time"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "company": {
+          "type": "string",
+          "maxLength": 180,
+          "default": "Sin empresa"
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+        },
+        "icon": {
+          "$ref": "#/$defs/ActivityIcon"
+        },
+        "status": {
+          "$ref": "#/$defs/ActivityStatus"
+        },
+        "owner": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "opportunityId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateActivityDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "company": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+        },
+        "icon": {
+          "$ref": "#/$defs/ActivityIcon"
+        },
+        "status": {
+          "$ref": "#/$defs/ActivityStatus"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "opportunityId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "ActivityRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "company",
+        "date",
+        "time",
+        "icon",
+        "tone",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+        },
+        "icon": {
+          "$ref": "#/$defs/ActivityIcon"
+        },
+        "tone": {
+          "$ref": "#/$defs/ActivityTone"
+        },
+        "status": {
+          "$ref": "#/$defs/ActivityStatus"
+        },
+        "owner": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clientId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "opportunityId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "ownerEmployeeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

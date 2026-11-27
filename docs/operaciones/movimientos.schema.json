@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/operaciones/movimientos.schema.json",
+  "title": "Operaciones - Movimientos y Kardex",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Movimientos / Kardex (/api/v1/operations/movements).",
+  "$defs": {
+    "MovementType": {
+      "type": "string",
+      "enum": [
+        "Entrada",
+        "Salida",
+        "Transferencia",
+        "Ajuste"
+      ]
+    },
+    "CreateInternalMovementDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "sku",
+        "productName",
+        "quantity",
+        "reason"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/MovementType"
+        },
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "productName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "quantity": {
+          "type": "number",
+          "not": {
+            "const": 0
+          }
+        },
+        "sourceWarehouse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "targetWarehouse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "referenceDoc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "StockMovementRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "type",
+        "sku",
+        "productName",
+        "quantity",
+        "reason",
+        "user"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "date": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "type": {
+          "$ref": "#/$defs/MovementType"
+        },
+        "sku": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "productName": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "quantity": {
+          "type": "number",
+          "not": {
+            "const": 0
+          }
+        },
+        "sourceWarehouse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "targetWarehouse": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 150
+        },
+        "referenceDoc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 80
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

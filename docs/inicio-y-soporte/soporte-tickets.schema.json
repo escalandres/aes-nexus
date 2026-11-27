@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/inicio-y-soporte/soporte-tickets.schema.json",
+  "title": "Centro de Ayuda - Soporte y Tickets",
+  "description": "Esquema JSON de tickets de soporte y notas de seguimiento del Centro de Ayuda.",
+  "$defs": {
+    "TicketPriority": {
+      "type": "string",
+      "enum": [
+        "Baja",
+        "Media",
+        "Alta"
+      ],
+      "default": "Media"
+    },
+    "TicketStatus": {
+      "type": "string",
+      "enum": [
+        "Abierto",
+        "En revisión",
+        "Resuelto"
+      ],
+      "default": "Abierto"
+    },
+    "SupportTicketNote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "author",
+        "date",
+        "message"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "CreateSupportTicketDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "moduleName",
+        "priority",
+        "description"
+      ],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "moduleName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "priority": {
+          "$ref": "#/$defs/TicketPriority"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 4000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "AddTicketNoteDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "UpdateTicketStatusDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/TicketStatus"
+        }
+      }
+    },
+    "SupportTicketRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "code",
+        "subject",
+        "moduleName",
+        "priority",
+        "status",
+        "requesterName",
+        "createdAt",
+        "updatedAt",
+        "description",
+        "notes"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^TKT-\\d{4}-\\d{3,}$"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "moduleName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "priority": {
+          "$ref": "#/$defs/TicketPriority"
+        },
+        "status": {
+          "$ref": "#/$defs/TicketStatus"
+        },
+        "requesterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "updatedAt": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SupportTicketNote"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

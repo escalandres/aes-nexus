@@ -1,0 +1,473 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/clientes.schema.json",
+  "title": "CRM - Clientes",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para la entidad Clientes (/api/v1/crm/customers).",
+  "$defs": {
+    "ClientStatus": {
+      "type": "string",
+      "enum": [
+        "Activo",
+        "Prospecto",
+        "Inactivo"
+      ],
+      "default": "Activo"
+    },
+    "EntityType": {
+      "type": "string",
+      "enum": [
+        "company",
+        "individual"
+      ],
+      "default": "company"
+    },
+    "CurrencyCode": {
+      "type": "string",
+      "enum": [
+        "MXN",
+        "USD",
+        "EUR",
+        "VES",
+        "COP",
+        "BRL"
+      ],
+      "default": "MXN"
+    },
+    "PaymentTerms": {
+      "type": "string",
+      "enum": [
+        "Contado",
+        "Crédito 15 días",
+        "Crédito 30 días",
+        "Crédito 60 días"
+      ],
+      "default": "Contado"
+    },
+    "AvatarColor": {
+      "type": "string",
+      "enum": [
+        "lilac",
+        "peach",
+        "sage",
+        "blue",
+        "amber"
+      ]
+    },
+    "ClientAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "street": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "colony": {
+          "type": "string",
+          "maxLength": 140
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "zipCode": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX"
+        },
+        "isShipping": {
+          "type": "boolean",
+          "default": true
+        },
+        "isBilling": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "street"
+          ]
+        },
+        {
+          "required": [
+            "city"
+          ]
+        },
+        {
+          "required": [
+            "zipCode"
+          ]
+        }
+      ]
+    },
+    "CreateClientDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "company",
+        "name",
+        "email"
+      ],
+      "properties": {
+        "clientCode": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": "string",
+          "maxLength": 24
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8,
+          "default": "MX"
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "state": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateClientDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "clientCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "company": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        "phone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 24
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 8
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "ClientRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "company",
+        "email",
+        "phone",
+        "status",
+        "lastActivity",
+        "initials",
+        "color"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "clientCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "entityType": {
+          "$ref": "#/$defs/EntityType"
+        },
+        "company": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "rfc": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/ClientStatus"
+        },
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/CurrencyCode"
+        },
+        "paymentTerms": {
+          "$ref": "#/$defs/PaymentTerms"
+        },
+        "city": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "initials": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4
+        },
+        "color": {
+          "$ref": "#/$defs/AvatarColor"
+        },
+        "lastActivity": {
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/ClientAddress"
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientAddress"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  },
+  "x-country-tax-id-rules": {
+    "MX": {
+      "label": "RFC",
+      "regex": "^[A-ZÑ&]{3,4}\\d{6}[A-Z0-9]{3}$"
+    },
+    "ES": {
+      "label": "NIF / CIF",
+      "regex": "^([A-HJNPQRSUVW]\\d{7}[0-9A-J]|\\d{8}[A-Z]|[XYZ]\\d{7}[A-Z])$"
+    },
+    "VE": {
+      "label": "RIF",
+      "regex": "^[JGVEPC]-?\\d{8}-?\\d$"
+    },
+    "GLOBAL": {
+      "label": "Tax ID",
+      "regex": "^[A-Z0-9-]{5,24}$"
+    }
+  }
+}

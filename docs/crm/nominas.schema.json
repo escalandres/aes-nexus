@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/crm/nominas.schema.json",
+  "title": "CRM - Nóminas",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y cálculo de recibos para corridas de nómina (/api/v1/crm/payroll-runs).",
+  "$defs": {
+    "PayrollFrequency": {
+      "type": "string",
+      "enum": [
+        "Quincenal",
+        "Semanal",
+        "Mensual",
+        "Extraordinaria"
+      ],
+      "default": "Quincenal"
+    },
+    "PayrollStatus": {
+      "type": "string",
+      "enum": [
+        "Borrador",
+        "Aprobada",
+        "Pagada"
+      ],
+      "default": "Borrador"
+    },
+    "PayrollReceiptInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "employeeId",
+        "daysWorked"
+      ],
+      "properties": {
+        "employeeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "daysWorked": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "bonuses": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "otherDeductions": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0
+        },
+        "isrDeduction": {
+          "type": "number",
+          "minimum": 0
+        },
+        "imssDeduction": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "PayrollReceiptLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "employeeId",
+        "employeeCode",
+        "employeeName",
+        "roleTitle",
+        "departmentName",
+        "daysWorked",
+        "baseGross",
+        "bonuses",
+        "isrDeduction",
+        "imssDeduction",
+        "otherDeductions",
+        "netPay"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "employeeId": {
+          "type": "string"
+        },
+        "employeeCode": {
+          "type": "string"
+        },
+        "employeeName": {
+          "type": "string"
+        },
+        "roleTitle": {
+          "type": "string"
+        },
+        "departmentName": {
+          "type": "string"
+        },
+        "bankName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clabe": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daysWorked": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        },
+        "baseGross": {
+          "type": "number",
+          "minimum": 0
+        },
+        "bonuses": {
+          "type": "number",
+          "minimum": 0
+        },
+        "isrDeduction": {
+          "type": "number",
+          "minimum": 0
+        },
+        "imssDeduction": {
+          "type": "number",
+          "minimum": 0
+        },
+        "otherDeductions": {
+          "type": "number",
+          "minimum": 0
+        },
+        "netPay": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "CreatePayrollRunDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "periodLabel",
+        "frequency",
+        "startDate",
+        "endDate",
+        "paymentDate",
+        "receipts"
+      ],
+      "properties": {
+        "periodLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "frequency": {
+          "$ref": "#/$defs/PayrollFrequency"
+        },
+        "startDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "endDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "paymentDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/PayrollStatus"
+        },
+        "bankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "applyAutomaticTaxes": {
+          "type": "boolean",
+          "default": true
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "receipts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PayrollReceiptInput"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdatePayrollRunDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "periodLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "frequency": {
+          "$ref": "#/$defs/PayrollFrequency"
+        },
+        "startDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "endDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "paymentDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/PayrollStatus"
+        },
+        "bankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "applyAutomaticTaxes": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "receipts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PayrollReceiptInput"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "PayrollRunRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "periodLabel",
+        "frequency",
+        "startDate",
+        "endDate",
+        "paymentDate",
+        "status",
+        "paymentMethod",
+        "employeesCount",
+        "totalGross",
+        "totalBonuses",
+        "totalDeductions",
+        "totalNet",
+        "receipts"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "periodLabel": {
+          "type": "string"
+        },
+        "frequency": {
+          "$ref": "#/$defs/PayrollFrequency"
+        },
+        "startDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "endDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "paymentDate": {
+          "type": "string",
+          "format": "date"
+        },
+        "status": {
+          "$ref": "#/$defs/PayrollStatus"
+        },
+        "paymentMethod": {
+          "type": "string"
+        },
+        "bankAccountId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "employeesCount": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "totalGross": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalBonuses": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalDeductions": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalNet": {
+          "type": "number",
+          "minimum": 0
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PayrollReceiptLine"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

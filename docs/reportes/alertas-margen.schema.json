@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/reportes/alertas-margen.schema.json",
+  "title": "Reportes - Alertas de Margen",
+  "description": "Esquema JSON para la configuración y evaluación de alertas automáticas de margen operativo (EBIT) y neto.",
+  "$defs": {
+    "MarginAlertSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "operatingMarginTargetPct",
+        "netMarginTargetPct",
+        "operatingAlertActive",
+        "netAlertActive",
+        "notifyInAppToast",
+        "notifyNotificationCenter",
+        "updatedAt"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "operatingMarginTargetPct": { "type": "number", "minimum": 0, "maximum": 80, "default": 20 },
+        "netMarginTargetPct": { "type": "number", "minimum": 0, "maximum": 80, "default": 12 },
+        "operatingAlertActive": { "type": "boolean", "default": true },
+        "netAlertActive": { "type": "boolean", "default": true },
+        "notifyInAppToast": { "type": "boolean", "default": true },
+        "notifyNotificationCenter": { "type": "boolean", "default": true },
+        "updatedAt": { "type": "string", "maxLength": 40 }
+      }
+    },
+    "UpdateMarginAlertSettingsDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "operatingMarginTargetPct": { "type": "number", "minimum": 0, "maximum": 80 },
+        "netMarginTargetPct": { "type": "number", "minimum": 0, "maximum": 80 },
+        "operatingAlertActive": { "type": "boolean" },
+        "netAlertActive": { "type": "boolean" },
+        "notifyInAppToast": { "type": "boolean" },
+        "notifyNotificationCenter": { "type": "boolean" }
+      }
+    },
+    "TriggeredMarginAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "metricLabel",
+        "currentPct",
+        "targetPct",
+        "gapPts",
+        "currentAmount",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "id": { "type": "string", "enum": ["operating", "net"] },
+        "metricLabel": { "type": "string", "minLength": 1 },
+        "currentPct": { "type": "number" },
+        "targetPct": { "type": "number" },
+        "gapPts": { "type": "number" },
+        "currentAmount": { "type": "number" },
+        "severity": { "type": "string", "enum": ["warning", "critical"] },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "MarginAlertEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "isEvaluated",
+        "operatingBreached",
+        "netBreached",
+        "operatingGapPts",
+        "netGapPts",
+        "triggeredAlerts"
+      ],
+      "properties": {
+        "isEvaluated": { "type": "boolean" },
+        "operatingBreached": { "type": "boolean" },
+        "netBreached": { "type": "boolean" },
+        "operatingGapPts": { "type": "number" },
+        "netGapPts": { "type": "number" },
+        "triggeredAlerts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TriggeredMarginAlert" }
+        }
+      }
+    }
+  }
+}

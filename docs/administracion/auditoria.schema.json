@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/administracion/auditoria.schema.json",
+  "title": "Administración - Historial de Auditoría",
+  "description": "Esquema JSON de campos, enumeraciones y consultas para la bitácora inmutable de Auditoría (/api/v1/admin/audit-logs).",
+  "$defs": {
+    "AuditCategory": {
+      "type": "string",
+      "enum": [
+        "settings",
+        "users",
+        "security",
+        "session",
+        "integrations",
+        "inventory",
+        "sales",
+        "finance",
+        "admin"
+      ]
+    },
+    "AuditCrudOperation": {
+      "type": "string",
+      "enum": ["CREATE", "UPDATE", "DELETE"]
+    },
+    "AuditActionKind": {
+      "type": "string",
+      "enum": ["create", "update", "delete", "status", "transaction", "access"]
+    },
+    "AuditSeedKey": {
+      "type": "string",
+      "enum": ["ev1", "ev2", "ev3", "ev4"]
+    },
+    "AuditSessionMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["roleLabel", "ipAddress", "deviceBrowser"],
+      "properties": {
+        "roleLabel": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "ipAddress": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "deviceBrowser": { "type": "string", "minLength": 1, "maxLength": 180 }
+      }
+    },
+    "CreateAuditEventInternalDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "action", "detail", "user"],
+      "properties": {
+        "category": { "$ref": "#/$defs/AuditCategory" },
+        "action": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "user": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "userId": { "type": ["string", "null"], "maxLength": 64 },
+        "crudOperation": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditCrudOperation" },
+            { "type": "null" }
+          ]
+        },
+        "entityType": { "type": ["string", "null"], "maxLength": 80 },
+        "entityId": { "type": ["string", "null"], "maxLength": 180 },
+        "seedKey": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditSeedKey" },
+            { "type": "null" }
+          ]
+        },
+        "sessionMeta": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditSessionMeta" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "AuditLogQueryDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "search": { "type": "string", "maxLength": 150 },
+        "category": {
+          "type": "string",
+          "enum": [
+            "all",
+            "settings",
+            "users",
+            "security",
+            "session",
+            "integrations",
+            "inventory",
+            "sales",
+            "finance",
+            "admin"
+          ],
+          "default": "all"
+        },
+        "actionKind": {
+          "type": "string",
+          "enum": ["all", "create", "update", "delete", "status", "transaction", "access"],
+          "default": "all"
+        },
+        "action": { "type": "string", "maxLength": 180 },
+        "user": { "type": "string", "maxLength": 150 },
+        "datePreset": {
+          "type": "string",
+          "enum": ["today", "7d", "30d", "all"],
+          "default": "all"
+        },
+        "dateFrom": { "type": "string", "format": "date" },
+        "dateTo": { "type": "string", "format": "date" },
+        "page": { "type": "integer", "minimum": 1, "default": 1 },
+        "pageSize": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+      }
+    },
+    "AuditEventRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "action", "detail", "user", "timestampIso"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "category": { "$ref": "#/$defs/AuditCategory" },
+        "actionKind": { "$ref": "#/$defs/AuditActionKind" },
+        "action": { "type": "string" },
+        "detail": { "type": "string" },
+        "user": { "type": "string" },
+        "userId": { "type": ["string", "null"] },
+        "crudOperation": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditCrudOperation" },
+            { "type": "null" }
+          ]
+        },
+        "entityType": { "type": ["string", "null"] },
+        "entityId": { "type": ["string", "null"] },
+        "timestampIso": { "type": "string", "format": "date-time" },
+        "seedKey": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditSeedKey" },
+            { "type": "null" }
+          ]
+        },
+        "sessionMeta": {
+          "oneOf": [
+            { "$ref": "#/$defs/AuditSessionMeta" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

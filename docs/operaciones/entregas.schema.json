@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/operaciones/entregas.schema.json",
+  "title": "Operaciones - Entregas y Despachos",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Entregas / Despachos (/api/v1/operations/shipments).",
+  "$defs": {
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "Preparando",
+        "En ruta",
+        "Entregado",
+        "Devuelto"
+      ],
+      "default": "Preparando"
+    },
+    "CreateShipmentDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orderFolio",
+        "clientCompany",
+        "address"
+      ],
+      "properties": {
+        "orderFolio": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "clientCompany": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 150,
+          "default": "Contacto principal"
+        },
+        "carrier": {
+          "type": "string",
+          "maxLength": 100,
+          "default": "DHL Express"
+        },
+        "trackingNumber": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "estimatedDelivery": {
+          "type": "string",
+          "maxLength": 40,
+          "default": "Por confirmar"
+        },
+        "address": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255
+        },
+        "packages": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "ReturnShipmentDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      }
+    },
+    "ShipmentDeliveryRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "orderFolio",
+        "clientCompany",
+        "clientName",
+        "carrier",
+        "trackingNumber",
+        "shippingDate",
+        "estimatedDelivery",
+        "address",
+        "status",
+        "packages"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "orderFolio": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "clientCompany": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "clientName": {
+          "type": "string",
+          "maxLength": 150
+        },
+        "carrier": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "trackingNumber": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "shippingDate": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "estimatedDelivery": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "actualDeliveryDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "status": {
+          "$ref": "#/$defs/DeliveryStatus"
+        },
+        "packages": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aes-nexus.local/schemas/compras/requisiciones.schema.json",
+  "title": "Compras - Requisiciones",
+  "description": "Esquema JSON de campos obligatorios, tipos de datos y validaciones para Requisiciones de Compra (/api/v1/purchases/requisitions).",
+  "$defs": {
+    "RequisitionStatus": {
+      "type": "string",
+      "enum": [
+        "Pendiente",
+        "Aprobada",
+        "Convertida a OC",
+        "Rechazada"
+      ],
+      "default": "Pendiente"
+    },
+    "RequisitionPriority": {
+      "type": "string",
+      "enum": [
+        "Normal",
+        "Alta",
+        "Urgente"
+      ],
+      "default": "Normal"
+    },
+    "RequisitionLineItemInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sku",
+        "name",
+        "quantity",
+        "estimatedUnitCost"
+      ],
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "estimatedUnitCost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currentStock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "minStock": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "RequisitionLineItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "sku",
+        "name",
+        "quantity",
+        "estimatedUnitCost",
+        "subtotal"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sku": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "estimatedUnitCost": {
+          "type": "number",
+          "minimum": 0
+        },
+        "subtotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currentStock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "minStock": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "CreateRequisitionDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "department",
+        "warehouseId",
+        "items"
+      ],
+      "properties": {
+        "department": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "warehouseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "priority": {
+          "$ref": "#/$defs/RequisitionPriority"
+        },
+        "neededByDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RequisitionLineItemInput"
+          }
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        }
+      }
+    },
+    "UpdateRequisitionStatusDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "Aprobada",
+            "Rechazada"
+          ]
+        }
+      }
+    },
+    "ConvertRequisitionToPoDTO": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supplierCompany"
+      ],
+      "properties": {
+        "supplierCompany": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "expectedDeliveryDate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40
+        }
+      }
+    },
+    "PurchaseRequisitionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "folio",
+        "date",
+        "neededByDate",
+        "requestedBy",
+        "department",
+        "warehouseId",
+        "warehouseName",
+        "priority",
+        "status",
+        "items",
+        "estimatedTotal"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "folio": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "neededByDate": {
+          "type": "string"
+        },
+        "requestedBy": {
+          "type": "string"
+        },
+        "department": {
+          "type": "string"
+        },
+        "warehouseId": {
+          "type": "string"
+        },
+        "warehouseName": {
+          "type": "string"
+        },
+        "priority": {
+          "$ref": "#/$defs/RequisitionPriority"
+        },
+        "status": {
+          "$ref": "#/$defs/RequisitionStatus"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/RequisitionLineItem"
+          }
+        },
+        "estimatedTotal": {
+          "type": "number",
+          "minimum": 0
+        },
+        "linkedPoFolio": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approvedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approvedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "externalId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "ID externo del registro en un sistema integrado (opcional)."
+        },
+        "externalSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "description": "Clave del sistema externo de origen (opcional; requerida si se envía externalId)."
+        },
+        "externalSyncedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Fecha y hora UTC de última sincronización externa."
+        }
+      }
+    }
+  }
+}
